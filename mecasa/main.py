@@ -104,6 +104,8 @@ DEFAULT_CONFIG = {
     "tailscale_auto_serve": False,
     # Nom du nœud dans le tailnet : l'app Android résout mecasa.<tailnet>.ts.net.
     "tailscale_hostname": "mecasa",
+    # Chemin du binaire si `tailscale` n'est pas dans le PATH (ex. Windows).
+    "tailscale_bin": "",
     "tailscale_authkey": "",
     # --- Stockage basse consommation (spécifique Raspberry Pi) ---------------
     # Snapshot structurel : un changement = une écriture au plus toutes les
@@ -314,6 +316,7 @@ def public_config(config: dict) -> dict:
         "tailscale_enabled": bool(config.get("tailscale_enabled", False)),
         "tailscale_auto_serve": bool(config.get("tailscale_auto_serve", False)),
         "tailscale_hostname": str(config.get("tailscale_hostname") or "mecasa"),
+        "tailscale_bin": str(config.get("tailscale_bin") or ""),
         "tailscale_authkey_set": bool(config.get("tailscale_authkey")),
         "state_file": str(config.get("state_file", "data/state.json")),
         "history_dir": str(config.get("history_dir", "data/history")),
@@ -525,6 +528,9 @@ def save_config(body: dict) -> tuple[dict, bool]:
             )
         updated["tailscale_hostname"] = hostname
 
+    if "tailscale_bin" in body:
+        updated["tailscale_bin"] = str(body.get("tailscale_bin") or "").strip()[:400]
+
     if body.get("tailscale_authkey_clear"):
         updated["tailscale_authkey"] = ""
     elif body.get("tailscale_authkey"):
@@ -623,18 +629,67 @@ def aligned_week_start(store: MemoryStore, base_monday, target: str,
 # ------------------------------------------------------------------ tailscale
 
 
+def tailscale_binary() -> str | None:
+    """Chemin du binaire Tailscale, même s'il n'est pas dans le PATH.
+
+    Sur Windows, l'installateur ne modifie pas le PATH : le binaire vit dans
+    ``C:\\Program Files\\Tailscale``. On accepte aussi une valeur explicite
+    (variable ``MECASA_TAILSCALE_BIN`` ou réglage ``tailscale_bin``).
+    """
+    candidates: list[str] = []
+    env = os.environ.get("MECASA_TAILSCALE_BIN", "").strip()
+    if env:
+        candidates.append(env)
+    try:
+        configured = str(load_config().get("tailscale_bin") or "").strip()
+    except Exception:  # noqa: BLE001
+        configured = ""
+    if configured:
+        candidates.append(configured)
+    found = shutil.which("tailscale")
+    if found:
+        candidates.append(found)
+    if os.name == "nt":
+        candidates += [
+            r"C:\Program Files\Tailscale\tailscale.exe",
+            r"C:\Program Files (x86)\Tailscale\tailscale.exe",
+            os.path.join(
+                os.environ.get("LOCALAPPDATA", ""), "Tailscale", "tailscale.exe"
+            ),
+        ]
+    else:
+        candidates += [
+            "/usr/bin/tailscale",
+            "/usr/sbin/tailscale",
+            "/usr/local/bin/tailscale",
+            "/snap/bin/tailscale",
+            "/opt/homebrew/bin/tailscale",
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def _tailscale_cmd(args: list[str], timeout: int = 10) -> tuple[int, str, str]:
     flags = 0
     if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
         flags = subprocess.CREATE_NO_WINDOW
+    binary = tailscale_binary()
+    if not binary:
+        return 127, "", (
+            "Tailscale introuvable. Installe-le, ou renseigne son chemin dans "
+            "Réglages → Tailscale (ex. C:\\Program Files\\Tailscale\\tailscale.exe)."
+        )
     try:
         result = subprocess.run(
-            ["tailscale"] + args,
+            [binary] + args,
             capture_output=True, text=True, timeout=timeout, creationflags=flags,
         )
         return result.returncode, result.stdout or "", result.stderr or ""
     except FileNotFoundError:
-        return 127, "", "tailscale introuvable dans le PATH"
+        return 127, "", f"Binaire Tailscale introuvable : {binary}"
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
     except Exception as err:  # noqa: BLE001
@@ -782,6 +837,7 @@ def get_tailscale_status(port: int | None = None,
         "serve_ok": False, "magic_dns_enabled": False, "magic_dns_suffix": None,
         "cert_domains": [], "https_ready": False, "https_url": None,
         "health": [], "checks": [], "warnings": [],
+        "binary": tailscale_binary(), "auth_url": None,
     }
     data = None
     code, out, _ = _tailscale_cmd(["status", "--json"], timeout=15)
@@ -827,6 +883,8 @@ def get_tailscale_status(port: int | None = None,
         status["cert_domains"] = certs
         status["https_ready"] = bool(dns_name) and dns_name.lower() in certs
         status["health"] = [str(item) for item in (data.get("Health") or [])]
+        auth_url = str(data.get("AuthURL") or "").strip()
+        status["auth_url"] = auth_url or None
 
     if status.get("dns_name"):
         status["https_url"] = f"https://{_clean_dns_name(status['dns_name'])}/"
@@ -893,7 +951,7 @@ def apply_tailscale_startup(config: dict) -> dict:
     démarrer. Les messages sont renvoyés pour affichage dans la console.
     """
     result = {"attempted": False, "up": None, "serve": None,
-              "url": None, "errors": []}
+              "url": None, "errors": [], "auth_url": None}
     enabled = bool(config.get("tailscale_enabled"))
     auto_serve = bool(config.get("tailscale_auto_serve"))
     if not enabled and not auto_serve:
@@ -922,6 +980,7 @@ def apply_tailscale_startup(config: dict) -> dict:
                 except Exception as err:  # noqa: BLE001
                     result["errors"].append(f"connexion : {err}")
             else:
+                result["auth_url"] = current.get("auth_url")
                 result["errors"].append(
                     "nœud non connecté et aucune clé d'authentification enregistrée"
                 )
@@ -1571,10 +1630,21 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._body()
                 cfg = load_config()
                 authkey = str(body.get("authkey") or cfg.get("tailscale_authkey") or "").strip()
-                if not authkey:
-                    self._json(400, {"error": "Clé d'authentification requise"})
-                    return
                 hostname = str(cfg.get("tailscale_hostname") or "mecasa")
+                status = get_tailscale_status(
+                    int(cfg.get("port", 8780)), hostname, cfg.get("host"),
+                )
+                if not status.get("running") and not authkey:
+                    self._json(400, {
+                        "error": (
+                            "Ce nœud n'est pas connecté. Enregistre une clé "
+                            "d'authentification Tailscale, ou autorise le nœud "
+                            "depuis le lien ci-dessous."
+                        ),
+                        "auth_url": status.get("auth_url"),
+                        "status": status,
+                    })
+                    return
                 self._json(200, tailscale_up(authkey, hostname=hostname))
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
@@ -2264,6 +2334,8 @@ def main() -> None:
     if tailscale_startup.get("attempted"):
         for message in tailscale_startup.get("errors") or []:
             print(f"  Tailscale           ->  erreur : {message}")
+        if tailscale_startup.get("auth_url"):
+            print(f"  Tailscale (login)   ->  {tailscale_startup['auth_url']}")
         if tailscale_startup.get("url"):
             print(f"  Tailscale (HTTPS)   ->  {tailscale_startup['url']}")
         elif tailscale_startup.get("serve"):

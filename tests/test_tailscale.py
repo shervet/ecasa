@@ -174,6 +174,68 @@ class StatusTests(unittest.TestCase):
         self.assertIsNone(status["https_url"])
         self.assertIn("introuvable", " | ".join(status["warnings"]))
 
+    def test_auth_url_exposee(self):
+        data = {
+            "BackendState": "NeedsLogin",
+            "AuthURL": "https://login.tailscale.com/a/abc123",
+            "Self": {"HostName": "mecasa", "TailscaleIPs": []},
+        }
+        responses = {
+            "status --json": (0, json.dumps(data), ""),
+            "serve status --json": (1, "", ""),
+            "serve status": (1, "", ""),
+        }
+        status = self.status(responses, port=8780, hostname="mecasa",
+                             local_host="0.0.0.0")
+        self.assertFalse(status["running"])
+        self.assertEqual(status["auth_url"], "https://login.tailscale.com/a/abc123")
+
+
+class BinaryTests(unittest.TestCase):
+    def test_chemin_explicite(self):
+        with mock.patch.dict(
+            main.os.environ, {"MECASA_TAILSCALE_BIN": r"C:\Tools\tailscale.exe"},
+        ), mock.patch.object(
+            main, "load_config", return_value={},
+        ), mock.patch.object(
+            main.shutil, "which", return_value=None,
+        ), mock.patch.object(
+            main.os.path, "isfile", return_value=True,
+        ):
+            self.assertEqual(
+                main.tailscale_binary(), r"C:\Tools\tailscale.exe",
+            )
+
+    def test_detection_automatique_dans_le_path(self):
+        with mock.patch.dict(
+            main.os.environ, {"MECASA_TAILSCALE_BIN": ""},
+        ), mock.patch.object(
+            main, "load_config", return_value={},
+        ), mock.patch.object(
+            main.shutil, "which", return_value="/usr/bin/tailscale",
+        ), mock.patch.object(
+            main.os.path, "isfile", return_value=True,
+        ):
+            self.assertEqual(main.tailscale_binary(), "/usr/bin/tailscale")
+
+    def test_absent(self):
+        with mock.patch.dict(
+            main.os.environ, {"MECASA_TAILSCALE_BIN": ""},
+        ), mock.patch.object(
+            main, "load_config", return_value={},
+        ), mock.patch.object(
+            main.shutil, "which", return_value=None,
+        ), mock.patch.object(
+            main.os.path, "isfile", return_value=False,
+        ):
+            self.assertIsNone(main.tailscale_binary())
+
+    def test_message_actionnable_si_absent(self):
+        with mock.patch.object(main, "tailscale_binary", return_value=None):
+            code, _, err = main._tailscale_cmd(["status"])
+        self.assertEqual(code, 127)
+        self.assertIn("Réglages", err)
+
 
 class StartupTests(unittest.TestCase):
     def test_desactive_ne_fait_rien(self):

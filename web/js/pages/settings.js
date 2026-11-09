@@ -724,6 +724,10 @@ function tailscaleSection() {
       sub: "Nom résolu par l'app Android : &lt;nom&gt;.&lt;tailnet&gt;.ts.net. Doit être « mecasa ».",
       placeholder: "mecasa",
     })}
+    ${textRow("Chemin de tailscale", "tailscale_bin", c.tailscale_bin || "", {
+      sub: "Laisser vide pour la détection automatique (utile sur Windows : C:\\Program Files\\Tailscale\\tailscale.exe).",
+      placeholder: "détection automatique",
+    })}
     ${row(
       "Clé d'authentification",
       c.tailscale_authkey_set ? "Une clé est déjà enregistrée. Laisse vide pour la conserver." : "Optionnelle si le nœud est déjà connecté.",
@@ -1976,11 +1980,17 @@ function renderTailscale() {
       : data.backend_state || "Arrêté";
   const url = data.https_url || data.serve_url || "";
   const checks = Array.isArray(data.checks) ? data.checks : [];
+  const failed = checks.filter((item) => !item.ok);
   const serveLabel = data.serve_ok
     ? "prête"
     : data.serve_active
       ? "à corriger"
       : "inactive";
+  const summary = !checks.length
+    ? ""
+    : failed.length
+      ? `<p class="hint is-bad mt-1">${failed.length} point${failed.length > 1 ? "s" : ""} à corriger pour que l'app Android fonctionne.</p>`
+      : `<p class="hint is-ok mt-1">Tout est prêt : l'app peut charger ${escapeHtml(url || "https://mecasa.<tailnet>.ts.net/")}.</p>`;
   host.innerHTML = `
     <div class="row-between">
       <span class="tiny muted">État</span>
@@ -2001,7 +2011,10 @@ function renderTailscale() {
       <span class="pill ${data.serve_ok ? "pill-ok" : data.serve_active ? "pill-warn" : "pill-ghost"}">${serveLabel}</span>
     </div>
     ${data.serve_target ? `<div class="row-between"><span class="tiny muted">Cible locale</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.serve_target)}</span></div>` : ""}
+    ${data.binary ? `<div class="row-between"><span class="tiny muted">Binaire</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.binary)}</span></div>` : ""}
     ${url ? `<div class="row-between"><span class="tiny muted">URL de l'app</span><a class="tiny" href="${escapeHtml(url)}" target="_blank" rel="noreferrer" style="word-break:break-all;text-align:right">${escapeHtml(url)}</a></div>` : ""}
+    ${data.auth_url ? `<p class="hint mt-1">Ce nœud attend une autorisation : <a href="${escapeHtml(data.auth_url)}" target="_blank" rel="noreferrer">ouvrir la page de connexion Tailscale</a>.</p>` : ""}
+    ${summary}
     ${checks.length ? `<div class="stack mt-1" style="gap:4px">${checks.map((item) => `<div class="row-between" style="gap:8px"><span class="hint ${item.ok ? "muted" : "is-bad"}">${item.ok ? icon("check", 12) : icon("alert", 12)} ${escapeHtml(item.label)}</span>${item.ok ? "" : `<span class="hint is-bad" style="text-align:right;max-width:60%">${escapeHtml(item.detail || "")}</span>`}</div>`).join("")}</div>` : ""}
     ${!data.installed ? '<p class="hint mt-1">Installe Tailscale sur le Raspberry Pi : <code>curl -fsSL https://tailscale.com/install.sh | sh</code></p>' : ""}
   `;
@@ -2016,10 +2029,14 @@ async function tailscaleAction(path) {
       ? `Publié : ${payload.url}`
       : payload.output || payload.message || "Commande envoyée.";
     toast(message, { type: "info", timeout: 7000 });
-    await loadTailscale();
   } catch (err) {
     toastError(err);
   } finally {
+    try {
+      await loadTailscale();
+    } catch {
+      /* le panneau affiche déjà l'erreur */
+    }
     if (button) button.disabled = false;
   }
 }

@@ -59,7 +59,7 @@ Au premier lancement, `config.json` est créé depuis les valeurs par défaut.
 | `pronote_*` | Compte, établissement, trajets, consignes confort/réduit. |
 | `weather_*` | Coordonnées Open-Meteo (sans clé). |
 | `med_enabled`, `med_url`, `med_token`, `med_pdl`, `med_start` | Consommation Enedis via MyElectricalData. Token local, jamais renvoyé. |
-| `tailscale_*` | Nœud Tailscale et publication `tailscale serve`. |
+| `tailscale_*` | Nœud Tailscale (`tailscale_hostname`, `tailscale_bin`) et publication `tailscale serve`. |
 | `state_file` | Snapshot JSON de l'état complet. |
 | `history_dir`, `history_interval`, `history_days` | Mesures horaires append-only et conservation. |
 | `structural_delay` | Regroupement des écritures d'état (secondes). |
@@ -111,6 +111,13 @@ MeCasa automatise tout ou partie :
   `tailscale serve --bg --set-path=/ http://127.0.0.1:<port>` ;
 - les boutons **Connecter / Publier / Dépublier** appliquent les mêmes commandes
   à chaud.
+
+Le binaire est cherché dans le `PATH`, puis aux emplacements habituels
+(`C:\Program Files\Tailscale\tailscale.exe` sur Windows, `/usr/bin/tailscale`
+sur Linux, etc.). Si besoin, indique son chemin dans **Réglages → Tailscale →
+Chemin de tailscale** (ou via `tailscale_bin`). Le bouton **Connecter** ne
+demande une clé que si le nœud n'est pas déjà autorisé : sinon MeCasa affiche
+le lien de connexion Tailscale (`AuthURL`) directement dans le diagnostic.
 
 Pour que `tailscale serve` atteigne MeCasa, `host` doit rester `0.0.0.0` ou
 `127.0.0.1` (pas une adresse LAN précise). Le diagnostic le signale.
