@@ -935,7 +935,10 @@ def get_tailscale_status(port: int | None = None,
     serve = summarize_serve_config(out_s, port, status.get("dns_name"))
     if not serve["serve_active"]:
         code_t, out_t, _ = _tailscale_cmd(["serve", "status"], timeout=10)
-        if code_t == 0 and out_t.strip():
+        text_t = (out_t or "").strip()
+        # « No serve config » sort sur stdout avec le code 0 : ce n'est pas
+        # une publication active.
+        if code_t == 0 and text_t and "no serve config" not in text_t.lower():
             serve["serve_active"] = True
     status.update(serve)
     if not status["serve_url"] and status["serve_active"]:

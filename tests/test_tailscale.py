@@ -150,6 +150,29 @@ class StatusTests(unittest.TestCase):
         self.assertIn("HTTPS Certificates", warnings)
         self.assertIn("autre", warnings)
 
+    def test_aucune_publication_texte_non_vide(self):
+        responses = {
+            "status --json": (0, json.dumps(STATUS_JSON), ""),
+            "serve status --json": (0, "", ""),
+            "serve status": (0, "No serve config", ""),
+        }
+        status = self.status(responses, port=8780, hostname="mecasa",
+                             local_host="0.0.0.0")
+        self.assertFalse(status["serve_active"])
+        self.assertFalse(status["serve_ok"])
+        self.assertIsNone(status["serve_url"])
+
+    def test_publication_texte_secours(self):
+        responses = {
+            "status --json": (0, json.dumps(STATUS_JSON), ""),
+            "serve status --json": (0, "", ""),
+            "serve status": (0, "https://mecasa.tailnet-abcd.ts.net (tailnet only)", ""),
+        }
+        status = self.status(responses, port=8780, hostname="mecasa",
+                             local_host="0.0.0.0")
+        self.assertTrue(status["serve_active"])
+        self.assertEqual(status["serve_url"], "https://mecasa.tailnet-abcd.ts.net/")
+
     def test_hote_local_injoignable(self):
         responses = {
             "status --json": (0, json.dumps(STATUS_JSON), ""),
