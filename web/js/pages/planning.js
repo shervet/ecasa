@@ -255,7 +255,7 @@ export default {
           <div class="row wrap" style="gap:8px;align-items:center;margin-top:8px">
             <select class="select" id="planModelList" style="width:auto;min-width:200px"><option value="">— choisir un modèle —</option></select>
             <button class="btn btn-sm" type="button" id="planModelApply">${icon("check", 14)} Appliquer à la pièce sélectionnée</button>
-            <button class="btn btn-sm btn-danger" type="button" id="planModelDelete">${icon("trash", 14)}</button>
+            <button class="btn btn-sm btn-danger" type="button" id="planModelDelete">${icon("trash", 14)} Supprimer</button>
           </div>
         </div>
 
@@ -263,16 +263,21 @@ export default {
           <div class="row-between wrap" style="gap:10px">
             <div>
               <div class="card-title">${icon("edit", 18)} Édition du modèle <span id="modelInlineName"></span></div>
-              <p class="hint mt-1">Modifie les créneaux ci-dessous, puis clique sur « Enregistrer le modèle ».</p>
+              <p class="hint mt-1">Renomme le modèle ou modifie ses créneaux, puis clique sur « Enregistrer le modèle ».</p>
             </div>
             <div class="week-switch" id="modelInlineWeekSwitch">
               <button type="button" data-model-week="A">Semaine A</button>
               <button type="button" data-model-week="B">Semaine B</button>
             </div>
           </div>
+          <label class="field" style="margin-top:10px;max-width:340px">
+            <span class="label">Nom du modèle</span>
+            <input class="input" id="modelInlineRename" maxlength="60" placeholder="Nom du modèle" autocomplete="off">
+          </label>
           <div class="week-grid" id="modelInlineGrid"></div>
           <div class="row wrap" style="gap:8px;margin-top:10px">
             <button class="btn btn-sm btn-primary" type="button" data-model-save>${icon("save", 14)} Enregistrer le modèle</button>
+            <button class="btn btn-sm btn-danger" type="button" data-model-delete>${icon("trash", 14)} Supprimer le modèle</button>
             <button class="btn btn-sm" type="button" data-model-close>${icon("x", 14)} Fermer</button>
           </div>
         </div>
@@ -398,9 +403,10 @@ export default {
       const select = root.querySelector("#planModelList");
       const idx = Number(select?.value);
       if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      if (!confirm("Supprimer ce modèle ?")) return;
       let saved = [];
       try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      const name = saved[idx]?.name;
+      if (!confirm(`Supprimer le modèle${name ? ` « ${name} »` : ""} ?`)) return;
       saved.splice(idx, 1);
       localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
       toast("Modèle supprimé.");
@@ -418,6 +424,7 @@ export default {
       });
     });
     view.querySelector("[data-model-save]")?.addEventListener("click", saveInlineModel);
+    view.querySelector("[data-model-delete]")?.addEventListener("click", deleteInlineModel);
     view.querySelector("[data-model-close]")?.addEventListener("click", hideModelInline);
 
     loadModels();
@@ -471,6 +478,8 @@ function showModelInline(modelIndex, model) {
   };
   const nameNode = root.querySelector("#modelInlineName");
   if (nameNode) nameNode.textContent = `« ${inlineModel.name} »`;
+  const renameInput = root.querySelector("#modelInlineRename");
+  if (renameInput) renameInput.value = inlineModel.name;
   inlineBox.style.display = "block";
   paintInlineWeekSwitch();
   renderModelInlineGrid();
@@ -632,6 +641,10 @@ function openModelSlotEditorInline(dayIndex, slotIndex) {
 
 function saveInlineModel() {
   if (!inlineModel) return;
+  const renameInput = root?.querySelector("#modelInlineRename");
+  const newName = String(renameInput?.value ?? inlineModel.name).trim();
+  if (!newName) { toast("Donne un nom au modèle.", { type: "warn" }); renameInput?.focus(); return; }
+
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
   // Re-résout l'index par nom : l'ordre a pu changer (import Wiser, suppression).
@@ -641,19 +654,48 @@ function saveInlineModel() {
   );
   if (index < 0) index = inlineModel.index;
   if (!saved[index]) { toast("Modèle introuvable.", { type: "warn" }); return; }
+
+  const duplicate = saved.some(
+    (m, i) => i !== index && m && String(m.name || "").trim().toLowerCase() === newName.toLowerCase()
+  );
+  if (duplicate) { toast("Un modèle porte déjà ce nom.", { type: "warn" }); renameInput?.focus(); return; }
+
   saved[index] = {
     ...saved[index],
+    name: newName,
     days: {
       A: cloneDays(inlineModel.days.A),
       B: cloneDays(inlineModel.days.B),
     },
   };
   inlineModel.index = index;
+  inlineModel.name = newName;
   localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
-  toast(`Modèle « ${inlineModel.name} » mis à jour.`);
+  const nameNode = root?.querySelector("#modelInlineName");
+  if (nameNode) nameNode.textContent = `« ${newName} »`;
+  toast(`Modèle « ${newName} » mis à jour.`);
   loadModels();
   const select = root?.querySelector("#planModelList");
   if (select) select.value = String(index);
+}
+
+function deleteInlineModel() {
+  if (!inlineModel) return;
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+  const wanted = String(inlineModel.name || "").trim().toLowerCase();
+  let index = saved.findIndex(
+    (m) => m && String(m.name || "").trim().toLowerCase() === wanted
+  );
+  if (index < 0) index = inlineModel.index;
+  const name = saved[index]?.name || inlineModel.name;
+  if (!saved[index]) { toast("Modèle introuvable.", { type: "warn" }); return; }
+  if (!confirm(`Supprimer le modèle « ${name} » ?`)) return;
+  saved.splice(index, 1);
+  localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
+  hideModelInline();
+  loadModels();
+  toast("Modèle supprimé.");
 }
 
 function hideModelInline() {
