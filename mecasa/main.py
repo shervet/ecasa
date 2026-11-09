@@ -1681,10 +1681,22 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if method == "POST" and path == "/api/tailscale/serve/disable":
+            # Répondre AVANT de retirer la publication : si la page est
+            # ouverte via « tailscale serve », le proxy disparaît et la
+            # réponse serait perdue (le navigateur voit une erreur réseau).
             try:
-                self._json(200, tailscale_serve_disable())
-            except Exception as err:  # noqa: BLE001
-                self._json(500, {"error": str(err)})
+                self._json(200, {"ok": True, "scheduled": True})
+            except Exception:  # noqa: BLE001 - client déjà déconnecté
+                pass
+
+            def _unpublish() -> None:
+                try:
+                    tailscale_serve_disable()
+                    app.store.log("info", "Publication Tailscale retirée")
+                except Exception as err:  # noqa: BLE001
+                    app.store.log("error", f"Publication Tailscale : {err}")
+
+            threading.Timer(0.8, _unpublish).start()
             return
 
         if method == "POST" and path == "/api/tailscale/up":

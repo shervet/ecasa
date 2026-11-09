@@ -2083,6 +2083,15 @@ function renderTailscale() {
     : failed.length
       ? `<p class="hint is-bad mt-1">${failed.length} point${failed.length > 1 ? "s" : ""} à corriger pour que l'app Android fonctionne.</p>`
       : `<p class="hint is-ok mt-1">Tout est prêt : l'app peut charger ${escapeHtml(url || "https://mecasa.<tailnet>.ts.net/")}.</p>`;
+  const pageHost = String(location.hostname || "").toLowerCase();
+  const nodeDns = String(data.dns_name || "").toLowerCase();
+  const nodeHost = nodeDns ? nodeDns.split(".")[0] : "";
+  const ipLike = /^(\d{1,3}\.){3}\d{1,3}$/.test(pageHost) || pageHost.includes(":");
+  const localHost = pageHost === "localhost" || pageHost === "127.0.0.1" || pageHost === "::1";
+  const wrongHost = Boolean(nodeHost && pageHost && !ipLike && !localHost && pageHost !== nodeHost);
+  const hostWarning = wrongHost
+    ? `<p class="hint is-bad mt-1">Cette page est ouverte via <strong>${escapeHtml(pageHost)}</strong>, alors que le nœud Tailscale est <strong>${escapeHtml(nodeDns)}</strong>. Les actions risquent d'échouer (erreur 501) : utilise ${url ? `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>` : "l'URL du nœud"}.</p>`
+    : "";
   host.innerHTML = `
     <div class="row-between">
       <span class="tiny muted">État</span>
@@ -2106,6 +2115,7 @@ function renderTailscale() {
     ${data.binary ? `<div class="row-between"><span class="tiny muted">Binaire</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.binary)}</span></div>` : ""}
     ${Array.isArray(data.services) && data.services.length ? `<div class="row-between"><span class="tiny muted">Service Tailscale</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.services.map((item) => item.name).join(", "))}</span></div>` : ""}
     ${url ? `<div class="row-between"><span class="tiny muted">URL de l'app</span><a class="tiny" href="${escapeHtml(url)}" target="_blank" rel="noreferrer" style="word-break:break-all;text-align:right">${escapeHtml(url)}</a></div>` : ""}
+    ${hostWarning}
     ${data.auth_url ? `<p class="hint mt-1">Ce nœud attend une autorisation : <a href="${escapeHtml(data.auth_url)}" target="_blank" rel="noreferrer">ouvrir la page de connexion Tailscale</a>.</p>` : ""}
     ${summary}
     ${checks.length ? `<div class="stack mt-1" style="gap:4px">${checks.map((item) => `<div class="row-between" style="gap:8px"><span class="hint ${item.ok ? "muted" : "is-bad"}">${item.ok ? icon("check", 12) : icon("alert", 12)} ${escapeHtml(item.label)}</span>${item.ok ? "" : `<span class="hint is-bad" style="text-align:right;max-width:60%">${escapeHtml(item.detail || "")}</span>`}</div>`).join("")}</div>` : ""}
@@ -2116,10 +2126,13 @@ function renderTailscale() {
 async function tailscaleAction(path) {
   const button = root?.querySelector(path === "up" ? "#tsUp" : path === "serve/enable" ? "#tsServeOn" : "#tsServeOff");
   if (button) button.disabled = true;
+  let failure = null;
   try {
     const payload = await post(`/api/tailscale/${path}`);
     if (payload.warning) {
       toast(payload.warning, { type: "error", timeout: 10000 });
+    } else if (path === "serve/disable") {
+      toast("Publication retirée.", { type: "info", timeout: 5000 });
     } else {
       const message = payload.url
         ? `Publié : ${payload.url}`
@@ -2127,13 +2140,23 @@ async function tailscaleAction(path) {
       toast(message, { type: "info", timeout: 7000 });
     }
   } catch (err) {
-    toastError(err);
-  } finally {
-    try {
-      await loadTailscale();
-    } catch {
-      /* le panneau affiche déjà l'erreur */
-    }
-    if (button) button.disabled = false;
+    failure = err;
   }
+  // « Dépublier » coupe le proxy qui a servi cette page : la réponse peut
+  // être perdue. On laisse au serveur le temps de retirer la publication,
+  // puis on relit l'état réel avant d'afficher une erreur.
+  if (path === "serve/disable") {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+  try {
+    await loadTailscale();
+  } catch {
+    /* le panneau affiche déjà l'erreur */
+  }
+  if (failure) {
+    const done = path === "serve/disable" && tailscale && !tailscale.serve_active;
+    if (done) toast("Publication retirée.", { type: "info", timeout: 5000 });
+    else toastError(failure);
+  }
+  if (button) button.disabled = false;
 }
