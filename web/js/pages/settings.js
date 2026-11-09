@@ -746,6 +746,7 @@ function tailscaleSection() {
         <button class="btn btn-sm" type="button" id="tsServeOn">${icon("external", 14)} Publier</button>
         <button class="btn btn-sm" type="button" id="tsServeOff">${icon("x", 14)} Dépublier</button>
       </div>
+      <p class="hint mt-2">« Dépublier » coupe l'accès via l'URL HTTPS : pour republier depuis un autre appareil, ouvre MeCasa sur le réseau local (port 8780).</p>
     </div>`,
     `<button class="btn btn-primary" type="button" data-save="tailscale">${icon("save", 16)} Enregistrer</button>`
   );
@@ -2132,7 +2133,10 @@ async function tailscaleAction(path) {
     if (payload.warning) {
       toast(payload.warning, { type: "error", timeout: 10000 });
     } else if (path === "serve/disable") {
-      toast("Publication retirée.", { type: "info", timeout: 5000 });
+      toast("Publication retirée. Accès distant coupé : republie depuis le réseau local.", {
+        type: "info",
+        timeout: 7000,
+      });
     } else {
       const message = payload.url
         ? `Publié : ${payload.url}`
@@ -2155,8 +2159,21 @@ async function tailscaleAction(path) {
   }
   if (failure) {
     const done = path === "serve/disable" && tailscale && !tailscale.serve_active;
-    if (done) toast("Publication retirée.", { type: "info", timeout: 5000 });
-    else toastError(failure);
+    if (done) {
+      toast("Publication retirée. Accès distant coupé : republie depuis le réseau local.", {
+        type: "info",
+        timeout: 7000,
+      });
+    } else if (path === "serve/disable" && (failure.status === 0 || failure.status === 502 || failure.status === 504)) {
+      // La page était ouverte via l'URL HTTPS publiée : sa disparition coupe
+      // aussi la réponse. L'état réel sera relu au prochain chargement.
+      toast("Publication retirée. Accès distant coupé : republie depuis le réseau local.", {
+        type: "info",
+        timeout: 7000,
+      });
+    } else {
+      toastError(failure);
+    }
   }
   if (button) button.disabled = false;
 }
