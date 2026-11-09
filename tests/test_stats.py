@@ -53,6 +53,33 @@ class FakeStore:
         return stamps[0], stamps[-1]
 
 
+class DeviceStore:
+    """Store qui distingue les appareils (rows étiquetées par device_id)."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def samples(self, device_id, start, end):
+        result = []
+        for row in self.rows:
+            if int(row.get("device_id")) != int(device_id):
+                continue
+            moment = datetime.fromisoformat(str(row["ts"]))
+            if start <= moment <= end:
+                result.append(row)
+        return result
+
+    def sample_bounds(self, device_id):
+        stamps = sorted(
+            str(row["ts"])
+            for row in self.rows
+            if int(row.get("device_id")) == int(device_id)
+        )
+        if not stamps:
+            return None, None
+        return stamps[0], stamps[-1]
+
+
 def make_room():
     return {
         "id": 1,
@@ -61,6 +88,31 @@ def make_room():
             {"device_id": 7, "name": "Clim salon", "device_type": "atlantic"},
         ],
     }
+
+
+def make_room_with_actuator(**overrides):
+    room = {
+        "id": 1,
+        "name": "Salon",
+        "thermostat_device_id": 9001,
+        "actuator_device_id": 28129468,
+        "devices": [
+            {"device_id": 9001, "name": "Salon (Wiser)", "device_type": "wiser"},
+            {"device_id": 28129468, "name": "Clim", "device_type": "atlantic"},
+        ],
+    }
+    room.update(overrides)
+    return room
+
+
+# Thermostat Wiser sans planning : sa « consigne » enregistrée est sa propre
+# température mesurée (11.5 °C). L'actuateur (Clim) applique 19.5 °C.
+DEVICE_ROWS = [
+    {"device_id": 9001, "ts": "2026-10-20T08:05:00", "ambient": 18.0, "setpoint": 11.5},
+    {"device_id": 28129468, "ts": "2026-10-20T08:10:00", "ambient": 18.4, "setpoint": 19.5},
+    {"device_id": 9001, "ts": "2026-10-20T09:05:00", "ambient": 19.0, "setpoint": 11.5},
+    {"device_id": 28129468, "ts": "2026-10-20T09:10:00", "ambient": 19.2, "setpoint": 19.5},
+]
 
 
 CONFIG = {"weather_enabled": True, "weather_latitude": 48.85, "weather_longitude": 2.35}
@@ -263,6 +315,66 @@ class BuildStatsTests(unittest.TestCase):
         )
         self.assertEqual(len(stats["devices"]), 1)
         self.assertEqual(stats["devices"][0]["device_id"], 9)
+
+
+class SetpointSourceTests(unittest.TestCase):
+    """La consigne d'une pièce vient de son actuateur, pas d'une moyenne."""
+
+    def build(self, rows, room):
+        return build_stats(
+            DeviceStore(rows),
+            FakeWeather({}),
+            room,
+            "day",
+            date(2026, 10, 20),
+            CONFIG,
+        )
+
+    def test_actuator_alone_defines_setpoint(self):
+        stats = self.build(DEVICE_ROWS, make_room_with_actuator())
+        buckets = stats["buckets"]
+        # Sans le correctif, la moyenne 11.5/19.5 donnerait 15.5.
+        self.assertEqual(buckets[8]["setpoint"], 19.5)
+        self.assertEqual(buckets[9]["setpoint"], 19.5)
+        self.assertEqual(stats["summary"]["setpoint_avg"], 19.5)
+        self.assertEqual(stats["setpoint_device_id"], 28129468)
+
+    def test_ambient_still_aggregates_all_devices(self):
+        stats = self.build(DEVICE_ROWS, make_room_with_actuator())
+        bucket = stats["buckets"][8]
+        # (18.0 + 18.4) / 2 : la sonde Wiser et la clim remontent la pièce.
+        self.assertEqual(bucket["ambient"], 18.2)
+        self.assertEqual(bucket["count"], 2)
+        self.assertEqual(stats["summary"]["samples"], 4)
+
+    def test_room_without_actuator_keeps_legacy_average(self):
+        room = make_room_with_actuator()
+        room["actuator_device_id"] = None
+        stats = self.build(DEVICE_ROWS, room)
+        buckets = stats["buckets"]
+        self.assertEqual(buckets[8]["setpoint"], 15.5)
+        self.assertEqual(stats["summary"]["setpoint_avg"], 15.5)
+        self.assertIsNone(stats["setpoint_device_id"])
+
+    def test_actuator_without_setpoint_rows_yields_none(self):
+        rows = [
+            row
+            for row in DEVICE_ROWS
+            if row["device_id"] != 28129468
+        ] + [
+            {"device_id": 28129468, "ts": "2026-10-20T08:10:00",
+             "ambient": 18.4, "setpoint": None},
+        ]
+        stats = self.build(rows, make_room_with_actuator())
+        buckets = stats["buckets"]
+        # Pas de repli sur le thermostat : la consigne est inconnue.
+        self.assertIsNone(buckets[8]["setpoint"])
+        self.assertIsNone(stats["summary"]["setpoint_avg"])
+        self.assertIsNone(stats["summary"]["gap_avg"])
+        # L'ambiance continue d'agréger tous les appareils.
+        self.assertEqual(buckets[8]["ambient"], 18.2)
+        self.assertEqual(buckets[8]["count"], 2)
+        self.assertEqual(stats["setpoint_device_id"], 28129468)
 
 
 if __name__ == "__main__":

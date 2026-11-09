@@ -1,7 +1,7 @@
 // Statistiques : températures intérieures, consignes et météo extérieure.
 
 import { get, query } from "../api.js";
-import { barChart, chartLegend, lineChart } from "../charts.js";
+import { attachBarTooltip, barChart, chartLegend, lineChart } from "../charts.js";
 import { icon } from "../icons.js";
 import { devicesInRoom, store } from "../state.js";
 import { toastError } from "../toast.js";
@@ -56,6 +56,8 @@ let loading = false;
 let requestId = 0;
 let energyView = readPref("stats.energyView", "month");
 let energyMonth = Number(readPref("stats.energyMonth", new Date().getMonth() + 1));
+let energyDay = readPref("stats.energyDay", todayIso());
+let energyDays = Number(readPref("stats.energyDays", 7));
 let energyRequestId = 0;
 
 export default {
@@ -67,6 +69,12 @@ export default {
     if (!ENERGY_VIEWS.some(([key]) => key === energyView)) energyView = "month";
     if (!Number.isInteger(energyMonth) || energyMonth < 1 || energyMonth > 12) {
       energyMonth = new Date().getMonth() + 1;
+    }
+    if (!Number.isInteger(energyDays) || energyDays < 1) energyDays = 7;
+    if (!parseDate(energyDay)) energyDay = todayIso();
+    const energyDate = parseDate(energyDay);
+    if (energyDate && energyDate.getMonth() + 1 !== energyMonth) {
+      energyDay = isoDay(new Date(energyDate.getFullYear(), energyMonth - 1, 1));
     }
     if (!parseDate(anchor)) anchor = todayIso();
 
@@ -272,12 +280,13 @@ function paint() {
       </div>
     </div>
 
-    <div class="card mt-2">
-      <div class="card-head">
+    <details class="card card-details mt-2"${readPref("stats.detailOpen", false) ? " open" : ""}>
+      <summary class="card-head">
         <div class="card-title">${icon("list", 18)} Détail</div>
         <span class="tiny muted">${summary.buckets_with_data || 0}/${buckets.length} périodes renseignées</span>
-      </div>
-      <div style="overflow-x:auto">
+        ${icon("chevron-down", 18, "details-chevron")}
+      </summary>
+      <div class="card-body" style="overflow-x:auto">
         <table class="stats-table">
           <thead>
             <tr><th>Période</th><th>Ambiance</th><th>Consigne</th><th>Extérieur</th><th>Mesures</th></tr>
@@ -297,7 +306,7 @@ function paint() {
           </tbody>
         </table>
       </div>
-    </div>
+    </details>
 
     <p class="hint mt-2">
       Les mesures sont agrégées par heure en mémoire puis écrites par lots sur le disque.
@@ -305,7 +314,15 @@ function paint() {
     </p>
   `;
 
-  attachChartTooltip();}
+  attachChartTooltip();
+
+  const details = host.querySelector(".card-details");
+  if (details) {
+    details.addEventListener("toggle", () => {
+      writePref("stats.detailOpen", details.open);
+    });
+  }
+}
 
 function kpi(iconName, label, value, sub) {
   return `<div class="kpi">
@@ -325,12 +342,6 @@ function attachChartTooltip() {
 
   const tooltip = document.createElement("div");
   tooltip.className = "chart-tooltip";
-  tooltip.style.cssText =
-    "position:absolute;display:none;pointer-events:none;z-index:5;" +
-    "background:var(--surface);border:1px solid var(--line);border-radius:10px;" +
-    "padding:8px 10px;font-size:0.8rem;box-shadow:0 4px 14px rgba(0,0,0,.18);" +
-    "max-width:220px;";
-  wrap.style.position = "relative";
   wrap.appendChild(tooltip);
 
   const buckets = data.buckets;
@@ -432,6 +443,8 @@ async function loadEnergy() {
       `/api/energy${query({
         view: energyView,
         month: energyView === "day" ? energyMonth : undefined,
+        day: energyView === "day" ? energyDay : undefined,
+        days: energyView === "day" ? energyDays : undefined,
       })}`
     );
     if (id !== energyRequestId) return;
@@ -453,6 +466,21 @@ function paintEnergy(payload) {
 
   const ok = Boolean(payload?.ok);
   const summary = payload?.summary || {};
+  const window_ = payload?.window || null;
+  const isDay = energyView === "day";
+
+  const dayNav = isDay
+    ? `<div class="row" style="gap:4px;align-items:center">
+        <button class="icon-btn" type="button" id="energyPrev" aria-label="7 jours précédents"${
+          window_ && window_.start <= 1 ? " disabled" : ""
+        }>${icon("chevron-left", 18)}</button>
+        <span class="tiny" id="energyWindow">${dayWindowLabel(window_, energyDay)}</span>
+        <button class="icon-btn" type="button" id="energyNext" aria-label="7 jours suivants"${
+          window_ && window_.end >= window_.limit ? " disabled" : ""
+        }>${icon("chevron-right", 18)}</button>
+      </div>`
+    : "";
+
   const controls = `<div class="row-between wrap" style="gap:10px">
     <div class="segmented" id="energyView">
       ${ENERGY_VIEWS.map(
@@ -461,16 +489,19 @@ function paintEnergy(payload) {
       ).join("")}
     </div>
     ${
-      energyView === "day"
-        ? `<label class="field" style="min-width:150px">
-            <span class="sr-only">Mois</span>
-            <select class="select" id="energyMonth">
-              ${MONTHS.map(
-                (label, index) =>
-                  `<option value="${index + 1}"${index + 1 === energyMonth ? " selected" : ""}>${label}</option>`
-              ).join("")}
-            </select>
-          </label>`
+      isDay
+        ? `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+            <label class="field" style="min-width:150px">
+              <span class="sr-only">Mois</span>
+              <select class="select" id="energyMonth">
+                ${MONTHS.map(
+                  (label, index) =>
+                    `<option value="${index + 1}"${index + 1 === energyMonth ? " selected" : ""}>${label}</option>`
+                ).join("")}
+              </select>
+            </label>
+            ${dayNav}
+          </div>`
         : ""
     }
   </div>`;
@@ -491,36 +522,9 @@ function paintEnergy(payload) {
   } else {
     const series = payload.series || [];
     const labels = payload.labels || [];
-    const delta = summary.delta_pct;
+    const hasByYear = Array.isArray(summary.by_year) && summary.by_year.length;
     body = `
-      <div class="kpi-grid">
-        ${kpi(
-          "zap",
-          summary.label || `Année ${summary.year ?? ""}`,
-          summary.total_kwh === null || summary.total_kwh === undefined
-            ? "—"
-            : `${fmtNumber(summary.total_kwh, 1)} kWh`,
-          `${summary.days || 0} jour(s) relevés`
-        )}
-        ${kpi(
-          "history",
-          summary.previous_label || `Année ${summary.previous_year ?? ""}`,
-          summary.previous_kwh === null || summary.previous_kwh === undefined
-            ? "—"
-            : `${fmtNumber(summary.previous_kwh, 1)} kWh`,
-          "même période"
-        )}
-        ${kpi(
-          delta !== null && delta !== undefined && delta > 0
-            ? "trending-up"
-            : "trending-down",
-          "Écart",
-          delta === null || delta === undefined
-            ? "—"
-            : `${delta > 0 ? "+" : ""}${fmtNumber(delta, 1)} %`,
-          "année sur année"
-        )}
-      </div>
+      ${hasByYear ? byYearTable(summary) : energyKpiGrid(summary)}
       ${barChart({
         labels,
         series,
@@ -561,9 +565,96 @@ function paintEnergy(payload) {
 
   host.querySelector("#energyMonth")?.addEventListener("change", (event) => {
     energyMonth = Number(event.target.value) || new Date().getMonth() + 1;
+    const current = parseDate(energyDay) || new Date();
+    energyDay = isoDay(new Date(current.getFullYear(), energyMonth - 1, 1));
     writePref("stats.energyMonth", energyMonth);
+    writePref("stats.energyDay", energyDay);
     loadEnergy();
   });
+
+  host.querySelector("#energyPrev")?.addEventListener("click", () => shiftEnergyDay(-energyDays));
+  host.querySelector("#energyNext")?.addEventListener("click", () => shiftEnergyDay(energyDays));
+
+  const barWrap = host.querySelector(".chart-wrap");
+  attachBarTooltip(barWrap, { unit: "kWh" });
+}
+
+function byYearTable(summary) {
+  const rows = summary.by_year;
+  const partial = summary.partial
+    ? `<p class="hint mt-2">Totaux à date : l’année en cours n’est pas terminée, la comparaison porte sur la même période.</p>`
+    : "";
+  return `<div style="overflow-x:auto">
+    <table class="stats-table">
+      <thead>
+        <tr><th>Année</th><th>Consommation</th><th>Écart N-1</th></tr>
+      </thead>
+      <tbody>
+        ${rows
+          .map((row) => {
+            const delta = row.delta_pct;
+            return `<tr>
+              <td>${escapeHtml(row.label ?? row.year ?? "—")}</td>
+              <td>${row.kwh === null || row.kwh === undefined ? "—" : `${fmtNumber(row.kwh, 0)} kWh`}</td>
+              <td>${delta === null || delta === undefined ? "—" : `${delta > 0 ? "+" : ""}${fmtNumber(delta, 1)} %`}</td>
+            </tr>`;
+          })
+          .join("")}
+      </tbody>
+    </table>
+    ${partial}
+  </div>`;
+}
+
+function energyKpiGrid(summary) {
+  const delta = summary.delta_pct;
+  return `<div class="kpi-grid">
+    ${kpi(
+      "zap",
+      summary.label || `Année ${summary.year ?? ""}`,
+      summary.total_kwh === null || summary.total_kwh === undefined
+        ? "—"
+        : `${fmtNumber(summary.total_kwh, 1)} kWh`,
+      `${summary.days || 0} jour(s) relevés`
+    )}
+    ${kpi(
+      "history",
+      summary.previous_label || `Année ${summary.previous_year ?? ""}`,
+      summary.previous_kwh === null || summary.previous_kwh === undefined
+        ? "—"
+        : `${fmtNumber(summary.previous_kwh, 1)} kWh`,
+      "même période"
+    )}
+    ${kpi(
+      delta !== null && delta !== undefined && delta > 0 ? "trending-up" : "trending-down",
+      "Écart",
+      delta === null || delta === undefined ? "—" : `${delta > 0 ? "+" : ""}${fmtNumber(delta, 1)} %`,
+      "année sur année"
+    )}
+  </div>`;
+}
+
+function dayWindowLabel(window_, energyDayIso) {
+  if (!window_) return "";
+  const date = parseDate(energyDayIso) || new Date();
+  const year = date.getFullYear();
+  const month = (energyMonth || 1) - 1;
+  const start = new Date(year, month, window_.start);
+  const end = new Date(year, month, window_.end);
+  return `${fmtDate(start)} → ${fmtDate(end)}`;
+}
+
+function shiftEnergyDay(delta) {
+  // Le serveur ne raisonne qu'en numéro de jour dans le mois sélectionné :
+  // on borne donc le jour au mois courant avant de demander la fenêtre.
+  const date = parseDate(energyDay) || new Date();
+  const year = date.getFullYear();
+  const month = (energyMonth || 1) - 1;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(Math.max(date.getDate() + delta, 1), lastDay);
+  energyDay = isoDay(new Date(year, month, day));
+  writePref("stats.energyDay", energyDay);
+  loadEnergy();
 }
 
 function energySubtitle(payload) {

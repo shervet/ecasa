@@ -18,6 +18,8 @@ from mecasa.energy import (  # noqa: E402
     EnergyService,
     _parse_daily,
     build_energy,
+    parse_energy_day,
+    parse_energy_days,
     parse_energy_month,
     parse_med_start,
     test_energy,
@@ -189,10 +191,11 @@ class ServiceTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
-    def build(self, view="month", month=None, config=None):
+    def build(self, view="month", month=None, config=None, day=None, days=None):
         service = EnergyService(fetcher=FakeFetcher())
         return build_energy(
-            service, config or CONFIG, view=view, month=month, today=TODAY
+            service, config or CONFIG, view=view, month=month, today=TODAY,
+            day=day, days=days,
         )
 
     def test_month_view(self):
@@ -212,12 +215,47 @@ class BuildTests(unittest.TestCase):
         payload = self.build("day", month=1)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["month"], 1)
-        self.assertEqual(len(payload["labels"]), 31)
-        first = payload["series"][0]
-        self.assertEqual(first["values"][4], 10.0)   # 5 janvier
-        self.assertEqual(first["values"][19], 5.0)   # 20 janvier
-        second = payload["series"][1]
-        self.assertEqual(second["values"][1], 3.0)   # 2 janvier
+        # Fenêtre glissante de 7 jours terminant au dernier jour avec
+        # données du mois (20 janvier 2024), pas les 31 jours du mois.
+        self.assertEqual(payload["window"]["size"], 7)
+        self.assertEqual(payload["window"]["end"], 20)
+        self.assertEqual(payload["window"]["start"], 14)
+        self.assertEqual(payload["labels"], [
+            "14/01", "15/01", "16/01", "17/01", "18/01", "19/01", "20/01",
+        ])
+        first = payload["series"][0]   # 2024
+        self.assertEqual(first["values"][-1], 5.0)   # 20 janvier 2024
+        self.assertIsNone(first["values"][0])        # 14 janvier : pas de donnée
+        second = payload["series"][1]  # 2025 : rien dans la fenêtre
+        self.assertTrue(all(value is None for value in second["values"]))
+
+    def test_day_view_explicit_window(self):
+        payload = self.build("day", month=1, day="2025-01-05", days=3)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["window"]["end"], 5)
+        self.assertEqual(payload["window"]["start"], 3)
+        self.assertEqual(payload["labels"], ["03/01", "04/01", "05/01"])
+        series = {item["label"]: item for item in payload["series"]}
+        self.assertEqual(series["2024"]["values"], [None, None, 10.0])
+        self.assertEqual(series["2025"]["values"], [None, None, None])
+
+    def test_day_view_window_starts_on_first_of_month(self):
+        # Moins de 7 jours écoulés dans le mois : la fenêtre démarre au 1er.
+        payload = self.build("day", month=1, day="2025-01-02", days=7)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["window"]["start"], 1)
+        self.assertEqual(payload["labels"], ["01/01", "02/01"])
+        series = {item["label"]: item for item in payload["series"]}
+        self.assertEqual(series["2025"]["values"], [None, 3.0])
+
+    def test_day_view_current_month_clipped_to_today_and_data(self):
+        # TODAY = 15 mars 2025 ; dernière donnée de mars : le 10.
+        payload = self.build("day", month=3)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["window"]["end"], 10)
+        self.assertEqual(payload["labels"][-1], "10/03")
+        series = {item["label"]: item for item in payload["series"]}
+        self.assertEqual(series["2025"]["values"][-1], 6.0)
 
     def test_week_view_uses_iso_year(self):
         payload = self.build("week")
@@ -229,10 +267,14 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(series["2025"]["values"][0], 4.0)
 
     def test_year_view(self):
+        # Vue année : totaux à date (bornés au 15 mars, date de référence).
+        # 2024 : 10 (05/01) + 5 (20/01) + 20 (10/02) = 35 kWh ; le 1 kWh du
+        # 31/12/2024 est après la date de référence et n'est pas compté.
+        # 2025 : 3 (02/01) + 4 (15/02) + 6 (10/03) = 13 kWh.
         payload = self.build("year")
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["labels"], ["2024", "2025"])
-        self.assertEqual(payload["series"][0]["values"], [36.0, 13.0])
+        self.assertEqual(payload["series"][0]["values"], [35.0, 13.0])
 
     def test_summary_compares_same_period(self):
         payload = self.build("month")
@@ -243,14 +285,35 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(summary["previous_kwh"], 35.0)
         self.assertEqual(summary["delta_pct"], -62.9)
 
-    def test_summary_day_view_uses_selected_month(self):
+    def test_summary_day_view_uses_displayed_window(self):
+        # Fenêtre par défaut : 14–20 janvier (dernière donnée du mois).
+        # Seule l'année 2024 a une donnée dans la fenêtre (20/01 : 5 kWh).
         payload = self.build("day", month=1)
         summary = payload["summary"]
-        self.assertEqual(summary["label"], "Janvier 2025")
-        self.assertEqual(summary["previous_label"], "Janvier 2024")
-        self.assertEqual(summary["total_kwh"], 3.0)
-        self.assertEqual(summary["previous_kwh"], 15.0)
-        self.assertEqual(summary["delta_pct"], -80.0)
+        self.assertEqual(summary["year"], 2024)
+        self.assertEqual(summary["label"], "14–20 Janvier 2024")
+        self.assertEqual(summary["previous_label"], "14–20 Janvier 2023")
+        self.assertEqual(summary["total_kwh"], 5.0)
+        self.assertIsNone(summary["previous_kwh"])
+        self.assertIsNone(summary["delta_pct"])
+
+    def test_summary_day_view_compares_same_days_across_years(self):
+        data = {
+            date(2024, 11, 9): 10000,   # 10 kWh
+            date(2025, 11, 3): 2000,    # 2 kWh
+            date(2025, 11, 9): 8000,    # 8 kWh
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(
+            service, CONFIG, view="day", month=11, today=date(2025, 11, 9),
+            day="2025-11-09", days=7,
+        )
+        summary = payload["summary"]
+        # Fenêtre 03–09 novembre : 2025 = 2 + 8, 2024 = 10.
+        self.assertEqual(summary["label"], "03–09 Novembre 2025")
+        self.assertEqual(summary["total_kwh"], 10.0)
+        self.assertEqual(summary["previous_kwh"], 10.0)
+        self.assertEqual(summary["delta_pct"], 0.0)
 
     def test_summary_week_view_uses_current_iso_week(self):
         data = {date(2024, 3, 12): 8000, date(2025, 3, 10): 6000}
@@ -262,13 +325,29 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(summary["previous_kwh"], 8.0)
         self.assertEqual(summary["delta_pct"], -25.0)
 
+    def test_summary_week_view_without_data_this_year(self):
+        # La semaine ISO courante n'a pas encore de donnée : on compare alors
+        # la dernière année qui en a, au lieu d'afficher 0 kWh et -100 %.
+        data = {date(2024, 3, 12): 8000, date(2024, 3, 13): 4000}
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(service, CONFIG, view="week", today=TODAY)
+        summary = payload["summary"]
+        self.assertEqual(summary["year"], 2024)
+        self.assertEqual(summary["label"], "Semaine 11 · 2024")
+        self.assertEqual(summary["total_kwh"], 12.0)
+        self.assertIsNone(summary["previous_kwh"])
+        self.assertIsNone(summary["delta_pct"])
+
     def test_summary_year_view_uses_last_year(self):
+        # Vue année : comparaison à date (15 mars), comme la vue mois.
+        # 2024 à date = 35 kWh (le 31/12 est hors période) -> (13 - 35)/35.
         payload = self.build("year")
         summary = payload["summary"]
         self.assertEqual(summary["label"], "Année 2025")
         self.assertEqual(summary["total_kwh"], 13.0)
-        self.assertEqual(summary["previous_kwh"], 36.0)
-        self.assertEqual(summary["delta_pct"], -63.9)
+        self.assertEqual(summary["previous_kwh"], 35.0)
+        self.assertEqual(summary["delta_pct"], -62.9)
+        self.assertTrue(summary["partial"])
 
     def test_summary_zero_previous_is_full_increase(self):
         data = {date(2024, 1, 2): 0, date(2025, 1, 2): 3000}
@@ -276,6 +355,62 @@ class BuildTests(unittest.TestCase):
         payload = build_energy(service, CONFIG, view="month", today=TODAY)
         self.assertEqual(payload["summary"]["previous_kwh"], 0.0)
         self.assertEqual(payload["summary"]["delta_pct"], 100.0)
+
+    def test_summary_by_year_month_view(self):
+        # Vue mois : chaque année à date (15 mars), écart vs N-1 à date.
+        payload = self.build("month")
+        by_year = payload["summary"]["by_year"]
+        self.assertEqual([row["year"] for row in by_year], [2025, 2024])
+        current, previous = by_year
+        self.assertEqual(current["kwh"], 13.0)
+        self.assertEqual(current["days"], 3)
+        # 2024 au 15 mars : 10 + 5 + 20 = 35 → (13 − 35) / 35 = −62,9 %.
+        self.assertEqual(current["delta_pct"], -62.9)
+        self.assertEqual(previous["kwh"], 35.0)
+        self.assertIsNone(previous["delta_pct"])  # plus ancienne année
+        # Cohérence avec les totaux historiques du résumé.
+        self.assertEqual(current["kwh"], payload["summary"]["total_kwh"])
+        self.assertEqual(current["delta_pct"], payload["summary"]["delta_pct"])
+
+    def test_summary_by_year_year_view(self):
+        # Vue année : totaux à date (bornés au 15 mars), l'année en cours
+        # reste partielle. 2024 à date = 35 kWh -> (13 - 35)/35 = -62,9 %.
+        payload = self.build("year")
+        by_year = payload["summary"]["by_year"]
+        self.assertEqual([row["year"] for row in by_year], [2025, 2024])
+        self.assertEqual(by_year[0]["kwh"], 13.0)
+        self.assertEqual(by_year[0]["delta_pct"], -62.9)
+        self.assertEqual(by_year[1]["kwh"], 35.0)
+        self.assertIsNone(by_year[1]["delta_pct"])
+        # Cohérence avec le résumé et le graphique.
+        self.assertEqual(by_year[0]["kwh"], payload["summary"]["total_kwh"])
+        self.assertEqual(
+            by_year[1]["kwh"], payload["series"][0]["values"][0]
+        )
+
+    def test_summary_by_year_day_view_uses_window(self):
+        data = {
+            date(2024, 11, 9): 10000,
+            date(2025, 11, 3): 2000,
+            date(2025, 11, 9): 8000,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(
+            service, CONFIG, view="day", month=11, today=date(2025, 11, 9),
+            day="2025-11-09", days=7,
+        )
+        by_year = payload["summary"]["by_year"]
+        self.assertEqual([row["year"] for row in by_year], [2025, 2024])
+        self.assertEqual(by_year[0]["kwh"], 10.0)
+        self.assertEqual(by_year[0]["delta_pct"], 0.0)
+        self.assertEqual(by_year[1]["kwh"], 10.0)
+        self.assertIsNone(by_year[1]["delta_pct"])
+
+    def test_summary_by_year_empty_without_points(self):
+        service = EnergyService(fetcher=FakeFetcher(data={}))
+        payload = build_energy(service, CONFIG, view="month", today=TODAY)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["summary"], {})
 
     def test_disabled(self):
         payload = self.build(config={**CONFIG, "med_enabled": False})
@@ -311,6 +446,20 @@ class HelpersTests(unittest.TestCase):
         self.assertEqual(parse_energy_month("13", TODAY), 3)
         self.assertEqual(parse_energy_month(None, TODAY), 3)
         self.assertEqual(parse_energy_month("abc", date(2025, 11, 9)), 11)
+
+    def test_parse_energy_day(self):
+        self.assertEqual(parse_energy_day("2026-11-09", 11), 9)
+        # Un jour d'un autre mois est ignoré (fenêtre par défaut).
+        self.assertIsNone(parse_energy_day("2026-11-09", 3))
+        self.assertIsNone(parse_energy_day("pas-une-date", 11))
+        self.assertIsNone(parse_energy_day(None, 11))
+
+    def test_parse_energy_days(self):
+        self.assertEqual(parse_energy_days("7"), 7)
+        self.assertEqual(parse_energy_days(None), 7)
+        self.assertEqual(parse_energy_days("abc"), 7)
+        self.assertEqual(parse_energy_days("0"), 1)
+        self.assertEqual(parse_energy_days("99"), 31)
 
     def test_parse_med_start(self):
         self.assertEqual(parse_med_start("2023-06-01", TODAY), date(2023, 6, 1))

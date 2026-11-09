@@ -196,7 +196,7 @@ export function barChart({
       const barH = Math.max(0, innerH - (y(value) - M.top));
       const x = M.left + groupW * index + groupPad + seriesIndex * (barW + barGap);
       const title = `${labels[index] ?? index} · ${item.label} : ${fmtNumber(value, 1)} ${unit}`;
-      bars += `<rect x="${x.toFixed(1)}" y="${(M.top + innerH - barH).toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${item.color}"><title>${escapeHtml(title)}</title></rect>`;
+      bars += `<rect class="chart-bar" x="${x.toFixed(1)}" y="${(M.top + innerH - barH).toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${item.color}" data-label="${escapeHtml(labels[index] ?? index)}" data-series="${escapeHtml(item.label)}" data-value="${Number(value)}" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title></rect>`;
     });
   });
 
@@ -226,6 +226,104 @@ export function chartLegend(series = []) {
         `<span class="lg" style="--c:${item.color || "var(--primary)"}">${escapeHtml(item.label)}</span>`
     )
     .join("")}</div>`;
+}
+
+/**
+ * Tooltip interactif pour les barres d'un graphique en barres.
+ * Affiche label, série et valeur au survol/clic. Le tooltip reste visible
+ * dans le conteneur et suit la barre active lors d'un défilement horizontal.
+ */
+export function attachBarTooltip(wrap, { unit = "" } = {}) {
+  if (!wrap) return;
+
+  let tooltip = wrap.querySelector(".chart-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.className = "chart-tooltip";
+    wrap.appendChild(tooltip);
+  }
+
+  let activeRect = null;
+
+  function place(rect) {
+    const wrapRect = wrap.getBoundingClientRect();
+    // Position du rectangle par rapport au contenu du wrap : le scroll
+    // horizontal décale le SVG, il faut donc l'ajouter pour que le tooltip
+    // reste collé à la barre.
+    const scrollLeft = wrap.scrollLeft || 0;
+    const x = rect.left - wrapRect.left + scrollLeft + rect.width / 2;
+    const y = rect.top - wrapRect.top;
+    const pad = 8;
+    let left = x - tooltip.offsetWidth / 2;
+    // On borne dans la zone visible du conteneur (pas dans tout le contenu).
+    const minLeft = scrollLeft + pad;
+    const maxLeft = scrollLeft + wrap.clientWidth - tooltip.offsetWidth - pad;
+    left = Math.max(minLeft, Math.min(left, Math.max(minLeft, maxLeft)));
+    let top = y - tooltip.offsetHeight - pad;
+    if (top < pad) top = y + rect.height + pad;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function show(rect) {
+    activeRect = rect;
+    const label = rect.dataset.label ?? "";
+    const series = rect.dataset.series ?? "";
+    const raw = rect.dataset.value;
+    const valueText =
+      raw === "" || raw === undefined
+        ? "—"
+        : `${fmtNumber(Number(raw), 1)} ${unit}`.trim();
+    tooltip.innerHTML = [
+      label ? `<strong>${escapeHtml(label)}</strong>` : "",
+      series ? escapeHtml(series) : "",
+      escapeHtml(valueText),
+    ]
+      .filter(Boolean)
+      .join("<br>");
+    tooltip.style.display = "block";
+    place(rect);
+  }
+
+  function hide() {
+    activeRect = null;
+    tooltip.style.display = "none";
+  }
+
+  // event.target peut être un noeud SVG : closest() n'existe que sur Element.
+  function barFrom(event) {
+    const target = event.target;
+    if (!target || typeof target.closest !== "function") return null;
+    return target.closest("rect[data-value]");
+  }
+
+  wrap.addEventListener("pointerover", (event) => {
+    const rect = barFrom(event);
+    if (rect) show(rect);
+  });
+  wrap.addEventListener("pointerout", (event) => {
+    if (!wrap.contains(event.relatedTarget)) hide();
+  });
+  wrap.addEventListener("pointermove", (event) => {
+    const rect = barFrom(event);
+    if (rect) show(rect);
+  });
+  wrap.addEventListener("pointerdown", (event) => {
+    const rect = barFrom(event);
+    if (rect) {
+      show(rect);
+    } else {
+      // Clic dans le vide : on referme la valeur affichée.
+      hide();
+    }
+  });
+  wrap.addEventListener(
+    "scroll",
+    () => {
+      if (activeRect) place(activeRect);
+    },
+    { passive: true }
+  );
 }
 
 /** Mini barres pour la répartition des modes sur une période. */

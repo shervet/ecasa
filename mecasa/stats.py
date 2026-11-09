@@ -64,6 +64,15 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
         if device.get("device_id") is not None
     ]
 
+    # La consigne d'une pièce est appliquée par son actuateur : les autres
+    # appareils (thermostat sans planning, sonde) ne doivent pas diluer la
+    # moyenne en y mêlant leur propre « consigne » de repli.
+    actuator_id = None
+    try:
+        actuator_id = int(room.get("actuator_device_id"))
+    except (TypeError, ValueError):
+        actuator_id = None
+
     today = datetime.now().date()
     if anchor > today:
         anchor = today
@@ -74,13 +83,22 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
     start_dt = datetime.combine(start_date, time.min)
 
     rows = []
+    actuator_rows = []
     if end_dt >= start_dt:
         for device in devices:
             try:
                 device_id = int(device["device_id"])
             except (TypeError, ValueError):
                 continue
-            rows.extend(store.samples(device_id, start_dt, end_dt))
+            device_rows = store.samples(device_id, start_dt, end_dt)
+            rows.extend(device_rows)
+            if actuator_id is not None and device_id == actuator_id:
+                actuator_rows = device_rows
+
+    # Sous-ensemble utilisé pour la consigne : l'actuateur seul s'il est
+    # défini (pas de repli sur les autres appareils), sinon tous les
+    # appareils de la pièce (comportement historique, pièce mono-appareil).
+    setpoint_rows = actuator_rows if actuator_id is not None else rows
 
     buckets = _buckets(range_name, start_date, end_date)
     sums = [
@@ -88,6 +106,7 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
         for _ in buckets
     ]
 
+    # Température d'ambiance et compteurs : tous les appareils de la pièce.
     for row in rows:
         try:
             moment = datetime.fromisoformat(str(row["ts"]))
@@ -99,11 +118,21 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
         bucket = sums[index]
         bucket["count"] += 1
         ambient = _as_float(row.get("ambient"))
-        setpoint = _as_float(row.get("setpoint"))
         if ambient is not None:
             bucket["ambient"].append(ambient)
+
+    # Consigne : uniquement le sous-ensemble retenu (actuateur ou tous).
+    for row in setpoint_rows:
+        try:
+            moment = datetime.fromisoformat(str(row["ts"]))
+        except (TypeError, ValueError):
+            continue
+        index = _bucket_index(range_name, moment, start_date, len(buckets))
+        if index is None:
+            continue
+        setpoint = _as_float(row.get("setpoint"))
         if setpoint is not None:
-            bucket["setpoint"].append(setpoint)
+            sums[index]["setpoint"].append(setpoint)
 
     hours, weather_error, weather_result = _weather_values(
         weather, config, start_date, end_date, today, now
@@ -127,7 +156,7 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
     ]
     all_setpoint = [
         _as_float(row.get("setpoint"))
-        for row in rows
+        for row in setpoint_rows
         if _as_float(row.get("setpoint")) is not None
     ]
     all_outside = [
@@ -162,6 +191,7 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
             }
             for device in devices
         ],
+        "setpoint_device_id": actuator_id,
         "range": range_name,
         "range_label": RANGE_LABELS[range_name],
         "anchor": anchor.isoformat(),

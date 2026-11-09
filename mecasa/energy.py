@@ -165,16 +165,21 @@ class EnergyService:
 
 
 def build_energy(service, config: dict, view: str = "month", month=None,
-                 today: date | None = None) -> dict:
+                 today: date | None = None, day=None, days=None) -> dict:
     """Construit la réponse de ``GET /api/energy``.
 
     ``view`` vaut ``day``, ``week``, ``month`` ou ``year``. Les séries sont
     toujours indexées par année afin que l'interface compare les mêmes
     périodes d'une année sur l'autre.
+
+    En vue ``day``, ``day`` (date ISO) fixe le jour de référence de la
+    fenêtre glissante et ``days`` sa taille (7 par défaut).
     """
     today = today or date.today()
     view = view if view in ENERGY_VIEWS else "month"
     month = parse_energy_month(month, today)
+    ref_day = parse_energy_day(day, month)
+    window_size = parse_energy_days(days)
 
     enabled = bool(config.get("med_enabled"))
     token = str(config.get("med_token") or "").strip()
@@ -239,8 +244,11 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     payload["ok"] = True
     payload["days"] = len(points)
     payload["last_date"] = max(points).isoformat()
-    _fill_view(payload, points, view, month, today)
-    payload["summary"] = _summary(points, view, month, today)
+    window = None
+    if view == "day":
+        window = _day_window(points, month, ref_day, window_size, today)
+    _fill_view(payload, points, view, month, today, window)
+    payload["summary"] = _summary(points, view, month, today, window)
     return payload
 
 
@@ -296,6 +304,67 @@ def parse_energy_month(value, today: date | None = None) -> int:
     return month if 1 <= month <= 12 else today.month
 
 
+def parse_energy_day(value, month: int) -> int | None:
+    """Jour de référence (fin de fenêtre) de la vue ``day``, en jour du mois.
+
+    Le paramètre est une date ISO ; seul le jour du mois compte, car la vue
+    compare le même jour de chaque année. Une date d'un autre mois (ou
+    invalide) est ignorée : la fenêtre par défaut s'applique.
+    """
+    if not value:
+        return None
+    try:
+        ref = datetime.fromisoformat(str(value)[:10]).date()
+    except ValueError:
+        return None
+    if ref.month != month:
+        return None
+    return ref.day
+
+
+def parse_energy_days(value, default: int = 7) -> int:
+    """Taille de la fenêtre de la vue ``day`` (1 à 31 jours, 7 par défaut)."""
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(31, max(1, size))
+
+
+def _day_window(points: dict[date, float], month: int, ref_day: int | None,
+                size: int, today: date) -> dict:
+    """Fenêtre glissante de ``size`` jours sur le mois sélectionné.
+
+    Les séries comparent le même jour du mois d'une année sur l'autre : la
+    fenêtre porte donc sur les numéros de jour (1–31). Elle est clippée sur
+    les données disponibles : jamais au-delà d'aujourd'hui pour le mois
+    courant, jamais au-delà du dernier jour avec une donnée du mois, et elle
+    commence au 1er si moins de ``size`` jours sont écoulés.
+    """
+    selected = [day for day in points if day.month == month]
+    years = {day.year for day in selected}
+    if years:
+        max_day = max(calendar.monthrange(year, month)[1] for year in years)
+    else:
+        max_day = calendar.monthrange(today.year, month)[1]
+    limit = max_day
+    if today.month == month:
+        limit = min(limit, today.day)
+    if selected:
+        limit = min(limit, max(day.day for day in selected))
+    limit = max(1, limit)
+    end = min(max(ref_day or limit, 1), limit)
+    start = max(1, end - size + 1)
+    return {
+        "month": month,
+        "start": start,
+        "end": end,
+        "limit": limit,
+        "size": size,
+        "days": list(range(start, end + 1)),
+    }
+
+
 def parse_med_start(value, today: date | None = None) -> date:
     """Début de l'historique, borné aux 1095 jours autorisés par Enedis.
 
@@ -316,15 +385,27 @@ def parse_med_start(value, today: date | None = None) -> date:
 
 
 def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
-               today: date) -> None:
+               today: date, window: dict | None = None) -> None:
     if view == "year":
         years = sorted({day.year for day in points})
         payload["years"] = years
         payload["labels"] = [str(year) for year in years]
-        totals = [
-            _round(sum(value for day, value in points.items() if day.year == year))
-            for year in years
-        ]
+        # Totaux à date (comme le tableau) : l'année en cours est partielle,
+        # on borne donc chaque année au même jour de l'année.
+        totals = []
+        for year in years:
+            try:
+                limit = date(year, today.month, today.day)
+            except ValueError:
+                limit = date(year, today.month, 28)
+            totals.append(
+                _round(
+                    sum(
+                        value for day, value in points.items()
+                        if day.year == year and day <= limit
+                    )
+                )
+            )
         payload["series"] = [
             {"key": "total", "label": "Consommation", "values": totals}
         ]
@@ -352,24 +433,34 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         return
 
     if view == "day":
-        selected = {day: value for day, value in points.items() if day.month == month}
+        window = window or _day_window(points, month, None, 7, today)
+        day_numbers = set(window["days"])
+        selected = {
+            day: value
+            for day, value in points.items()
+            if day.month == month
+        }
         years = sorted({day.year for day in selected})
-        max_day = (
-            max(calendar.monthrange(year, month)[1] for year in years)
-            if years else calendar.monthrange(today.year, month)[1]
-        )
         payload["years"] = years
-        payload["labels"] = [str(day) for day in range(1, max_day + 1)]
+        payload["labels"] = [
+            f"{day_number:02d}/{month:02d}" for day_number in window["days"]
+        ]
+        payload["window"] = {
+            key: window[key]
+            for key in ("month", "start", "end", "limit", "size")
+        }
         grouped = {}
         for day, value in selected.items():
+            if day.day not in day_numbers:
+                continue
             grouped[(day.year, day.day)] = grouped.get((day.year, day.day), 0.0) + value
         series = []
         for year in years:
-            values = [None] * max_day
-            for day_number in range(1, max_day + 1):
-                total = grouped.get((year, day_number))
-                if total is not None:
-                    values[day_number - 1] = _round(total)
+            values = [
+                _round(grouped[(year, day_number)])
+                if (year, day_number) in grouped else None
+                for day_number in window["days"]
+            ]
             series.append({"key": str(year), "label": str(year), "values": values})
         payload["series"] = series
         return
@@ -392,14 +483,136 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
     payload["series"] = series
 
 
+def _period_totals(points: dict[date, float], view: str, month: int,
+                   today: date, window: dict | None):
+    """Renvoie (années concernées, total_par_année) pour la période de la vue.
+
+    ``total(year)`` -> ``(kwh, jours)`` calculé sur la période comparable :
+
+    - ``day``   : les jours de la fenêtre affichée (mêmes jours du mois) ;
+    - ``week``  : la semaine ISO courante ;
+    - ``year``  : l'année complète (l'année en cours reste partielle) ;
+    - ``month`` : l'année à date (même date pour les années passées).
+    """
+    if view == "day":
+        day_numbers = set(window["days"]) if window else None
+
+        def total(year: int) -> tuple[float, int]:
+            kwh = 0.0
+            count = 0
+            for day, value in points.items():
+                if (
+                    day.year == year
+                    and day.month == month
+                    and (day_numbers is None or day.day in day_numbers)
+                ):
+                    kwh += value
+                    count += 1
+            return kwh, count
+
+        years = {
+            day.year
+            for day in points
+            if day.month == month
+            and (day_numbers is None or day.day in day_numbers)
+        }
+        return years, total
+
+    if view == "week":
+        _, iso_week, _ = today.isocalendar()
+
+        def total(year: int) -> tuple[float, int]:
+            kwh = 0.0
+            count = 0
+            for day, value in points.items():
+                day_year, day_week, _ = day.isocalendar()
+                if day_year == year and day_week == iso_week:
+                    kwh += value
+                    count += 1
+            return kwh, count
+
+        years = {
+            day.isocalendar()[0]
+            for day in points
+            if day.isocalendar()[1] == iso_week
+        }
+        return years, total
+
+    if view == "year":
+        # Comparaison à date : l'année en cours est partielle, on borne donc
+        # chaque année au même jour de l'année pour que l'écart N-1 ait un sens.
+        def total(year: int) -> tuple[float, int]:
+            try:
+                limit = date(year, today.month, today.day)
+            except ValueError:
+                limit = date(year, today.month, 28)
+            kwh = sum(
+                value for day, value in points.items()
+                if day.year == year and day <= limit
+            )
+            count = sum(
+                1 for day in points if day.year == year and day <= limit
+            )
+            return kwh, count
+
+        return {day.year for day in points}, total
+
+    # month : année à date
+    def total(year: int) -> tuple[float, int]:
+        try:
+            limit = date(year, today.month, today.day)
+        except ValueError:
+            limit = date(year, today.month, 28)
+        kwh = 0.0
+        count = 0
+        for day, value in points.items():
+            if day.year == year and day <= limit:
+                kwh += value
+                count += 1
+        return kwh, count
+
+    return {day.year for day in points}, total
+
+
+def _delta_pct(total: float, prev_total: float, prev_count: int) -> float | None:
+    """Écart en % vs la même période l'année N-1 (None sans référence)."""
+    if not prev_count:
+        return None
+    if prev_total > 0:
+        return round((total - prev_total) / prev_total * 100, 1)
+    # Consommation nulle l'an passé : tout est une hausse.
+    return 100.0 if total > 0 else 0.0
+
+
+def _by_year(years: set[int], total_for) -> list[dict]:
+    """Totaux par année (décroissant), écart vs N-1 sur la même période."""
+    rows = []
+    for year in sorted(years, reverse=True):
+        total, count = total_for(year)
+        if not count:
+            continue
+        prev_total, prev_count = total_for(year - 1)
+        rows.append({
+            "year": year,
+            "label": str(year),
+            "kwh": _round(total),
+            "delta_pct": _delta_pct(total, prev_total, prev_count),
+            "days": count,
+        })
+    return rows
+
+
 def _summary(points: dict[date, float], view: str, month: int,
-             today: date) -> dict:
+             today: date, window: dict | None = None) -> dict:
     """Compare la période affichée à la même période de l'année précédente.
 
-    - ``day`` : le mois sélectionné, dernière année disponible ;
+    - ``day`` : la fenêtre affichée du mois sélectionné, dernière année
+      avec données dans la fenêtre ;
     - ``week`` : la semaine ISO courante ;
-    - ``year`` : la dernière année complète disponible ;
+    - ``year`` : la dernière année avec données ;
     - ``month`` : l'année en cours, à date.
+
+    ``by_year`` décline le même calcul pour chaque année disponible.
     """
     empty = {
         "year": None,
@@ -410,95 +623,73 @@ def _summary(points: dict[date, float], view: str, month: int,
         "previous_kwh": None,
         "delta_pct": None,
         "days": 0,
+        "partial": False,
         "last_date": None,
+        "by_year": [],
     }
     if not points:
         return empty
 
-    if view == "day":
-        def month_total(year: int) -> tuple[float, int]:
-            total = 0.0
-            count = 0
-            for day, value in points.items():
-                if day.year == year and day.month == month:
-                    total += value
-                    count += 1
-            return total, count
+    years_scope, total_for = _period_totals(points, view, month, today, window)
 
-        years = sorted({day.year for day, _ in points.items() if day.month == month})
-        ref = years[-1] if years else today.year
-        total, count = month_total(ref)
-        prev_total, prev_count = month_total(ref - 1)
-        label = f"{MONTH_LONG[month - 1].capitalize()} {ref}"
-        previous_label = f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"
+    if view == "day":
+        month_years = sorted({day.year for day in points if day.month == month})
+        ref = (
+            max(years_scope)
+            if years_scope
+            else (month_years[-1] if month_years else today.year)
+        )
+        if window:
+            label = (
+                f"{window['start']:02d}–{window['end']:02d} "
+                f"{MONTH_LONG[month - 1].capitalize()} {ref}"
+            )
+            previous_label = (
+                f"{window['start']:02d}–{window['end']:02d} "
+                f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"
+            )
+        else:
+            label = f"{MONTH_LONG[month - 1].capitalize()} {ref}"
+            previous_label = f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"
     elif view == "week":
         iso_year, iso_week, _ = today.isocalendar()
-
-        def week_total(year: int) -> tuple[float, int]:
-            total = 0.0
-            count = 0
-            for day, value in points.items():
-                day_year, day_week, _ = day.isocalendar()
-                if day_year == year and day_week == iso_week:
-                    total += value
-                    count += 1
-            return total, count
-
-        ref = iso_year
-        total, count = week_total(ref)
-        prev_total, prev_count = week_total(ref - 1)
+        # La semaine ISO courante n'a pas toujours de données (elle ne fait
+        # que commencer) : on compare alors la dernière année qui en a.
+        if years_scope:
+            ref = max(years_scope)
+        else:
+            ref = iso_year
         label = f"Semaine {iso_week} · {ref}"
         previous_label = f"Semaine {iso_week} · {ref - 1}"
     elif view == "year":
-        years = sorted({day.year for day in points})
-        ref = years[-1]
-        total = sum(value for day, value in points.items() if day.year == ref)
-        count = sum(1 for day in points if day.year == ref)
-        prev_total = sum(
-            value for day, value in points.items() if day.year == ref - 1
-        )
-        prev_count = sum(1 for day in points if day.year == ref - 1)
+        ref = max({day.year for day in points})
         label = f"Année {ref}"
         previous_label = f"Année {ref - 1}"
     else:  # mois : année en cours, à date
         ref = today.year
-        total = sum(value for day, value in points.items() if day.year == ref)
-        count = sum(1 for day in points if day.year == ref)
-        try:
-            previous_end = date(ref - 1, today.month, today.day)
-        except ValueError:
-            previous_end = date(ref - 1, today.month, 28)
-        prev_total = sum(
-            value
-            for day, value in points.items()
-            if day.year == ref - 1 and day <= previous_end
-        )
-        prev_count = sum(
-            1
-            for day in points
-            if day.year == ref - 1 and day <= previous_end
-        )
         label = f"Année {ref}"
         previous_label = f"Année {ref - 1}"
 
-    delta = None
-    if prev_count:
-        if prev_total > 0:
-            delta = round((total - prev_total) / prev_total * 100, 1)
-        else:
-            # Consommation nulle l'an passé : tout est une hausse.
-            delta = 100.0 if total > 0 else 0.0
+    total, count = total_for(ref)
+    prev_total, prev_count = total_for(ref - 1)
+
+    # Les totaux sont « à date » quand l'année de référence n'est pas
+    # terminée : l'interface doit le signaler.
+    partial = count > 0 and ref == today.year and view in ("month", "year")
 
     return {
         "year": ref,
         "label": label,
         "previous_year": ref - 1,
         "previous_label": previous_label,
-        "total_kwh": _round(total),
+        # Aucun jour mesuré sur la période : « — » plutôt qu'un 0 trompeur.
+        "total_kwh": _round(total) if count else None,
         "previous_kwh": _round(prev_total) if prev_count else None,
-        "delta_pct": delta,
+        "delta_pct": _delta_pct(total, prev_total, prev_count) if count else None,
         "days": count,
+        "partial": partial,
         "last_date": max(points).isoformat() if points else None,
+        "by_year": _by_year(years_scope, total_for),
     }
 
 

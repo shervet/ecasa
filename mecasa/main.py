@@ -1546,6 +1546,12 @@ class Handler(BaseHTTPRequestHandler):
                 room = {
                     "id": stored["id"] if stored else None,
                     "name": stored["name"] if stored else device.get("name"),
+                    "thermostat_device_id": (
+                        stored.get("thermostat_device_id") if stored else None
+                    ),
+                    "actuator_device_id": (
+                        stored.get("actuator_device_id") if stored else None
+                    ),
                     "devices": (
                         app.store.room_devices(stored["id"])
                         if stored else [device]
@@ -1571,8 +1577,14 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
             month = (query.get("month") or [""])[0]
+            # Vue « Jour » : fenêtre glissante (paramètres optionnels).
+            day = (query.get("day") or [""])[0]
+            days = (query.get("days") or [""])[0]
             self._json(
-                200, build_energy(app.energy, load_config(), view, month)
+                200,
+                build_energy(
+                    app.energy, load_config(), view, month, day=day, days=days
+                ),
             )
             return
 

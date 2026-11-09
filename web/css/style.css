@@ -2146,6 +2146,53 @@ svg {
   font-weight: 680;
 }
 
+/* Tooltip de graphique (courbes et barres) */
+.chart-tooltip {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 5;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  max-width: 220px;
+}
+
+.chart-bar {
+  cursor: pointer;
+}
+
+/* Carte repliable (Détail) */
+.card-details > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.card-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card-details > summary:hover {
+  background: var(--surface-2);
+}
+
+.card-details > summary .details-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+
+.card-details[open] > summary .details-chevron {
+  transform: rotate(180deg);
+}
+
 /* --------------------------------------------------------------- réglages */
 
 .settings-layout {
