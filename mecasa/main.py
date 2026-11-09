@@ -102,6 +102,8 @@ DEFAULT_CONFIG = {
     "med_start": "",
     "tailscale_enabled": False,
     "tailscale_auto_serve": False,
+    # Nom du nœud dans le tailnet : l'app Android résout mecasa.<tailnet>.ts.net.
+    "tailscale_hostname": "mecasa",
     "tailscale_authkey": "",
     # --- Stockage basse consommation (spécifique Raspberry Pi) ---------------
     # Snapshot structurel : un changement = une écriture au plus toutes les
@@ -311,6 +313,7 @@ def public_config(config: dict) -> dict:
         "med_token_set": bool(config.get("med_token")),
         "tailscale_enabled": bool(config.get("tailscale_enabled", False)),
         "tailscale_auto_serve": bool(config.get("tailscale_auto_serve", False)),
+        "tailscale_hostname": str(config.get("tailscale_hostname") or "mecasa"),
         "tailscale_authkey_set": bool(config.get("tailscale_authkey")),
         "state_file": str(config.get("state_file", "data/state.json")),
         "history_dir": str(config.get("history_dir", "data/history")),
@@ -512,6 +515,16 @@ def save_config(body: dict) -> tuple[dict, bool]:
         if key in body:
             updated[key] = bool(body.get(key))
 
+    if "tailscale_hostname" in body:
+        hostname = str(body.get("tailscale_hostname") or "").strip().lower()
+        if not hostname:
+            hostname = "mecasa"
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", hostname):
+            raise ValueError(
+                "Nom Tailscale invalide (lettres minuscules, chiffres et tirets)"
+            )
+        updated["tailscale_hostname"] = hostname
+
     if body.get("tailscale_authkey_clear"):
         updated["tailscale_authkey"] = ""
     elif body.get("tailscale_authkey"):
@@ -545,7 +558,8 @@ def save_config(body: dict) -> tuple[dict, bool]:
             "email", "password", "host", "port", "mock", "wiser_enabled",
             "wiser_host", "wiser_secret", "state_file", "history_dir",
             "history_interval", "history_days", "structural_delay",
-            "cache_static", "gzip_enabled",
+            "cache_static", "gzip_enabled", "tailscale_enabled",
+            "tailscale_auto_serve", "tailscale_hostname",
         )
     )
 
@@ -627,25 +641,156 @@ def _tailscale_cmd(args: list[str], timeout: int = 10) -> tuple[int, str, str]:
         return 1, "", str(err)
 
 
-def get_tailscale_status() -> dict:
+def _clean_dns_name(value) -> str:
+    return str(value or "").strip().rstrip(".")
+
+
+def tailscale_serve_args(port: int, path: str = "/", https_port: int = 443) -> list[str]:
+    """Commande de publication : HTTPS 443 sur le tailnet vers le port local.
+
+    ``tailscale serve --bg --set-path=/ http://127.0.0.1:8780`` équivaut à
+    l'ancienne notation ``--set-url /`` : le service est exposé sur
+    ``https://<noeud>.<tailnet>.ts.net/`` (certificat HTTPS automatique).
+    """
+    return [
+        "serve", "--bg", f"--https={int(https_port)}",
+        f"--set-path={path}", f"http://127.0.0.1:{int(port)}",
+    ]
+
+
+def summarize_serve_config(raw: str, expected_port: int | None = None,
+                           expected_host: str | None = None) -> dict:
+    """Analyse ``tailscale serve status --json``.
+
+    Retourne l'état de publication et vérifie que la racine ``/`` pointe bien
+    vers ``http://127.0.0.1:<port>`` en HTTPS 443.
+    """
+    result = {
+        "serve_active": False, "serve_url": None, "serve_target": None,
+        "serve_path": None, "serve_https_port": None, "serve_ok": False,
+    }
+    text = (raw or "").strip()
+    if not text:
+        return result
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return result
+    web = data.get("Web") if isinstance(data, dict) else None
+    if not isinstance(web, dict):
+        return result
+
+    best = None
+    best_score = (-1, -1)
+    for host_port, entry in web.items():
+        if not isinstance(entry, dict):
+            continue
+        handlers = entry.get("Handlers")
+        if not isinstance(handlers, dict):
+            continue
+        host, _, port_text = str(host_port).rpartition(":")
+        try:
+            https_port = int(port_text)
+        except ValueError:
+            continue
+        for path, handler in handlers.items():
+            if not isinstance(handler, dict):
+                continue
+            target = str(handler.get("Proxy") or "").strip()
+            if not target:
+                continue
+            score = (1 if path == "/" else 0, 1 if https_port == 443 else 0)
+            if score <= best_score:
+                continue
+            best_score = score
+            best = {
+                "host": _clean_dns_name(host), "https_port": https_port,
+                "path": str(path or "/"), "target": target,
+            }
+    if best is None:
+        return result
+
+    result.update({
+        "serve_active": True,
+        "serve_target": best["target"],
+        "serve_path": best["path"],
+        "serve_https_port": best["https_port"],
+        "serve_url": (
+            f"https://{best['host']}/" if best["host"] else None
+        ),
+    })
+    if expected_port:
+        result["serve_ok"] = (
+            best["path"] == "/"
+            and best["https_port"] == 443
+            and best["target"].rstrip("/").endswith(f"127.0.0.1:{int(expected_port)}")
+            and (
+                not expected_host
+                or best["host"].lower() == _clean_dns_name(expected_host).lower()
+            )
+        )
+    return result
+
+
+def tailscale_checks(status: dict, hostname: str | None = None,
+                     local_host: str | None = None) -> list[dict]:
+    """Diagnostic pas à pas du nécessaire pour l'app Android."""
+    checks: list[dict] = []
+
+    def add(ok: bool, label: str, detail: str = "") -> None:
+        checks.append({"ok": bool(ok), "label": label, "detail": detail})
+
+    installed = bool(status.get("installed"))
+    running = bool(status.get("running"))
+    dns_name = _clean_dns_name(status.get("dns_name"))
+    add(installed, "Client Tailscale installé",
+        "" if installed else "Commande « tailscale » introuvable dans le PATH")
+    add(running, "Nœud connecté au tailnet",
+        "" if running else "Utilise « Connecter » ou lance « tailscale up »")
+    add(bool(status.get("magic_dns_enabled")), "MagicDNS activé",
+        "" if status.get("magic_dns_enabled")
+        else "Active MagicDNS dans la console d'administration Tailscale")
+    add(bool(dns_name), "Nom DNS du nœud",
+        "" if dns_name else "Le nœud n'a pas encore de nom MagicDNS")
+    if hostname and dns_name:
+        short = dns_name.split(".")[0].lower()
+        add(short == hostname.lower(), f"Nom du nœud : {hostname}",
+            "" if short == hostname.lower()
+            else f"Le nœud s'appelle « {short} » au lieu de « {hostname} »")
+    add(bool(status.get("https_ready")), "HTTPS Certificates activé",
+        "" if status.get("https_ready")
+        else "Active HTTPS Certificates dans la console Tailscale")
+    if local_host is not None:
+        reachable = str(local_host) in ("0.0.0.0", "::", "", "127.0.0.1",
+                                        "::1", "localhost")
+        add(reachable, "MeCasa écoute sur 127.0.0.1",
+            "" if reachable
+            else "Règle « host » sur 0.0.0.0 pour que tailscale serve atteigne MeCasa")
+    add(bool(status.get("serve_ok")), "MeCasa publié en HTTPS",
+        "" if status.get("serve_ok")
+        else "Publie avec le bouton « Publier » (tailscale serve)")
+    return checks
+
+
+def get_tailscale_status(port: int | None = None,
+                         hostname: str | None = None,
+                         local_host: str | None = None) -> dict:
     status = {
         "installed": False, "running": False, "ip": None, "dns_name": None,
         "backend_state": None, "serve_active": False, "serve_url": None,
+        "serve_target": None, "serve_path": None, "serve_https_port": None,
+        "serve_ok": False, "magic_dns_enabled": False, "magic_dns_suffix": None,
+        "cert_domains": [], "https_ready": False, "https_url": None,
+        "health": [], "checks": [], "warnings": [],
     }
+    data = None
     code, out, _ = _tailscale_cmd(["status", "--json"], timeout=15)
     if code == 0 and out.strip():
         status["installed"] = True
         try:
             data = json.loads(out)
-            status["backend_state"] = data.get("BackendState")
-            status["running"] = data.get("BackendState") == "Running"
-            self_info = data.get("Self") or {}
-            status["dns_name"] = self_info.get("DNSName") or self_info.get("HostName")
-            addrs = self_info.get("TailscaleIPs") or []
-            if addrs:
-                status["ip"] = addrs[0]
         except (ValueError, TypeError):
-            pass
+            data = None
     else:
         code2, out2, _ = _tailscale_cmd(["ip", "-4"], timeout=5)
         if code2 == 0 and out2.strip():
@@ -657,43 +802,142 @@ def get_tailscale_status() -> dict:
             if "Running" in out3:
                 status["running"] = True
 
-    code_s, out_s, _ = _tailscale_cmd(["serve", "status"], timeout=10)
-    if code_s == 0 and out_s.strip():
-        status["serve_active"] = True
-        if status["ip"]:
-            status["serve_url"] = f"http://{status['ip']}:8780"
-        elif status["dns_name"]:
-            status["serve_url"] = f"http://{status['dns_name'].rstrip('.')}:8780"
+    if isinstance(data, dict):
+        status["backend_state"] = data.get("BackendState")
+        status["running"] = data.get("BackendState") == "Running"
+        self_info = data.get("Self") or {}
+        dns_name = _clean_dns_name(self_info.get("DNSName"))
+        status["dns_name"] = dns_name or self_info.get("HostName")
+        addrs = self_info.get("TailscaleIPs") or data.get("TailscaleIPs") or []
+        if addrs:
+            status["ip"] = addrs[0]
+        tailnet = data.get("CurrentTailnet") or {}
+        suffix = _clean_dns_name(
+            tailnet.get("MagicDNSSuffix") or data.get("MagicDNSSuffix")
+        )
+        status["magic_dns_suffix"] = suffix or None
+        status["magic_dns_enabled"] = bool(
+            tailnet.get("MagicDNSEnabled", bool(suffix))
+        )
+        certs = [
+            _clean_dns_name(item).lower()
+            for item in (data.get("CertDomains") or [])
+            if _clean_dns_name(item)
+        ]
+        status["cert_domains"] = certs
+        status["https_ready"] = bool(dns_name) and dns_name.lower() in certs
+        status["health"] = [str(item) for item in (data.get("Health") or [])]
+
+    if status.get("dns_name"):
+        status["https_url"] = f"https://{_clean_dns_name(status['dns_name'])}/"
+
+    code_s, out_s, _ = _tailscale_cmd(["serve", "status", "--json"], timeout=10)
+    serve = summarize_serve_config(out_s, port, status.get("dns_name"))
+    if not serve["serve_active"]:
+        code_t, out_t, _ = _tailscale_cmd(["serve", "status"], timeout=10)
+        if code_t == 0 and out_t.strip():
+            serve["serve_active"] = True
+    status.update(serve)
+    if not status["serve_url"] and status["serve_active"]:
+        status["serve_url"] = status["https_url"]
+
+    status["checks"] = tailscale_checks(status, hostname, local_host)
+    status["warnings"] = [
+        item["detail"] for item in status["checks"]
+        if not item["ok"] and item["detail"]
+    ]
     return status
 
 
-def tailscale_serve_enable(port: int) -> dict:
-    code, out, err = _tailscale_cmd(
-        ["serve", "--bg", f"http://127.0.0.1:{port}"], timeout=15
-    )
+def tailscale_serve_enable(port: int, path: str = "/",
+                           https_port: int = 443) -> dict:
+    args = tailscale_serve_args(port, path, https_port)
+    code, out, err = _tailscale_cmd(args, timeout=20)
     if code != 0:
         raise RuntimeError(err or out or "Échec de l'activation de tailscale serve")
-    return {"ok": True, "output": out or err}
+    return {
+        "ok": True,
+        "command": "tailscale " + " ".join(args),
+        "output": (out or err).strip(),
+    }
 
 
 def tailscale_serve_disable() -> dict:
     code, out, err = _tailscale_cmd(["serve", "reset"], timeout=15)
     if code != 0:
         raise RuntimeError(err or out or "Échec de la désactivation de tailscale serve")
-    return {"ok": True, "output": out or err}
+    return {"ok": True, "output": (out or err).strip()}
 
 
 def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
-    if not authkey:
-        raise RuntimeError("Clé d'authentification manquante")
-    args = ["up", f"--authkey={authkey}"]
+    """Connecte le nœud. Sans clé, ``tailscale up`` réutilise la session.
+
+    La clé est optionnelle pour renommer un nœud déjà connecté.
+    """
+    args = ["up"]
+    if authkey:
+        args.append(f"--authkey={authkey}")
     if hostname:
         args.append(f"--hostname={hostname}")
     args.append("--accept-routes=false")
     code, out, err = _tailscale_cmd(args, timeout=60)
     if code != 0:
         raise RuntimeError(err or out or "Échec de la connexion Tailscale")
-    return {"ok": True, "output": out or err}
+    return {"ok": True, "output": (out or err).strip()}
+
+
+def apply_tailscale_startup(config: dict) -> dict:
+    """Au démarrage : connecte le nœud et publie MeCasa si demandé.
+
+    Ne lève jamais : une erreur Tailscale ne doit pas empêcher MeCasa de
+    démarrer. Les messages sont renvoyés pour affichage dans la console.
+    """
+    result = {"attempted": False, "up": None, "serve": None,
+              "url": None, "errors": []}
+    enabled = bool(config.get("tailscale_enabled"))
+    auto_serve = bool(config.get("tailscale_auto_serve"))
+    if not enabled and not auto_serve:
+        return result
+
+    result["attempted"] = True
+    port = int(config.get("port", 8780))
+    hostname = str(config.get("tailscale_hostname") or "mecasa").strip() or "mecasa"
+    authkey = str(config.get("tailscale_authkey") or "").strip()
+
+    try:
+        current = get_tailscale_status(port, hostname, config.get("host"))
+    except Exception as err:  # noqa: BLE001
+        current = {"running": False}
+        result["errors"].append(f"diagnostic : {err}")
+
+    if enabled:
+        short = _clean_dns_name(current.get("dns_name")).split(".")[0].lower()
+        needs_up = (not current.get("running")) or (
+            bool(short) and short != hostname.lower()
+        )
+        if needs_up:
+            if current.get("running") or authkey:
+                try:
+                    result["up"] = tailscale_up(authkey, hostname=hostname)
+                except Exception as err:  # noqa: BLE001
+                    result["errors"].append(f"connexion : {err}")
+            else:
+                result["errors"].append(
+                    "nœud non connecté et aucune clé d'authentification enregistrée"
+                )
+
+    if auto_serve:
+        try:
+            result["serve"] = tailscale_serve_enable(port)
+        except Exception as err:  # noqa: BLE001
+            result["errors"].append(f"publication : {err}")
+
+    try:
+        final = get_tailscale_status(port, hostname, config.get("host"))
+        result["url"] = final.get("https_url") or final.get("serve_url")
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 # ------------------------------------------------------------------- système
@@ -1286,10 +1530,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and path == "/api/tailscale/status":
             try:
-                status = get_tailscale_status()
                 cfg = load_config()
+                hostname = str(cfg.get("tailscale_hostname") or "mecasa")
+                status = get_tailscale_status(
+                    int(cfg.get("port", 8780)), hostname, cfg.get("host"),
+                )
                 status["enabled"] = bool(cfg.get("tailscale_enabled"))
                 status["auto_serve"] = bool(cfg.get("tailscale_auto_serve"))
+                status["hostname"] = hostname
                 self._json(200, status)
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
@@ -1298,7 +1546,15 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/tailscale/serve/enable":
             try:
                 cfg = load_config()
-                self._json(200, tailscale_serve_enable(int(cfg.get("port", 8780))))
+                port = int(cfg.get("port", 8780))
+                result = tailscale_serve_enable(port)
+                status = get_tailscale_status(
+                    port, str(cfg.get("tailscale_hostname") or "mecasa"),
+                    cfg.get("host"),
+                )
+                result["url"] = status.get("https_url") or status.get("serve_url")
+                result["status"] = status
+                self._json(200, result)
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
             return
@@ -1313,10 +1569,13 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/tailscale/up":
             try:
                 body = self._body()
-                authkey = body.get("authkey") or ""
+                cfg = load_config()
+                authkey = str(body.get("authkey") or cfg.get("tailscale_authkey") or "").strip()
                 if not authkey:
-                    authkey = load_config().get("tailscale_authkey") or ""
-                self._json(200, tailscale_up(str(authkey).strip(), hostname="mecasa"))
+                    self._json(400, {"error": "Clé d'authentification requise"})
+                    return
+                hostname = str(cfg.get("tailscale_hostname") or "mecasa")
+                self._json(200, tailscale_up(authkey, hostname=hostname))
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
             return
@@ -1979,6 +2238,8 @@ def main() -> None:
     count = app.static.load()
     server.app = app  # type: ignore[attr-defined]
 
+    tailscale_startup = apply_tailscale_startup(config)
+
     def _stop(signum, frame):  # noqa: ARG001
         raise KeyboardInterrupt
 
@@ -2000,6 +2261,13 @@ def main() -> None:
     print(f"  Historique          ->  {history_dir}")
     print(f"  Fichiers web en RAM ->  {count} fichiers")
     print(f"  Mode                ->  {'simulation' if mock else 'réel'}")
+    if tailscale_startup.get("attempted"):
+        for message in tailscale_startup.get("errors") or []:
+            print(f"  Tailscale           ->  erreur : {message}")
+        if tailscale_startup.get("url"):
+            print(f"  Tailscale (HTTPS)   ->  {tailscale_startup['url']}")
+        elif tailscale_startup.get("serve"):
+            print("  Tailscale           ->  service publié (URL indisponible)")
     print("  Ctrl+C pour arrêter.")
     print("")
 

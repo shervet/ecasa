@@ -719,7 +719,11 @@ function tailscaleSection() {
       `<button class="btn btn-sm" type="button" id="tailscaleHelp">${icon("info", 15)} Ouvrir l'aide</button>`
     )}
     ${row("Activer Tailscale", "Au démarrage, MeCasa peut connecter le nœud et publier le service.", toggle("tailscale_enabled", Boolean(c.tailscale_enabled)))}
-    ${row("Publier automatiquement", "Expose l'interface sur le tailnet via « tailscale serve ».", toggle("tailscale_auto_serve", Boolean(c.tailscale_auto_serve)))}
+    ${row("Publier automatiquement", "Au démarrage, expose l'interface sur le tailnet en HTTPS via « tailscale serve ».", toggle("tailscale_auto_serve", Boolean(c.tailscale_auto_serve)))}
+    ${textRow("Nom du nœud", "tailscale_hostname", c.tailscale_hostname || "mecasa", {
+      sub: "Nom résolu par l'app Android : &lt;nom&gt;.&lt;tailnet&gt;.ts.net. Doit être « mecasa ».",
+      placeholder: "mecasa",
+    })}
     ${row(
       "Clé d'authentification",
       c.tailscale_authkey_set ? "Une clé est déjà enregistrée. Laisse vide pour la conserver." : "Optionnelle si le nœud est déjà connecté.",
@@ -739,7 +743,7 @@ function tailscaleSection() {
         <button class="btn btn-sm" type="button" id="tsServeOff">${icon("x", 14)} Dépublier</button>
       </div>
     </div>`,
-    ``
+    `<button class="btn btn-primary" type="button" data-save="tailscale">${icon("save", 16)} Enregistrer</button>`
   );
 }
 
@@ -962,6 +966,7 @@ async function saveSection(name, button) {
       renderSystem();
       toast("Réglages enregistrés.");
       if (name === "weather") window.refreshWeather?.();
+      if (name === "tailscale") await loadTailscale();
       if (payload.restart_required) showRestartBanner();
     }
   } catch (err) {
@@ -1930,15 +1935,16 @@ function openTailscaleHelp() {
       <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">1. Installer Tailscale sur le Raspberry Pi</div><div class="sr-sub">Debian, Ubuntu ou Raspberry Pi OS :</div></div></div>
       <code class="help-code">curl -fsSL https://tailscale.com/install.sh | sh</code>
       <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">2. Connecter le nœud</div><div class="sr-sub">Lance la connexion, puis ouvre l'URL affichée pour autoriser la machine dans ton compte Tailscale.</div></div></div>
-      <code class="help-code">sudo tailscale up</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Vérifier l'adresse</div><div class="sr-sub">Note le nom DNS ou l'adresse 100.x du nœud.</div></div></div>
+      <code class="help-code">sudo tailscale up --hostname=mecasa</code>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Vérifier le nom MagicDNS</div><div class="sr-sub">Le nœud doit s'appeler « mecasa » : l'app Android résout mecasa.&lt;ton-tailnet&gt;.ts.net.</div></div></div>
       <code class="help-code">tailscale status</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Publier MeCasa</div><div class="sr-sub">Expose le port local 8780 sur le tailnet, en HTTPS via MagicDNS.</div></div></div>
-      <code class="help-code">sudo tailscale serve --bg 8780</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">5. Ouvrir MeCasa à distance</div><div class="sr-sub">Depuis un téléphone ou un PC connecté au même tailnet : https://nom-du-noeud.ton-tailnet.ts.net</div></div></div>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Activer MagicDNS et HTTPS</div><div class="sr-sub">Dans la console d'administration Tailscale → DNS : active MagicDNS, puis HTTPS Certificates. C'est indispensable pour que l'app charge https://mecasa.&lt;ton-tailnet&gt;.ts.net.</div></div></div>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">5. Publier MeCasa en HTTPS</div><div class="sr-sub">Expose le port local 8780 sur la racine du tailnet, en HTTPS 443 :</div></div></div>
+      <code class="help-code">sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780</code>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">6. Ouvrir MeCasa à distance</div><div class="sr-sub">Depuis un téléphone ou un PC connecté au même tailnet : https://mecasa.&lt;ton-tailnet&gt;.ts.net/ (port 443, sans préciser 8780).</div></div></div>
       <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Clé d'authentification (optionnelle)</div><div class="sr-sub">Pour reconnecter automatiquement le nœud : console d'administration Tailscale → Settings → Keys → Generate auth key, puis colle la clé dans le champ « Clé d'authentification ».</div></div></div>
       <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Dépublier</div><div class="sr-sub">Pour retirer l'accès distant sans déconnecter le nœud :</div></div></div>
-      <code class="help-code">sudo tailscale serve --bg off</code>
+      <code class="help-code">sudo tailscale serve reset</code>
       <p class="hint mt-2">Liens utiles : <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Installer Tailscale</a> · <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">Générer une clé</a></p>
     </div>`,
   });
@@ -1968,6 +1974,13 @@ function renderTailscale() {
     : data.running
       ? "Connecté"
       : data.backend_state || "Arrêté";
+  const url = data.https_url || data.serve_url || "";
+  const checks = Array.isArray(data.checks) ? data.checks : [];
+  const serveLabel = data.serve_ok
+    ? "prête"
+    : data.serve_active
+      ? "à corriger"
+      : "inactive";
   host.innerHTML = `
     <div class="row-between">
       <span class="tiny muted">État</span>
@@ -1976,10 +1989,20 @@ function renderTailscale() {
     <div class="row-between"><span class="tiny muted">Adresse Tailscale</span><span class="tiny mono">${escapeHtml(data.ip || "—")}</span></div>
     <div class="row-between"><span class="tiny muted">Nom DNS</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.dns_name || "—")}</span></div>
     <div class="row-between">
-      <span class="tiny muted">Publication</span>
-      <span class="pill ${data.serve_active ? "pill-ok" : "pill-ghost"}">${data.serve_active ? "active" : "inactive"}</span>
+      <span class="tiny muted">MagicDNS</span>
+      <span class="pill ${data.magic_dns_enabled ? "pill-ok" : "pill-ghost"}">${data.magic_dns_enabled ? escapeHtml(data.magic_dns_suffix || "activé") : "inactif"}</span>
     </div>
-    ${data.serve_url ? `<div class="row-between"><span class="tiny muted">URL publique</span><a class="tiny" href="${escapeHtml(data.serve_url)}" target="_blank" rel="noreferrer" style="word-break:break-all;text-align:right">${escapeHtml(data.serve_url)}</a></div>` : ""}
+    <div class="row-between">
+      <span class="tiny muted">HTTPS Certificates</span>
+      <span class="pill ${data.https_ready ? "pill-ok" : "pill-ghost"}">${data.https_ready ? "prêt" : "inactif"}</span>
+    </div>
+    <div class="row-between">
+      <span class="tiny muted">Publication</span>
+      <span class="pill ${data.serve_ok ? "pill-ok" : data.serve_active ? "pill-warn" : "pill-ghost"}">${serveLabel}</span>
+    </div>
+    ${data.serve_target ? `<div class="row-between"><span class="tiny muted">Cible locale</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.serve_target)}</span></div>` : ""}
+    ${url ? `<div class="row-between"><span class="tiny muted">URL de l'app</span><a class="tiny" href="${escapeHtml(url)}" target="_blank" rel="noreferrer" style="word-break:break-all;text-align:right">${escapeHtml(url)}</a></div>` : ""}
+    ${checks.length ? `<div class="stack mt-1" style="gap:4px">${checks.map((item) => `<div class="row-between" style="gap:8px"><span class="hint ${item.ok ? "muted" : "is-bad"}">${item.ok ? icon("check", 12) : icon("alert", 12)} ${escapeHtml(item.label)}</span>${item.ok ? "" : `<span class="hint is-bad" style="text-align:right;max-width:60%">${escapeHtml(item.detail || "")}</span>`}</div>`).join("")}</div>` : ""}
     ${!data.installed ? '<p class="hint mt-1">Installe Tailscale sur le Raspberry Pi : <code>curl -fsSL https://tailscale.com/install.sh | sh</code></p>' : ""}
   `;
 }
@@ -1989,7 +2012,10 @@ async function tailscaleAction(path) {
   if (button) button.disabled = true;
   try {
     const payload = await post(`/api/tailscale/${path}`);
-    toast(payload.output || payload.message || "Commande envoyée.", { type: "info", timeout: 6000 });
+    const message = payload.url
+      ? `Publié : ${payload.url}`
+      : payload.output || payload.message || "Commande envoyée.";
+    toast(message, { type: "info", timeout: 7000 });
     await loadTailscale();
   } catch (err) {
     toastError(err);

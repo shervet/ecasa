@@ -74,6 +74,47 @@ Les mots de passe et clés ne sont **jamais** renvoyés au navigateur.
 `GET /api/config` expose seulement `password_set`, `wiser_secret_set`,
 `pronote_password_set`, `tailscale_authkey_set` et `med_token_set`.
 
+## Accès distant et app Android (Tailscale)
+
+L'app **MeCasa App** charge `https://mecasa.<tailnet>.ts.net/` (port 443). Côté
+serveur, tout est vérifiable dans **Réglages → Tailscale** : un diagnostic
+indique précisément ce qui manque (client, connexion, MagicDNS, HTTPS, nom du
+nœud, publication).
+
+Configuration attendue sur la machine MeCasa :
+
+1. Tailscale installé et connecté, avec le nœud nommé **`mecasa`** :
+
+   ```bash
+   sudo tailscale up --hostname=mecasa
+   ```
+
+2. **MagicDNS** et **HTTPS Certificates** activés dans la console
+   d'administration Tailscale (DNS).
+3. MeCasa publié en HTTPS sur la racine du nœud :
+
+   ```bash
+   sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
+   ```
+
+   (équivalent à `tailscale serve --bg http://127.0.0.1:8780` ; le `--set-url /`
+   des anciennes versions s'écrit désormais `--set-path=/`.)
+
+4. Vérification : `https://mecasa.<tailnet>.ts.net/` répond, sans préciser
+   `:8780`.
+
+MeCasa automatise tout ou partie :
+
+- `tailscale_enabled` : au démarrage, connecte le nœud (clé d'authentification
+  si nécessaire) avec le nom `tailscale_hostname` (défaut `mecasa`) ;
+- `tailscale_auto_serve` : au démarrage, exécute l'équivalent de
+  `tailscale serve --bg --set-path=/ http://127.0.0.1:<port>` ;
+- les boutons **Connecter / Publier / Dépublier** appliquent les mêmes commandes
+  à chaud.
+
+Pour que `tailscale serve` atteigne MeCasa, `host` doit rester `0.0.0.0` ou
+`127.0.0.1` (pas une adresse LAN précise). Le diagnostic le signale.
+
 ## Stockage basse consommation
 
 Le point sensible sur Raspberry Pi est l'usure de la carte SD. MeCasa applique
