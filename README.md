@@ -87,7 +87,7 @@ n'est pas joignable, elle affiche **« Ouvrir Tailscale »** et **« Configurer 
 l'adresse du serveur y est modifiable, testable et enregistrée.
 
 APK : [release v0.2.0](https://github.com/shervet/mecasa-app/releases/tag/v0.2.0)
-(`MeCasa-App-0.2.0-debug.apk`, toutes architectures, signature debug).
+(`mecasa-app-debug.apk`, toutes architectures, signature debug).
 
 Configuration locale de Tailscale, étape par étape. Chaque étape indique quoi
 vérifier avant de passer à la suivante. Le même guide est disponible dans
