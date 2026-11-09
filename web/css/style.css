@@ -1140,6 +1140,93 @@ svg {
   word-break: break-word;
 }
 
+/* Guide Tailscale : étapes, vérifications et dépannage. */
+.help-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.help-step-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.help-step-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.help-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.help-step-sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.help-os-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.help-check,
+.help-warn {
+  padding-left: 8px;
+  border-left: 3px solid var(--ok);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.help-warn {
+  border-left-color: var(--warn);
+}
+
+.help-check strong,
+.help-warn strong {
+  color: var(--text);
+}
+
+.help-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.help-faq-q {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.help-faq-a {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

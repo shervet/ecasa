@@ -1931,26 +1931,117 @@ async function waitForServer() {
 /* --------------------------------------------------------------- tailscale */
 
 function openTailscaleHelp() {
-  openSheet({
+  const sheet = openSheet({
     title: "Configurer Tailscale",
-    sub: "Accès distant sans ouvrir de port",
+    sub: "Guide local, étape par étape",
+    footer: `<button class="btn btn-primary" type="button" data-help-refresh>${icon("refresh", 15)} Actualiser le diagnostic</button>`,
     body: `<div class="stack">
-      <p class="hint">Tailscale crée un réseau privé chiffré entre tes appareils. MeCasa n'a besoin d'aucune redirection de port sur la box.</p>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">1. Installer Tailscale sur le Raspberry Pi</div><div class="sr-sub">Debian, Ubuntu ou Raspberry Pi OS :</div></div></div>
-      <code class="help-code">curl -fsSL https://tailscale.com/install.sh | sh</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">2. Connecter le nœud</div><div class="sr-sub">Lance la connexion, puis ouvre l'URL affichée pour autoriser la machine dans ton compte Tailscale.</div></div></div>
-      <code class="help-code">sudo tailscale up --hostname=mecasa</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Vérifier le nom MagicDNS</div><div class="sr-sub">Le nœud doit s'appeler « mecasa » : l'app Android résout mecasa.&lt;ton-tailnet&gt;.ts.net.</div></div></div>
-      <code class="help-code">tailscale status</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Activer MagicDNS et HTTPS</div><div class="sr-sub">Dans la console d'administration Tailscale → DNS : active MagicDNS, puis HTTPS Certificates. C'est indispensable pour que l'app charge https://mecasa.&lt;ton-tailnet&gt;.ts.net.</div></div></div>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">5. Publier MeCasa en HTTPS</div><div class="sr-sub">Expose le port local 8780 sur la racine du tailnet, en HTTPS 443 :</div></div></div>
-      <code class="help-code">sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780</code>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">6. Ouvrir MeCasa à distance</div><div class="sr-sub">Depuis un téléphone ou un PC connecté au même tailnet : https://mecasa.&lt;ton-tailnet&gt;.ts.net/ (port 443, sans préciser 8780).</div></div></div>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Clé d'authentification (optionnelle)</div><div class="sr-sub">Pour reconnecter automatiquement le nœud : console d'administration Tailscale → Settings → Keys → Generate auth key, puis colle la clé dans le champ « Clé d'authentification ».</div></div></div>
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Dépublier</div><div class="sr-sub">Pour retirer l'accès distant sans déconnecter le nœud :</div></div></div>
-      <code class="help-code">sudo tailscale serve reset</code>
-      <p class="hint mt-2">Liens utiles : <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Installer Tailscale</a> · <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">Générer une clé</a></p>
+      <p class="hint">Objectif : que l'app Android ouvre <strong>https://mecasa.&lt;tailnet&gt;.ts.net/</strong> (port 443). Toutes les commandes se lancent <strong>sur la machine qui fait tourner MeCasa</strong>. Chaque étape se termine par une vérification : passe à la suivante seulement quand elle est verte.</p>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">1</span>
+          <div>
+            <div class="help-step-title">Installer Tailscale sur cette machine</div>
+            <div class="help-step-sub">Une seule fois. L'installateur installe aussi la commande <code>tailscale</code>.</div>
+          </div>
+        </div>
+        <div><span class="help-os-label">Windows (PowerShell)</span><code class="help-code">winget install -e --id Tailscale.Tailscale</code></div>
+        <div><span class="help-os-label">macOS</span><code class="help-code">brew install --cask tailscale</code></div>
+        <div><span class="help-os-label">Linux / Raspberry Pi</span><code class="help-code">curl -fsSL https://tailscale.com/install.sh | sh</code></div>
+        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale version</code> affiche un numéro de version. Sur Windows, MeCasa détecte automatiquement <code>C:\\Program Files\\Tailscale\\tailscale.exe</code> même s'il n'est pas dans le PATH.</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">2</span>
+          <div>
+            <div class="help-step-title">Connecter la machine avec le nom « mecasa »</div>
+            <div class="help-step-sub">C'est ce nom que l'app Android résout. Si un lien d'autorisation s'affiche, ouvre-le et valide la machine dans ton compte Tailscale.</div>
+          </div>
+        </div>
+        <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale up --hostname=mecasa</code></div>
+        <div><span class="help-os-label">Windows</span><code class="help-code">tailscale up --hostname=mecasa</code></div>
+        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale status</code> montre une ligne avec <code>mecasa</code> et une adresse <code>100.x.y.z</code>. <code>tailscale ip -4</code> renvoie cette même adresse.</div>
+        <div class="help-warn"><strong>Nom déjà pris :</strong> si le nœud s'appelle autrement, relance la commande ci-dessus (elle le renomme) ou renomme-le dans la console → Machines.</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">3</span>
+          <div>
+            <div class="help-step-title">Activer MagicDNS et HTTPS dans la console Tailscale</div>
+            <div class="help-step-sub">Réglage du tailnet, une seule fois. Sans HTTPS Certificates, <code>tailscale serve</code> ne peut pas créer le certificat de l'app.</div>
+          </div>
+        </div>
+        <div class="help-faq-a">Ouvre <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">console → DNS</a>, puis :</div>
+        <div class="help-faq-a">• <strong>MagicDNS</strong> → Enable MagicDNS<br>• <strong>HTTPS Certificates</strong> → Enable HTTPS…</div>
+        <div class="help-check"><strong>À vérifier :</strong> dans MeCasa, Réglages → Tailscale, les lignes <strong>MagicDNS</strong> et <strong>HTTPS Certificates</strong> passent au vert après <strong>Actualiser</strong>. Sinon, attends 30 s (émission du certificat) et réessaie.</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">4</span>
+          <div>
+            <div class="help-step-title">Publier MeCasa en HTTPS sur le port 443</div>
+            <div class="help-step-sub">Expose la racine du tailnet vers MeCasa, qui écoute en local sur 8780.</div>
+          </div>
+        </div>
+        <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780</code></div>
+        <div><span class="help-os-label">Windows</span><code class="help-code">tailscale serve --bg --set-path=/ http://127.0.0.1:8780</code></div>
+        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale serve status</code> affiche <code>https://mecasa.&lt;tailnet&gt;.ts.net (tailnet only)</code> puis <code>/ proxy http://127.0.0.1:8780</code>.</div>
+        <div class="help-warn"><strong>Prérequis :</strong> MeCasa doit écouter sur <code>127.0.0.1</code> ou <code>0.0.0.0</code> (Réglages → Réseau), jamais sur une IP LAN précise.</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">5</span>
+          <div>
+            <div class="help-step-title">Tester depuis le téléphone</div>
+            <div class="help-step-sub">Le téléphone doit avoir Tailscale installé et connecté au même compte.</div>
+          </div>
+        </div>
+        <div class="help-faq-a">Ouvre <code>https://mecasa.&lt;tailnet&gt;.ts.net/</code> — sans <code>:8780</code>, sans <code>http://</code>.</div>
+        <div class="help-check"><strong>À vérifier :</strong> la page MeCasa se charge et le cadenas HTTPS est valide. Si le nom ne résout pas, teste d'abord <code>https://100.x.y.z/</code> (adresse de l'étape 2).</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">6</span>
+          <div>
+            <div class="help-step-title">Rendre la configuration durable</div>
+            <div class="help-step-sub">Pour que tout revienne seul après un redémarrage.</div>
+          </div>
+        </div>
+        <div class="help-faq-a">• <code>--bg</code> conserve déjà la publication après un redémarrage du service Tailscale.<br>• Dans MeCasa : active <strong>Activer Tailscale</strong> et <strong>Publier automatiquement</strong>, puis <strong>Enregistrer</strong>.<br>• Optionnel : génère une <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">clé d'authentification</a> et colle-la dans le champ prévu.</div>
+        <div class="help-check"><strong>À vérifier :</strong> après redémarrage de la machine, <code>tailscale serve status</code> et <code>https://mecasa.&lt;tailnet&gt;.ts.net/</code> fonctionnent encore.</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head">
+          <span class="help-step-num">?</span>
+          <div>
+            <div class="help-step-title">Dépannage</div>
+            <div class="help-step-sub">Les messages les plus fréquents et leur solution.</div>
+          </div>
+        </div>
+        <div class="help-faq">
+          <div><div class="help-faq-q">« Tailscale introuvable »</div><div class="help-faq-a">Le binaire n'est pas dans le PATH. Renseigne son chemin dans <strong>Chemin de tailscale</strong> (Windows : <code>C:\\Program Files\\Tailscale\\tailscale.exe</code>), puis Enregistrer.</div></div>
+          <div><div class="help-faq-q">« HTTPS is not enabled in your tailnet »</div><div class="help-faq-a">Étape 3 incomplète : active <strong>HTTPS Certificates</strong> dans la console, attends 30 s, puis Actualiser et Publier.</div></div>
+          <div><div class="help-faq-q">La page répond 502 ou « connection refused »</div><div class="help-faq-a">MeCasa n'écoute pas sur l'adresse attendue, ou le port a changé. Vérifie <code>host</code>/<code>port</code> dans Réglages → Réseau, puis republie avec le bon port.</div></div>
+          <div><div class="help-faq-q">La page répond 404 ou « Not Found »</div><div class="help-faq-a">La publication vise un sous-chemin. Republie avec <code>--set-path=/</code>.</div></div>
+          <div><div class="help-faq-q">Le nom MagicDNS ne résout pas sur le téléphone</div><div class="help-faq-a">MagicDNS est désactivé sur le tailnet, ou le téléphone n'est pas connecté. En attendant, utilise l'adresse <code>100.x.y.z</code>.</div></div>
+          <div><div class="help-faq-q">Le nœud n'a pas le bon nom</div><div class="help-faq-a">Relance <code>tailscale up --hostname=mecasa</code>, ou renomme la machine dans la console → Machines.</div></div>
+          <div><div class="help-faq-q">Retirer l'accès distant</div><div class="help-faq-a"><code>sudo tailscale serve reset</code> (sans <code>sudo</code> sur Windows). Le nœud reste connecté.</div></div>
+        </div>
+      </div>
+
+      <p class="hint mt-2">Liens utiles : <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">DNS du tailnet</a> · <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">Clés d'authentification</a> · <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Installer Tailscale</a> · <a href="https://tailscale.com/kb/1242/tailscale-serve" target="_blank" rel="noreferrer">Documentation serve</a></p>
     </div>`,
+  });
+  sheet?.footer?.querySelector("[data-help-refresh]")?.addEventListener("click", () => {
+    sheet.close();
+    loadTailscale();
   });
 }
 

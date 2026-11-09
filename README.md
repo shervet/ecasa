@@ -81,27 +81,83 @@ serveur, tout est vérifiable dans **Réglages → Tailscale** : un diagnostic
 indique précisément ce qui manque (client, connexion, MagicDNS, HTTPS, nom du
 nœud, publication).
 
-Configuration attendue sur la machine MeCasa :
+Configuration locale de Tailscale, étape par étape. Chaque étape indique quoi
+vérifier avant de passer à la suivante. Le même guide est disponible dans
+**Réglages → Tailscale → Ouvrir l'aide**.
 
-1. Tailscale installé et connecté, avec le nœud nommé **`mecasa`** :
+### 1. Installer Tailscale sur la machine MeCasa
 
-   ```bash
-   sudo tailscale up --hostname=mecasa
-   ```
+```bash
+# Windows (PowerShell)
+winget install -e --id Tailscale.Tailscale
+# macOS
+brew install --cask tailscale
+# Linux / Raspberry Pi
+curl -fsSL https://tailscale.com/install.sh | sh
+```
 
-2. **MagicDNS** et **HTTPS Certificates** activés dans la console
-   d'administration Tailscale (DNS).
-3. MeCasa publié en HTTPS sur la racine du nœud :
+**Vérifier** : `tailscale version` affiche un numéro de version. Sur Windows,
+MeCasa détecte aussi `C:\Program Files\Tailscale\tailscale.exe` hors PATH.
 
-   ```bash
-   sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
-   ```
+### 2. Connecter la machine avec le nom `mecasa`
 
-   (équivalent à `tailscale serve --bg http://127.0.0.1:8780` ; le `--set-url /`
-   des anciennes versions s'écrit désormais `--set-path=/`.)
+```bash
+sudo tailscale up --hostname=mecasa   # Windows : sans sudo
+```
 
-4. Vérification : `https://mecasa.<tailnet>.ts.net/` répond, sans préciser
-   `:8780`.
+**Vérifier** : `tailscale status` montre une ligne `mecasa` avec une adresse
+`100.x.y.z`, et `tailscale ip -4` renvoie cette adresse. Si le nœud portait un
+autre nom, la commande le renomme.
+
+### 3. Activer MagicDNS et HTTPS Certificates
+
+Dans la [console Tailscale → DNS](https://login.tailscale.com/admin/dns) :
+**MagicDNS → Enable MagicDNS**, puis **HTTPS Certificates → Enable HTTPS…**.
+C'est un réglage du tailnet, à faire une seule fois.
+
+**Vérifier** : dans MeCasa, **Réglages → Tailscale**, les lignes *MagicDNS* et
+*HTTPS Certificates* passent au vert après **Actualiser** (attendre ~30 s
+l'émission du certificat si besoin).
+
+### 4. Publier MeCasa en HTTPS sur le port 443
+
+```bash
+sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
+```
+
+**Vérifier** : `tailscale serve status` affiche
+`https://mecasa.<tailnet>.ts.net (tailnet only)` puis
+`/ proxy http://127.0.0.1:8780`.
+
+### 5. Tester depuis le téléphone
+
+Le téléphone doit avoir Tailscale installé et connecté au même compte, puis
+ouvrir `https://mecasa.<tailnet>.ts.net/` (sans `:8780`).
+
+**Vérifier** : la page MeCasa se charge avec un cadenas HTTPS valide. Si le nom
+ne résout pas, tester d'abord `https://100.x.y.z/`.
+
+### 6. Rendre la configuration durable
+
+`--bg` conserve la publication après un redémarrage du service. Dans MeCasa,
+activer **Activer Tailscale** et **Publier automatiquement**, puis
+**Enregistrer** : au démarrage, MeCasa reconnecte le nœud et republie le service.
+Une clé d'authentification est optionnelle (console → Settings → Keys).
+
+**Vérifier** : après redémarrage de la machine, `tailscale serve status` et
+`https://mecasa.<tailnet>.ts.net/` fonctionnent encore.
+
+### Dépannage
+
+| Message | Cause | Solution |
+| --- | --- | --- |
+| `Tailscale introuvable` | Binaire hors PATH | Renseigner **Chemin de tailscale** (`C:\Program Files\Tailscale\tailscale.exe` sur Windows). |
+| `HTTPS is not enabled in your tailnet` | Étape 3 incomplète | Activer HTTPS Certificates, attendre 30 s, Actualiser puis Publier. |
+| `502` / `connection refused` | MeCasa n'écoute pas sur l'adresse attendue | `host` = `0.0.0.0` ou `127.0.0.1`, puis republier avec le bon port. |
+| `404` / `Not Found` | Publication sur un sous-chemin | Republier avec `--set-path=/`. |
+| Le nom MagicDNS ne résout pas | MagicDNS désactivé ou téléphone hors tailnet | Utiliser `https://100.x.y.z/` en attendant. |
+| Mauvais nom de nœud | Nœud renommé | `tailscale up --hostname=mecasa` ou console → Machines → Renommer. |
+| Retirer l'accès distant | — | `sudo tailscale serve reset` (le nœud reste connecté). |
 
 MeCasa automatise tout ou partie :
 
