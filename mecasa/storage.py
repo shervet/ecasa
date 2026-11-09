@@ -993,6 +993,15 @@ class MemoryStore:
             if len(self._events) > keep:
                 self._events = self._events[-keep:]
 
+    def clear_events(self) -> int:
+        """Vide le journal. Retourne le nombre d'évènements supprimés."""
+        with self._lock:
+            removed = len(self._events)
+            if removed:
+                self._events = []
+                self.mark_structure()
+            return removed
+
     # --------------------------------------------------------------- export
 
     def export(self) -> dict:

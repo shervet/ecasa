@@ -1,5 +1,6 @@
-// Journal : les derniers événements du moteur, filtrables et exportables.
+// Journal : les derniers événements du moteur, filtrables, exportables et supprimables.
 
+import { del } from "../api.js";
 import { icon } from "../icons.js";
 import { refreshState, store } from "../state.js";
 import { toast, toastError } from "../toast.js";
@@ -35,6 +36,7 @@ export default {
             <p class="page-sub" id="logsSub">Les derniers événements du moteur.</p>
           </div>
           <div class="page-actions">
+            <button class="btn btn-danger" type="button" id="logsClear">${icon("trash", 17)} Supprimer</button>
             <button class="btn" type="button" id="logsDownload">${icon("download", 17)} Exporter</button>
             <button class="btn btn-primary" type="button" id="logsRefresh">${icon("refresh", 17)} Actualiser</button>
           </div>
@@ -67,8 +69,8 @@ export default {
         </div>
 
         <p class="hint mt-2">
-          Le journal garde les 200 derniers événements en mémoire et les inclut dans le snapshot.
-          Les erreurs sont aussi visibles sur l'accueil.
+          Le journal garde les 800 derniers événements en mémoire ; les 80 plus récents sont affichés ici.
+          Les erreurs sont aussi visibles sur l'accueil. « Supprimer » vide le journal et le snapshot.
         </p>
       </div>
     `;
@@ -101,6 +103,29 @@ export default {
     });
 
     view.querySelector("#logsDownload")?.addEventListener("click", download);
+
+    view.querySelector("#logsClear")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const count = entries().length;
+      if (!count) {
+        toast("Le journal est déjà vide.", { type: "info" });
+        return;
+      }
+      if (!confirm("Supprimer tout le journal ? Cette action est définitive.")) return;
+      button.disabled = true;
+      try {
+        const payload = await del("/api/logs");
+        await refreshState({ silent: false });
+        render();
+        const cleared = Number(payload?.cleared ?? count);
+        const clearedLabel = `évènement${cleared > 1 ? "s" : ""}`;
+        toast(`Journal supprimé (${cleared} ${clearedLabel}).`);
+      } catch (err) {
+        toastError(err);
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     render();
   },

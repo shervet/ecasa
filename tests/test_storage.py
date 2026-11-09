@@ -343,6 +343,33 @@ class JournalTests(StoreTestCase):
         self.assertEqual(len(store.events(limit=5)), 5)
         self.assertEqual(store.events(limit=5)[0]["message"], "evt 19")
 
+    def test_clear_events_empties_journal(self):
+        store = self.make_store()
+        store.log("info", "un")
+        store.log("error", "deux")
+        self.assertEqual(store.clear_events(), 2)
+        self.assertEqual(store.events(), [])
+        # Un journal déjà vide ne supprime rien.
+        self.assertEqual(store.clear_events(), 0)
+
+    def test_clear_events_is_persisted(self):
+        store = self.make_store()
+        store.log("info", "un")
+        store.clear_events()
+        store.flush(force=True)
+        store.close()
+
+        reloaded = self.make_store()
+        self.assertEqual(reloaded.events(), [])
+
+    def test_ids_stay_monotonic_after_clear(self):
+        store = self.make_store()
+        store.log("info", "un")
+        first = store.events()[0]["id"]
+        store.clear_events()
+        store.log("info", "deux")
+        self.assertGreater(store.events()[0]["id"], first)
+
 
 class RoomsDevicesTests(StoreTestCase):
     def test_add_room_with_duplicate_name_rejected(self):

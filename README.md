@@ -173,6 +173,7 @@ machine locale, sauf si `allow_remote_admin` est activé.
 | GET | `/api/tailscale/status`, POST `/api/tailscale/…` | Tailscale. |
 | GET | `/api/export`, POST `/api/import` | Sauvegarde complète. |
 | POST | `/api/storage/flush` | Force l'écriture disque. |
+| DELETE | `/api/logs` | Vide le journal (mémoire et snapshot). |
 | POST | `/api/control/restart\|stop` | Redémarrage ou arrêt propre. |
 
 ## Migration depuis cozytouch-scheduler

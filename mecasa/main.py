@@ -1129,6 +1129,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "storage": app.store.storage_info()})
             return
 
+        if method == "DELETE" and path == "/api/logs":
+            cleared = app.store.clear_events()
+            app.store.flush(force=True)
+            self._json(200, {"ok": True, "cleared": cleared})
+            return
+
         if method == "GET" and path == "/api/stats":
             query = parse_qs(urlparse(self.path).query)
             range_name = (query.get("range") or ["week"])[0]
