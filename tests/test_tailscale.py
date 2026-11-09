@@ -174,6 +174,29 @@ class StatusTests(unittest.TestCase):
         self.assertIsNone(status["https_url"])
         self.assertIn("introuvable", " | ".join(status["warnings"]))
 
+    def test_conflit_de_nom_par_un_service(self):
+        data = json.loads(json.dumps(STATUS_JSON))
+        data["Self"]["DNSName"] = "mecasa-1.tailnet-abcd.ts.net."
+        data["Self"]["CapMap"] = {
+            "services/mecasa": [{
+                "Name": "svc:mecasa",
+                "Addrs": ["100.91.75.7"],
+                "Ports": ["tcp:8790"],
+            }],
+        }
+        responses = {
+            "status --json": (0, json.dumps(data), ""),
+            "serve status --json": (0, json.dumps(SERVE_JSON), ""),
+        }
+        status = self.status(responses, port=8780, hostname="mecasa",
+                             local_host="0.0.0.0")
+        self.assertEqual(status["services"][0]["name"], "svc:mecasa")
+        self.assertEqual(status["services"][0]["addrs"], ["100.91.75.7"])
+        detail = " | ".join(status["warnings"])
+        self.assertIn("Service Tailscale", detail)
+        self.assertIn("100.91.75.7", detail)
+        self.assertIn("console", detail)
+
     def test_auth_url_exposee(self):
         data = {
             "BackendState": "NeedsLogin",
@@ -298,6 +321,33 @@ class StartupTests(unittest.TestCase):
             result = main.apply_tailscale_startup(config)
         self.assertTrue(result["attempted"])
         self.assertTrue(any("clé" in item for item in result["errors"]))
+
+
+class UpTests(unittest.TestCase):
+    def test_nom_deja_pris_signale(self):
+        responses = {"up --hostname=mecasa --accept-routes=false": (0, "", "")}
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd(responses),
+        ), mock.patch.object(
+            main, "get_tailscale_status",
+            return_value={"dns_name": "mecasa-1.tailnet-abcd.ts.net"},
+        ):
+            result = main.tailscale_up("", hostname="mecasa")
+        self.assertTrue(result["ok"])
+        self.assertIn("mecasa-1", result["warning"])
+        self.assertIn("déjà pris", result["warning"])
+
+    def test_nom_correct_sans_avertissement(self):
+        responses = {"up --hostname=mecasa --accept-routes=false": (0, "", "")}
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd(responses),
+        ), mock.patch.object(
+            main, "get_tailscale_status",
+            return_value={"dns_name": "mecasa.tailnet-abcd.ts.net"},
+        ):
+            result = main.tailscale_up("", hostname="mecasa")
+        self.assertTrue(result["ok"])
+        self.assertNotIn("warning", result)
 
 
 if __name__ == "__main__":

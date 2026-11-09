@@ -1963,7 +1963,7 @@ function openTailscaleHelp() {
         <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale up --hostname=mecasa</code></div>
         <div><span class="help-os-label">Windows</span><code class="help-code">tailscale up --hostname=mecasa</code></div>
         <div class="help-check"><strong>À vérifier :</strong> <code>tailscale status</code> montre une ligne avec <code>mecasa</code> et une adresse <code>100.x.y.z</code>. <code>tailscale ip -4</code> renvoie cette même adresse.</div>
-        <div class="help-warn"><strong>Nom déjà pris :</strong> si le nœud s'appelle autrement, relance la commande ci-dessus (elle le renomme) ou renomme-le dans la console → Machines.</div>
+        <div class="help-warn"><strong>Nom déjà pris :</strong> si le nœud s'appelle <code>mecasa-1</code>, le nom <code>mecasa</code> est réservé ailleurs (autre machine ou <strong>Service Tailscale</strong>). La commande réussit sans rien changer : libère le nom dans la console → Machines (supprimer l'ancien nœud) ou → Services (supprimer le service), puis relance-la.</div>
       </div>
 
       <div class="help-step">
@@ -2032,6 +2032,7 @@ function openTailscaleHelp() {
           <div><div class="help-faq-q">La page répond 404 ou « Not Found »</div><div class="help-faq-a">La publication vise un sous-chemin. Republie avec <code>--set-path=/</code>.</div></div>
           <div><div class="help-faq-q">Le nom MagicDNS ne résout pas sur le téléphone</div><div class="help-faq-a">MagicDNS est désactivé sur le tailnet, ou le téléphone n'est pas connecté. En attendant, utilise l'adresse <code>100.x.y.z</code>.</div></div>
           <div><div class="help-faq-q">Le nœud n'a pas le bon nom</div><div class="help-faq-a">Relance <code>tailscale up --hostname=mecasa</code>, ou renomme la machine dans la console → Machines.</div></div>
+          <div><div class="help-faq-q">Le nœud s'appelle « mecasa-1 »</div><div class="help-faq-a">Le nom <code>mecasa</code> est déjà pris : soit une ancienne machine, soit un <strong>Service Tailscale</strong> (visible dans le diagnostic, ligne « Service Tailscale »). Supprime-le dans <a href="https://login.tailscale.com/admin/services" target="_blank" rel="noreferrer">console → Services</a> (ou l'ancienne machine dans console → Machines), puis relance <code>tailscale up --hostname=mecasa</code>.</div></div>
           <div><div class="help-faq-q">Retirer l'accès distant</div><div class="help-faq-a"><code>sudo tailscale serve reset</code> (sans <code>sudo</code> sur Windows). Le nœud reste connecté.</div></div>
         </div>
       </div>
@@ -2103,6 +2104,7 @@ function renderTailscale() {
     </div>
     ${data.serve_target ? `<div class="row-between"><span class="tiny muted">Cible locale</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.serve_target)}</span></div>` : ""}
     ${data.binary ? `<div class="row-between"><span class="tiny muted">Binaire</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.binary)}</span></div>` : ""}
+    ${Array.isArray(data.services) && data.services.length ? `<div class="row-between"><span class="tiny muted">Service Tailscale</span><span class="tiny mono" style="word-break:break-all;text-align:right">${escapeHtml(data.services.map((item) => item.name).join(", "))}</span></div>` : ""}
     ${url ? `<div class="row-between"><span class="tiny muted">URL de l'app</span><a class="tiny" href="${escapeHtml(url)}" target="_blank" rel="noreferrer" style="word-break:break-all;text-align:right">${escapeHtml(url)}</a></div>` : ""}
     ${data.auth_url ? `<p class="hint mt-1">Ce nœud attend une autorisation : <a href="${escapeHtml(data.auth_url)}" target="_blank" rel="noreferrer">ouvrir la page de connexion Tailscale</a>.</p>` : ""}
     ${summary}
@@ -2116,10 +2118,14 @@ async function tailscaleAction(path) {
   if (button) button.disabled = true;
   try {
     const payload = await post(`/api/tailscale/${path}`);
-    const message = payload.url
-      ? `Publié : ${payload.url}`
-      : payload.output || payload.message || "Commande envoyée.";
-    toast(message, { type: "info", timeout: 7000 });
+    if (payload.warning) {
+      toast(payload.warning, { type: "error", timeout: 10000 });
+    } else {
+      const message = payload.url
+        ? `Publié : ${payload.url}`
+        : payload.output || payload.message || "Commande envoyée.";
+      toast(message, { type: "info", timeout: 7000 });
+    }
   } catch (err) {
     toastError(err);
   } finally {

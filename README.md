@@ -157,6 +157,7 @@ Une clé d'authentification est optionnelle (console → Settings → Keys).
 | `404` / `Not Found` | Publication sur un sous-chemin | Republier avec `--set-path=/`. |
 | Le nom MagicDNS ne résout pas | MagicDNS désactivé ou téléphone hors tailnet | Utiliser `https://100.x.y.z/` en attendant. |
 | Mauvais nom de nœud | Nœud renommé | `tailscale up --hostname=mecasa` ou console → Machines → Renommer. |
+| Le nœud s'appelle `mecasa-1` | Le nom `mecasa` est réservé (ancien nœud ou **Service Tailscale**) | Supprimer le Service dans console → Services (ou l'ancien nœud), puis relancer `tailscale up --hostname=mecasa`. |
 | Retirer l'accès distant | — | `sudo tailscale serve reset` (le nœud reste connecté). |
 
 MeCasa automatise tout ou partie :

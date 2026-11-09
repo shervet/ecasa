@@ -809,9 +809,31 @@ def tailscale_checks(status: dict, hostname: str | None = None,
         "" if dns_name else "Le nœud n'a pas encore de nom MagicDNS")
     if hostname and dns_name:
         short = dns_name.split(".")[0].lower()
-        add(short == hostname.lower(), f"Nom du nœud : {hostname}",
-            "" if short == hostname.lower()
-            else f"Le nœud s'appelle « {short} » au lieu de « {hostname} »")
+        wanted = hostname.lower()
+        if short == wanted:
+            add(True, f"Nom du nœud : {hostname}")
+        else:
+            conflict = next(
+                (
+                    item for item in (status.get("services") or [])
+                    if str(item.get("name", "")).lower() == f"svc:{wanted}"
+                ),
+                None,
+            )
+            if conflict:
+                addrs = ", ".join(conflict.get("addrs") or []) or "adresse inconnue"
+                detail = (
+                    f"Le nom « {hostname} » est réservé par le Service Tailscale "
+                    f"{conflict['name']} ({addrs}). Supprime ce Service dans la "
+                    "console → Services, puis reconnecte le nœud."
+                )
+            else:
+                detail = (
+                    f"Le nœud s'appelle « {short} » au lieu de « {hostname} ». "
+                    f"Relance « tailscale up --hostname={hostname} » ou renomme "
+                    "le nœud dans la console → Machines."
+                )
+            add(False, f"Nom du nœud : {hostname}", detail)
     add(bool(status.get("https_ready")), "HTTPS Certificates activé",
         "" if status.get("https_ready")
         else "Active HTTPS Certificates dans la console Tailscale")
@@ -836,7 +858,7 @@ def get_tailscale_status(port: int | None = None,
         "serve_target": None, "serve_path": None, "serve_https_port": None,
         "serve_ok": False, "magic_dns_enabled": False, "magic_dns_suffix": None,
         "cert_domains": [], "https_ready": False, "https_url": None,
-        "health": [], "checks": [], "warnings": [],
+        "health": [], "checks": [], "warnings": [], "services": [],
         "binary": tailscale_binary(), "auth_url": None,
     }
     data = None
@@ -885,6 +907,26 @@ def get_tailscale_status(port: int | None = None,
         status["health"] = [str(item) for item in (data.get("Health") or [])]
         auth_url = str(data.get("AuthURL") or "").strip()
         status["auth_url"] = auth_url or None
+        # Services Tailscale dont ce nœud est proxy : leur nom MagicDNS peut
+        # réserver celui du nœud (ex. un Service « mecasa » bloque « mecasa »).
+        services: list[dict] = []
+        cap_map = self_info.get("CapMap") or {}
+        if isinstance(cap_map, dict):
+            for cap, entries in cap_map.items():
+                if not str(cap).startswith("services/"):
+                    continue
+                for entry in entries if isinstance(entries, list) else [entries]:
+                    if not isinstance(entry, dict):
+                        continue
+                    name = str(
+                        entry.get("Name") or f"svc:{str(cap).split('/', 1)[1]}"
+                    )
+                    services.append({
+                        "name": name,
+                        "addrs": [str(item) for item in (entry.get("Addrs") or [])],
+                        "ports": [str(item) for item in (entry.get("Ports") or [])],
+                    })
+        status["services"] = services
 
     if status.get("dns_name"):
         status["https_url"] = f"https://{_clean_dns_name(status['dns_name'])}/"
@@ -941,7 +983,25 @@ def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
     code, out, err = _tailscale_cmd(args, timeout=60)
     if code != 0:
         raise RuntimeError(err or out or "Échec de la connexion Tailscale")
-    return {"ok": True, "output": (out or err).strip()}
+    result = {"ok": True, "output": (out or err).strip()}
+    # `tailscale up --hostname=X` réussit même si X est déjà pris : le nœud
+    # garde alors « X-1 ». On le détecte pour l'afficher au lieu de laisser
+    # croire que le renommage a fonctionné.
+    if hostname:
+        try:
+            status = get_tailscale_status(hostname=hostname)
+        except Exception:  # noqa: BLE001
+            status = {}
+        dns_name = _clean_dns_name(status.get("dns_name"))
+        actual = dns_name.split(".")[0].lower() if dns_name else ""
+        if actual and actual != hostname.lower():
+            result["dns_name"] = dns_name
+            result["warning"] = (
+                f"Le nœud s'appelle « {actual} » au lieu de « {hostname} » : "
+                "ce nom est déjà pris (Service Tailscale ou autre nœud). "
+                "Libère-le dans la console Tailscale, puis reconnecte."
+            )
+    return result
 
 
 def apply_tailscale_startup(config: dict) -> dict:
@@ -977,6 +1037,8 @@ def apply_tailscale_startup(config: dict) -> dict:
             if current.get("running") or authkey:
                 try:
                     result["up"] = tailscale_up(authkey, hostname=hostname)
+                    if result["up"].get("warning"):
+                        result["errors"].append(f"nom : {result['up']['warning']}")
                 except Exception as err:  # noqa: BLE001
                     result["errors"].append(f"connexion : {err}")
             else:
