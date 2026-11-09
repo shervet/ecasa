@@ -708,6 +708,11 @@ function tailscaleSection() {
     "Tailscale",
     "shield",
     `<p class="hint">Accès à distance chiffré, sans ouvrir de port sur la box. MeCasa peut publier son interface sur ton tailnet.</p>
+    ${row(
+      "Guide de configuration",
+      "Installation, connexion et publication du service sur ton tailnet.",
+      `<button class="btn btn-sm" type="button" id="tailscaleHelp">${icon("info", 15)} Ouvrir l'aide</button>`
+    )}
     ${row("Activer Tailscale", "Au démarrage, MeCasa peut connecter le nœud et publier le service.", toggle("tailscale_enabled", Boolean(c.tailscale_enabled)))}
     ${row("Publier automatiquement", "Expose l'interface sur le tailnet via « tailscale serve ».", toggle("tailscale_auto_serve", Boolean(c.tailscale_auto_serve)))}
     ${row(
@@ -885,6 +890,7 @@ function bind() {
   root.querySelector("#importFile")?.addEventListener("change", importData);
 
   root.querySelector("#tailscaleRefresh")?.addEventListener("click", loadTailscale);
+  root.querySelector("#tailscaleHelp")?.addEventListener("click", openTailscaleHelp);
   root.querySelector("#tsUp")?.addEventListener("click", () => tailscaleAction("up"));
   root.querySelector("#tsServeOn")?.addEventListener("click", () => tailscaleAction("serve/enable"));
   root.querySelector("#tsServeOff")?.addEventListener("click", () => tailscaleAction("serve/disable"));
@@ -1881,6 +1887,29 @@ async function waitForServer() {
 }
 
 /* --------------------------------------------------------------- tailscale */
+
+function openTailscaleHelp() {
+  openSheet({
+    title: "Configurer Tailscale",
+    sub: "Accès distant sans ouvrir de port",
+    body: `<div class="stack">
+      <p class="hint">Tailscale crée un réseau privé chiffré entre tes appareils. MeCasa n'a besoin d'aucune redirection de port sur la box.</p>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">1. Installer Tailscale sur le Raspberry Pi</div><div class="sr-sub">Debian, Ubuntu ou Raspberry Pi OS :</div></div></div>
+      <code class="help-code">curl -fsSL https://tailscale.com/install.sh | sh</code>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">2. Connecter le nœud</div><div class="sr-sub">Lance la connexion, puis ouvre l'URL affichée pour autoriser la machine dans ton compte Tailscale.</div></div></div>
+      <code class="help-code">sudo tailscale up</code>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Vérifier l'adresse</div><div class="sr-sub">Note le nom DNS ou l'adresse 100.x du nœud.</div></div></div>
+      <code class="help-code">tailscale status</code>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Publier MeCasa</div><div class="sr-sub">Expose le port local 8780 sur le tailnet, en HTTPS via MagicDNS.</div></div></div>
+      <code class="help-code">sudo tailscale serve --bg 8780</code>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">5. Ouvrir MeCasa à distance</div><div class="sr-sub">Depuis un téléphone ou un PC connecté au même tailnet : https://nom-du-noeud.ton-tailnet.ts.net</div></div></div>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Clé d'authentification (optionnelle)</div><div class="sr-sub">Pour reconnecter automatiquement le nœud : console d'administration Tailscale → Settings → Keys → Generate auth key, puis colle la clé dans le champ « Clé d'authentification ».</div></div></div>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Dépublier</div><div class="sr-sub">Pour retirer l'accès distant sans déconnecter le nœud :</div></div></div>
+      <code class="help-code">sudo tailscale serve --bg off</code>
+      <p class="hint mt-2">Liens utiles : <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Installer Tailscale</a> · <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">Générer une clé</a></p>
+    </div>`,
+  });
+}
 
 async function loadTailscale() {
   const host = root?.querySelector("#tailscaleStatus");
