@@ -173,6 +173,7 @@ export default {
             ["devices", "Appareils"],
             ["pronote", "Pronote"],
             ["weather", "Météo"],
+            ["energy", "Électricité"],
             ["storage", "Stockage"],
             ["server", "Serveur"],
             ["tailscale", "Tailscale"],
@@ -190,6 +191,7 @@ export default {
           ${devicesSection()}
           ${pronoteSection()}
           ${weatherSection()}
+          ${energySection()}
           ${storageSection()}
           ${serverSection()}
           ${tailscaleSection()}
@@ -569,6 +571,44 @@ function weatherSection() {
   );
 }
 
+function energySection() {
+  const c = cfg();
+  return section(
+    "energy",
+    "Électricité",
+    "zap",
+    `${row(
+      "Suivre la consommation",
+      "Graphique multi-années dans les statistiques, via MyElectricalData (Enedis).",
+      toggle("med_enabled", Boolean(c.med_enabled))
+    )}
+    ${textRow("Adresse MyElectricalData", "med_url", c.med_url || "https://www.myelectricaldata.fr", {
+      placeholder: "https://www.myelectricaldata.fr",
+      sub: "Instance publique ou auto-hébergée.",
+    })}
+    ${textRow("Point de livraison (PDL)", "med_pdl", c.med_pdl, {
+      placeholder: "14 chiffres",
+      sub: "Identifiant Enedis du compteur Linky, sans espaces.",
+    })}
+    ${row(
+      "Token MyElectricalData",
+      c.med_token_set
+        ? "Un token est déjà enregistré. Laisse vide pour le conserver."
+        : "Généré dans MyElectricalData → Compte → Token (valable un an).",
+      `<input class="input" data-key="med_token" data-secret type="password" autocomplete="new-password" placeholder="${c.med_token_set ? "••••••••" : "token"}" style="width:min(320px,62vw)">`,
+      true
+    )}
+    ${row("Effacer le token", "À faire si le token a expiré ou a été révoqué.", toggle("med_token_clear", false))}
+    ${textRow("Début de l'historique", "med_start", c.med_start, {
+      placeholder: "2023-01-01",
+      sub: "Vide = 3 ans en arrière (limite Enedis). Format AAAA-MM-JJ.",
+    })}
+    <div class="hint" id="energyTestResult"></div>`,
+    `<button class="btn" type="button" data-test="energy">${icon("shield", 16)} Tester la connexion</button>
+     <button class="btn btn-primary" type="button" data-save="energy">${icon("save", 16)} Enregistrer</button>`
+  );
+}
+
 function storageSection() {
   const c = cfg();
   return section(
@@ -900,6 +940,10 @@ async function saveSection(name, button) {
       const body = collect(container);
       const payload = await put("/api/config", body);
       store.config = payload.config;
+      if (name === "energy") {
+        const clear = container.querySelector('[data-key="med_token_clear"]');
+        if (clear) clear.checked = false;
+      }
       await refreshConfig({ silent: true });
       await refreshSystem({ silent: true });
       renderStorage();
@@ -936,7 +980,13 @@ function paintEngineState() {
 /* --------------------------------------------------------------- tests */
 
 async function testConnection(kind, button) {
-  const result = root?.querySelector(kind === "atlantic" ? "#atlanticTestResult" : "#pronoteTestResult");
+  const resultId =
+    kind === "atlantic"
+      ? "#atlanticTestResult"
+      : kind === "pronote"
+        ? "#pronoteTestResult"
+        : "#energyTestResult";
+  const result = root?.querySelector(resultId);
   if (!result) return;
   button.disabled = true;
   result.className = "hint";
@@ -951,21 +1001,36 @@ async function testConnection(kind, button) {
         email: body.email,
         password: body.password || undefined,
       });
-    } else {
+    } else if (kind === "pronote") {
       const container = root.querySelector("#sec-pronote");
       const body = collect(container);
       payload = await post("/api/pronote/test", body);
+    } else {
+      const container = root.querySelector("#sec-energy");
+      const body = collect(container);
+      payload = await post("/api/energy/test", body);
     }
 
     result.className = `hint ${payload.ok ? "is-ok" : "is-bad"}`;
     const extras = [];
     if (payload.establishment) extras.push(payload.establishment);
     if (payload.child) extras.push(`enfant : ${payload.child}`);
+    if (payload.pdl) extras.push(`PDL ${payload.pdl}`);
+    if (payload.last_date) extras.push(`dernière donnée ${payload.last_date}`);
     if (payload.device_count !== undefined) extras.push(`${payload.device_count} appareil(s)`);
+    if (payload.samples !== undefined) extras.push(`${payload.samples} jour(s)`);
     result.innerHTML = `${escapeHtml(payload.message || (payload.ok ? "Connexion réussie." : "Échec."))}${
       extras.length ? `<br><span class="tiny muted">${escapeHtml(extras.join(" · "))}</span>` : ""
     }`;
-    if (payload.ok) toast(kind === "atlantic" ? "Compte Atlantic validé." : "Connexion Pronote validée.");
+    if (payload.ok) {
+      toast(
+        kind === "atlantic"
+          ? "Compte Atlantic validé."
+          : kind === "pronote"
+            ? "Connexion Pronote validée."
+            : "MyElectricalData validé."
+      );
+    }
   } catch (err) {
     result.className = "hint is-bad";
     result.textContent = err.message;

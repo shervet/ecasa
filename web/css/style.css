@@ -1974,6 +1974,12 @@ svg {
   padding: 6px 0 0;
 }
 
+.chart-wrap.is-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
 .chart-wrap svg {
   width: 100%;
   height: auto;

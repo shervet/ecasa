@@ -58,6 +58,7 @@ Au premier lancement, `config.json` est créé depuis les valeurs par défaut.
 | `wiser_enabled`, `wiser_host`, `wiser_secret` | Passerelle Schneider Wiser. |
 | `pronote_*` | Compte, établissement, trajets, consignes confort/réduit. |
 | `weather_*` | Coordonnées Open-Meteo (sans clé). |
+| `med_enabled`, `med_url`, `med_token`, `med_pdl`, `med_start` | Consommation Enedis via MyElectricalData. Token local, jamais renvoyé. |
 | `tailscale_*` | Nœud Tailscale et publication `tailscale serve`. |
 | `state_file` | Snapshot JSON de l'état complet. |
 | `history_dir`, `history_interval`, `history_days` | Mesures horaires append-only et conservation. |
@@ -71,7 +72,7 @@ l'interface propose le bouton directement.
 
 Les mots de passe et clés ne sont **jamais** renvoyés au navigateur.
 `GET /api/config` expose seulement `password_set`, `wiser_secret_set`,
-`pronote_password_set` et `tailscale_authkey_set`.
+`pronote_password_set`, `tailscale_authkey_set` et `med_token_set`.
 
 ## Stockage basse consommation
 
@@ -97,9 +98,9 @@ démarrage, servis avec gzip et ETag).
 | --- | --- |
 | **Accueil** | Ambiance par pièce, consignes, prochain changement, forçage rapide. |
 | **Planning** | Agenda tactile 24 h, éditeur de créneaux, modèles, copie A↔B, imports Pronote et Wiser. |
-| **Stats** | Courbes ambiance / consigne / extérieur, KPI, détail horaire ou journalier. |
+| **Stats** | Courbes ambiance / consigne / extérieur, consommation électrique multi-années, KPI, détail horaire ou journalier. |
 | **Journal** | Derniers événements, filtres, recherche, export JSON. |
-| **Réglages** | Apparence, moteur, semaines A/B, pièces, appareils, clim, connecteurs, stockage, serveur, Tailscale. |
+| **Réglages** | Apparence, moteur, semaines A/B, pièces, appareils, clim, connecteurs, électricité, stockage, serveur, Tailscale. |
 
 Navigation par hash (`#/home`, `#/planning`, `#/stats`, `#/logs`, `#/settings`),
 thème clair/sombre/auto, bottom bar sur téléphone, sidebar sur ordinateur.
@@ -120,6 +121,28 @@ soufflerie/orientation n'est faite quand l'appareil est à l'arrêt (`mode 0`),
 et les deux capacités sont réécrites après un changement de mode, car certaines
 télécommandes les réinitialisent. La feuille d'un appareil affiche l'état courant
 (« Soufflerie … », « Orientation … »).
+
+### Consommation électrique (MyElectricalData)
+
+La carte **Consommation électrique** des statistiques compare les mêmes périodes
+d'une année sur l'autre : jour, semaine ISO, mois ou année, avec une série par
+année. Les données viennent de l'API Enedis exposée par
+[MyElectricalData](https://www.myelectricaldata.fr).
+
+Mise en place, dans **Réglages → Électricité** :
+
+1. Créer un compte MyElectricalData et connecter le compteur Linky (Enedis).
+2. Générer un token dans **Compte → Token** (validité un an).
+3. Renseigner l'adresse du service, le **PDL** (14 chiffres) et le token.
+4. Laisser « Début de l'historique » vide pour récupérer les 3 dernières
+   années (limite Enedis de 1095 jours), ou choisir une date précise
+   (`AAAA-MM-JJ`).
+
+Le token reste local : `GET /api/config` expose seulement `med_token_set`.
+Les réponses Enedis (Wh) sont converties en kWh. Les appels sont mis en cache
+**en mémoire** 6 h (aucune écriture disque) et découpés par année, ce qui reste
+sous le quota MyElectricalData de 50 appels/jour/PDL. Le bouton **Tester la
+connexion** interroge les 7 derniers jours sans enregistrer la configuration.
 
 ## API
 
@@ -142,6 +165,8 @@ machine locale, sauf si `allow_remote_admin` est activé.
 | DELETE | `/api/override/{device_id}` | Reprise du planning. |
 | GET/PUT | `/api/weeks` | Surcharges de semaine A/B. |
 | GET | `/api/stats?range=day\|week\|month&date=…&room_id=…` | Statistiques. |
+| GET | `/api/energy?view=day\|week\|month\|year&month=…` | Consommation électrique. |
+| POST | `/api/energy/test` | Teste le token et le PDL MyElectricalData. |
 | POST | `/api/apply`, `/api/sync` | Applique ou resynchronise. |
 | POST | `/api/pronote/search\|test\|preview\|import` | Pronote. |
 | GET | `/api/wiser/schedule/{id}`, POST `/api/wiser/import` | Wiser. |
@@ -168,14 +193,15 @@ python -m unittest discover -s tests -v
 ```
 
 Les tests couvrent le stockage (persistance, rechargement, forçages, créneaux,
-journal), les règles de semaine, l'agrégation des statistiques et les défauts de
+journal), les règles de semaine, l'agrégation des statistiques, les défauts de
 climatisation Atlantic (détection des capacités, application soufflerie /
-orientation, non-réécriture, mode Arrêt).
+orientation, non-réécriture, mode Arrêt) et la consommation électrique
+(parsing Enedis, cache mémoire, agrégation multi-années).
 
 ## Sécurité
 
 - Aucune dépendance réseau sortante en dehors d'Atlantic, Wiser, Open-Meteo,
-  Pronote et Tailscale.
+  Pronote, Tailscale et MyElectricalData.
 - CSP stricte, pas de script inline, pas de CDN.
 - Les routes d'administration sont bloquées depuis le réseau par défaut.
 - Pour l'accès à distance, préférer Tailscale à l'ouverture d'un port sur la box.

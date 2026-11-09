@@ -1,7 +1,7 @@
 // Statistiques : températures intérieures, consignes et météo extérieure.
 
 import { get, query } from "../api.js";
-import { chartLegend, lineChart } from "../charts.js";
+import { barChart, chartLegend, lineChart } from "../charts.js";
 import { icon } from "../icons.js";
 import { devicesInRoom, store } from "../state.js";
 import { toastError } from "../toast.js";
@@ -25,6 +25,28 @@ const RANGES = [
   ["month", "Mois"],
 ];
 
+const ENERGY_VIEWS = [
+  ["day", "Jour"],
+  ["week", "Semaine"],
+  ["month", "Mois"],
+  ["year", "Année"],
+];
+
+const MONTHS = [
+  "janvier",
+  "février",
+  "mars",
+  "avril",
+  "mai",
+  "juin",
+  "juillet",
+  "août",
+  "septembre",
+  "octobre",
+  "novembre",
+  "décembre",
+];
+
 let root = null;
 let range = readPref("stats.range", "week");
 let anchor = readPref("stats.anchor", todayIso());
@@ -32,6 +54,9 @@ let roomId = readPref("stats.room", null);
 let data = null;
 let loading = false;
 let requestId = 0;
+let energyView = readPref("stats.energyView", "month");
+let energyMonth = Number(readPref("stats.energyMonth", new Date().getMonth() + 1));
+let energyRequestId = 0;
 
 export default {
   title: "Statistiques",
@@ -39,6 +64,10 @@ export default {
   async mount(view) {
     root = view;
     if (!RANGES.some(([key]) => key === range)) range = "week";
+    if (!ENERGY_VIEWS.some(([key]) => key === energyView)) energyView = "month";
+    if (!Number.isInteger(energyMonth) || energyMonth < 1 || energyMonth > 12) {
+      energyMonth = new Date().getMonth() + 1;
+    }
     if (!parseDate(anchor)) anchor = todayIso();
 
     const rooms = roomOptions();
@@ -77,6 +106,8 @@ export default {
         <div id="statsContent">
           <div class="boot" style="min-height:240px"><span class="spinner"></span><p>Chargement des mesures…</p></div>
         </div>
+
+        <div id="energyContent" class="mt-2"></div>
       </div>
     `;
 
@@ -108,9 +139,13 @@ export default {
     });
 
     await load();
+    // La carte énergie charge en arrière-plan : un appel Enedis lent ne
+    // retarde pas l'affichage des courbes de température.
+    loadEnergy();
   },
 
   unmount() {
+    energyRequestId += 1;
     root = null;
   },
 };
@@ -378,4 +413,165 @@ function periodLabel(payload) {
   if (payload.range === "day") return fmtDate(start, { weekday: "long", day: "numeric", month: "long" });
   if (payload.range === "week") return `du ${fmtDate(start)} au ${fmtDate(end)}`;
   return `${start.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}`;
+}
+
+/* ------------------------------------------------------- consommation */
+
+async function loadEnergy() {
+  if (!root) return;
+  const host = root.querySelector("#energyContent");
+  if (!host) return;
+
+  const id = ++energyRequestId;
+  host.innerHTML = `<div class="card card-pad">
+    <div class="boot" style="min-height:160px"><span class="spinner"></span><p>Chargement de la consommation…</p></div>
+  </div>`;
+
+  try {
+    const payload = await get(
+      `/api/energy${query({
+        view: energyView,
+        month: energyView === "day" ? energyMonth : undefined,
+      })}`
+    );
+    if (id !== energyRequestId) return;
+    paintEnergy(payload);
+  } catch (err) {
+    if (id !== energyRequestId) return;
+    host.innerHTML = `<div class="card card-pad">
+      <div class="hint is-bad">${escapeHtml(err.message)}</div>
+      <button class="btn btn-sm mt-2" type="button" id="energyRetry">${icon("refresh", 15)} Réessayer</button>
+    </div>`;
+    root.querySelector("#energyRetry")?.addEventListener("click", loadEnergy);
+    toastError(err);
+  }
+}
+
+function paintEnergy(payload) {
+  const host = root?.querySelector("#energyContent");
+  if (!host) return;
+
+  const ok = Boolean(payload?.ok);
+  const summary = payload?.summary || {};
+  const controls = `<div class="row-between wrap" style="gap:10px">
+    <div class="segmented" id="energyView">
+      ${ENERGY_VIEWS.map(
+        ([key, label]) =>
+          `<button type="button" data-energy-view="${key}" class="${key === energyView ? "is-active" : ""}">${label}</button>`
+      ).join("")}
+    </div>
+    ${
+      energyView === "day"
+        ? `<label class="field" style="min-width:150px">
+            <span class="sr-only">Mois</span>
+            <select class="select" id="energyMonth">
+              ${MONTHS.map(
+                (label, index) =>
+                  `<option value="${index + 1}"${index + 1 === energyMonth ? " selected" : ""}>${label}</option>`
+              ).join("")}
+            </select>
+          </label>`
+        : ""
+    }
+  </div>`;
+
+  let body = "";
+  if (!ok) {
+    const hint = payload?.error || "Consommation indisponible.";
+    const action =
+      payload?.enabled === false || payload?.configured === false
+        ? `<a class="btn btn-sm mt-2" href="#/settings">Ouvrir les réglages</a>`
+        : "";
+    body = `<div class="empty" style="padding:24px 12px">
+      <span class="empty-icon">${icon("zap", 22)}</span>
+      <strong>Consommation électrique</strong>
+      <p>${escapeHtml(hint)}</p>
+      ${action}
+    </div>`;
+  } else {
+    const series = payload.series || [];
+    const labels = payload.labels || [];
+    const delta = summary.delta_pct;
+    body = `
+      <div class="kpi-grid">
+        ${kpi(
+          "zap",
+          summary.label || `Année ${summary.year ?? ""}`,
+          summary.total_kwh === null || summary.total_kwh === undefined
+            ? "—"
+            : `${fmtNumber(summary.total_kwh, 1)} kWh`,
+          `${summary.days || 0} jour(s) relevés`
+        )}
+        ${kpi(
+          "history",
+          summary.previous_label || `Année ${summary.previous_year ?? ""}`,
+          summary.previous_kwh === null || summary.previous_kwh === undefined
+            ? "—"
+            : `${fmtNumber(summary.previous_kwh, 1)} kWh`,
+          "même période"
+        )}
+        ${kpi(
+          delta !== null && delta !== undefined && delta > 0
+            ? "trending-up"
+            : "trending-down",
+          "Écart",
+          delta === null || delta === undefined
+            ? "—"
+            : `${delta > 0 ? "+" : ""}${fmtNumber(delta, 1)} %`,
+          "année sur année"
+        )}
+      </div>
+      ${barChart({
+        labels,
+        series,
+        height: 280,
+        unit: "kWh",
+        ariaLabel: "Consommation électrique par année",
+      })}
+      ${chartLegend(series)}
+      <p class="hint mt-2">
+        Source MyElectricalData (Enedis)${
+          payload.last_date ? ` · dernière donnée ${fmtDate(payload.last_date)}` : ""
+        } · ${payload.days || 0} jour(s) en mémoire.
+      </p>
+    `;
+  }
+
+  host.innerHTML = `<div class="card">
+    <div class="card-head">
+      <div>
+        <div class="card-title">${icon("zap", 18)} Consommation électrique</div>
+        <div class="card-sub">${escapeHtml(energySubtitle(payload))}</div>
+      </div>
+      <span class="pill ${ok ? "pill-ok" : "pill-ghost"}">${ok ? "kWh" : "hors ligne"}</span>
+    </div>
+    <div class="card-body">
+      ${controls}
+      <div style="margin-top:12px">${body}</div>
+    </div>
+  </div>`;
+
+  host.querySelectorAll("[data-energy-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      energyView = button.dataset.energyView;
+      writePref("stats.energyView", energyView);
+      loadEnergy();
+    });
+  });
+
+  host.querySelector("#energyMonth")?.addEventListener("change", (event) => {
+    energyMonth = Number(event.target.value) || new Date().getMonth() + 1;
+    writePref("stats.energyMonth", energyMonth);
+    loadEnergy();
+  });
+}
+
+function energySubtitle(payload) {
+  if (!payload) return "";
+  const view = payload.view_label || "Mois";
+  if (payload.view === "day") {
+    return `${view} · ${payload.month_label || ""} · comparaison par année`;
+  }
+  if (payload.view === "year") return `${view} · total annuel`;
+  return `${view} · comparaison par année`;
 }

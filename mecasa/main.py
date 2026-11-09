@@ -33,6 +33,13 @@ import urllib.request
 
 from . import __version__
 from .atlantic import AtlanticClient, AtlanticError, AuthError, MockAtlanticClient
+from .energy import (
+    ENERGY_VIEWS,
+    MAX_HISTORY_DAYS,
+    EnergyService,
+    build_energy,
+    test_energy,
+)
 from .engine import Engine, _caps, _mode_value, device_name
 from .find_wiser import scan_network
 from .pronote import (
@@ -86,6 +93,13 @@ DEFAULT_CONFIG = {
     "weather_city": "",
     "weather_latitude": 48.8566,
     "weather_longitude": 2.3522,
+    # --- Consommation électrique (MyElectricalData / Enedis) ----------------
+    "med_enabled": False,
+    "med_url": "https://www.myelectricaldata.fr",
+    "med_token": "",
+    "med_pdl": "",
+    # Vide = 3 ans d'historique (limite Enedis : 1095 jours).
+    "med_start": "",
     "tailscale_enabled": False,
     "tailscale_auto_serve": False,
     "tailscale_authkey": "",
@@ -246,6 +260,7 @@ def requires_local_admin(path: str) -> bool:
         (
             "/api/config", "/api/control/", "/api/pronote/", "/api/tailscale/",
             "/api/storage/", "/api/wiser/find", "/api/system",
+            "/api/energy/test",
         )
     ) or path in ("/api/import", "/api/export")
 
@@ -289,6 +304,11 @@ def public_config(config: dict) -> dict:
         "weather_city": str(config.get("weather_city", "")),
         "weather_latitude": float(config.get("weather_latitude", 48.8566) or 0),
         "weather_longitude": float(config.get("weather_longitude", 2.3522) or 0),
+        "med_enabled": bool(config.get("med_enabled", False)),
+        "med_url": str(config.get("med_url", "https://www.myelectricaldata.fr")),
+        "med_pdl": str(config.get("med_pdl", "")),
+        "med_start": str(config.get("med_start", "")),
+        "med_token_set": bool(config.get("med_token")),
         "tailscale_enabled": bool(config.get("tailscale_enabled", False)),
         "tailscale_auto_serve": bool(config.get("tailscale_auto_serve", False)),
         "tailscale_authkey_set": bool(config.get("tailscale_authkey")),
@@ -300,6 +320,48 @@ def public_config(config: dict) -> dict:
         "cache_static": bool(config.get("cache_static", True)),
         "gzip_enabled": bool(config.get("gzip_enabled", True)),
     }
+
+
+def validate_med_values(body: dict) -> dict:
+    """Valide et normalise les champs MyElectricalData d'un formulaire.
+
+    Utilisé par l'enregistrement de la configuration et par le test de
+    connexion, afin que les deux routes appliquent les mêmes règles.
+    """
+    values = {}
+    if "med_url" in body:
+        url = str(body.get("med_url") or "").strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            raise ValueError(
+                "Adresse MyElectricalData invalide (http:// ou https://)"
+            )
+        values["med_url"] = url or "https://www.myelectricaldata.fr"
+
+    if "med_pdl" in body:
+        pdl = re.sub(r"\s+", "", str(body.get("med_pdl") or ""))
+        if pdl and not re.fullmatch(r"\d{14}", pdl):
+            raise ValueError("PDL invalide : 14 chiffres attendus")
+        values["med_pdl"] = pdl
+
+    if "med_start" in body:
+        value = str(body.get("med_start") or "").strip()
+        if not value:
+            values["med_start"] = ""
+        else:
+            try:
+                start = datetime.fromisoformat(value[:10]).date()
+            except ValueError as err:
+                raise ValueError("Date de début invalide (AAAA-MM-JJ)") from err
+            today = datetime.now().date()
+            if start > today:
+                raise ValueError("La date de début ne peut pas être future")
+            oldest = today - timedelta(days=MAX_HISTORY_DAYS - 1)
+            if start < oldest:
+                raise ValueError(
+                    "L'historique Enedis est limité à 3 ans (1095 jours)"
+                )
+            values["med_start"] = start.isoformat()
+    return values
 
 
 def save_config(body: dict) -> tuple[dict, bool]:
@@ -434,6 +496,17 @@ def save_config(body: dict) -> tuple[dict, bool]:
     if "weather_city" in body:
         updated["weather_city"] = str(body.get("weather_city") or "").strip()[:80]
 
+    # --- Consommation électrique (MyElectricalData) ---------------------
+    if "med_enabled" in body:
+        updated["med_enabled"] = bool(body.get("med_enabled"))
+
+    updated.update(validate_med_values(body))
+
+    if body.get("med_token"):
+        updated["med_token"] = str(body["med_token"]).strip()
+    elif body.get("med_token_clear"):
+        updated["med_token"] = ""
+
     for key in ("tailscale_enabled", "tailscale_auto_serve", "cache_static",
                 "gzip_enabled"):
         if key in body:
@@ -496,6 +569,17 @@ def merge_pronote_config(current: dict, body: dict) -> dict:
             config[key] = str(body.get(key) or "").strip()
     if body.get("pronote_password"):
         config["pronote_password"] = str(body["pronote_password"])
+    return config
+
+
+def merge_energy_config(current: dict, body: dict) -> dict:
+    """Config MyElectricalData effective pour un test, sans rien enregistrer."""
+    config = dict(current)
+    config.update(validate_med_values(body))
+    if body.get("med_token"):
+        config["med_token"] = str(body["med_token"]).strip()
+    if "med_enabled" in body:
+        config["med_enabled"] = bool(body.get("med_enabled"))
     return config
 
 
@@ -760,10 +844,12 @@ class App:
         store: MemoryStore,
         engine: Engine,
         weather: WeatherService | None = None,
+        energy: EnergyService | None = None,
     ):
         self.store = store
         self.engine = engine
         self.weather = weather or WeatherService()
+        self.energy = energy or EnergyService()
         self.static = StaticCache(WEB, gzip_enabled=True)
 
 
@@ -1102,6 +1188,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, payload)
             return
 
+        if method == "GET" and path == "/api/energy":
+            query = parse_qs(urlparse(self.path).query)
+            view = (query.get("view") or ["month"])[0]
+            if view not in ENERGY_VIEWS:
+                self._json(400, {
+                    "error": "Vue invalide (day, week, month ou year)"
+                })
+                return
+            month = (query.get("month") or [""])[0]
+            self._json(
+                200, build_energy(app.energy, load_config(), view, month)
+            )
+            return
+
         # ------------------------------------------------------------- pièces
 
         if method == "GET" and path == "/api/rooms":
@@ -1150,7 +1250,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if method == "PUT" and path == "/api/config":
-            updated, restart = save_config(self._body())
+            try:
+                updated, restart = save_config(self._body())
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                return
             self._json(200, {
                 "ok": True,
                 "restart_required": restart,
@@ -1160,6 +1264,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "POST" and path == "/api/config/test":
             self._json(200, test_cozytouch_login(self._body()))
+            return
+
+        if method == "POST" and path == "/api/energy/test":
+            body = self._body()
+            try:
+                config = merge_energy_config(load_config(), body)
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                return
+            self._json(200, test_energy(config))
             return
 
         # ----------------------------------------------------------- tailscale
