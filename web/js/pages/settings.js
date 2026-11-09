@@ -578,6 +578,11 @@ function energySection() {
     "Électricité",
     "zap",
     `${row(
+      "Guide de configuration",
+      "Autoriser Enedis, récupérer un token et le coller ici.",
+      `<button class="btn btn-sm" type="button" id="energyHelp">${icon("info", 15)} Ouvrir l'aide</button>`
+    )}
+    ${row(
       "Suivre la consommation",
       "Graphique multi-années dans les statistiques, via MyElectricalData (Enedis).",
       toggle("med_enabled", Boolean(c.med_enabled))
@@ -594,7 +599,7 @@ function energySection() {
       "Token MyElectricalData",
       c.med_token_set
         ? "Un token est déjà enregistré. Laisse vide pour le conserver."
-        : "Généré dans MyElectricalData → Compte → Token (valable un an).",
+        : "Affiché par MyElectricalData après le consentement Enedis (valable un an).",
       `<input class="input" data-key="med_token" data-secret type="password" autocomplete="new-password" placeholder="${c.med_token_set ? "••••••••" : "token"}" style="width:min(320px,62vw)">`,
       true
     )}
@@ -891,6 +896,7 @@ function bind() {
 
   root.querySelector("#tailscaleRefresh")?.addEventListener("click", loadTailscale);
   root.querySelector("#tailscaleHelp")?.addEventListener("click", openTailscaleHelp);
+  root.querySelector("#energyHelp")?.addEventListener("click", openEnergyHelp);
   root.querySelector("#tsUp")?.addEventListener("click", () => tailscaleAction("up"));
   root.querySelector("#tsServeOn")?.addEventListener("click", () => tailscaleAction("serve/enable"));
   root.querySelector("#tsServeOff")?.addEventListener("click", () => tailscaleAction("serve/disable"));
@@ -1044,6 +1050,33 @@ async function testConnection(kind, button) {
   } finally {
     button.disabled = false;
   }
+}
+
+/* ----------------------------------------------------- aide électricité */
+
+function openEnergyHelp() {
+  openSheet({
+    title: "Configurer MyElectricalData",
+    sub: "Consommation Enedis dans MeCasa",
+    body: `<div class="stack">
+      <p class="hint">MyElectricalData est une passerelle gratuite entre Enedis et MeCasa. Il faut d'abord autoriser l'accès à tes données Enedis, puis récupérer un token à coller dans les réglages.</p>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">1. Autoriser l'accès à tes données Enedis</div><div class="sr-sub">Sur le site MyElectricalData, clique sur « Faire la demande de consentement » en bas de page, connecte-toi à ton espace Enedis et autorise la passerelle. Le consentement est valable 36 mois.</div></div></div>
+      <a class="btn btn-sm" href="https://www.myelectricaldata.fr" target="_blank" rel="noreferrer">${icon("external", 14)} Ouvrir MyElectricalData</a>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">2. Activer la collecte horaire chez Enedis</div><div class="sr-sub">Dans ton espace Enedis, coche « Enregistrement de la consommation horaire » et « Collecte de la consommation horaire ». Sans ça, les données sont incomplètes. À réactiver chaque année.</div></div></div>
+      <a class="btn btn-sm" href="https://mon-compte-particulier.enedis.fr/donnees/" target="_blank" rel="noreferrer">${icon("external", 14)} Ouvrir l'espace Enedis</a>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Récupérer le token</div><div class="sr-sub">Après le consentement, MyElectricalData affiche ton token : une chaîne de 54 caractères. Il est valable un an, puis il faut recommencer l'étape 1.</div></div></div>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Renseigner MeCasa</div><div class="sr-sub">Colle le PDL (14 chiffres, visible sur ta facture ou dans l'espace Enedis) et le token dans les champs ci-dessus, puis clique sur « Tester la connexion » avant d'enregistrer.</div></div></div>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Bon à savoir</div><div class="sr-sub">Enedis limite chaque requête à 1095 jours : MeCasa découpe par année et affiche jusqu'à 3 ans d'historique. Les données sont mises en cache 6 h en mémoire, rien n'est écrit sur le disque.</div></div></div>
+
+      <p class="hint mt-2">Liens utiles : <a href="https://www.myelectricaldata.fr/documentation/" target="_blank" rel="noreferrer">Documentation</a> · <a href="https://www.myelectricaldata.fr/faq/" target="_blank" rel="noreferrer">FAQ</a> · <a href="https://www.myelectricaldata.fr/error_code/" target="_blank" rel="noreferrer">Codes d'erreur</a></p>
+    </div>`,
+    footer: `<a class="btn btn-primary" href="https://www.myelectricaldata.fr" target="_blank" rel="noreferrer">${icon("external", 16)} Ouvrir MyElectricalData</a>`,
+  });
 }
 
 async function findWiser(event) {
