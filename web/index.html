@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f1ea" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15181a" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="MeCasa — pilotez le chauffage et la climatisation de la maison depuis votre téléphone ou votre navigateur.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="MeCasa">
+  <title>MeCasa</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#view">Aller au contenu</a>
+
+  <div class="app-shell" id="appShell">
+    <header class="topbar">
+      <a class="brand" href="#/home" aria-label="MeCasa, accueil">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 14.5 16 5l11 9.5V27a1 1 0 0 1-1 1h-6v-8h-8v8H6a1 1 0 0 1-1-1V14.5Z"/>
+            <path d="M16 12.5c1.9 0 3.5 1.5 3.5 3.4 0 2.2-2.3 3.2-3.5 5.1-1.2-1.9-3.5-2.9-3.5-5.1 0-1.9 1.6-3.4 3.5-3.4Z"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">Me<span>Casa</span></span>
+          <span class="brand-sub">Maison connectée</span>
+        </span>
+      </a>
+
+      <div class="topbar-status" id="topbarStatus">
+        <span class="pill pill-ghost" id="weekPill" title="Semaine de planning en cours">Semaine —</span>
+        <span class="pill pill-ghost" id="weatherPill" title="Température extérieure">… °C</span>
+        <span class="clock" id="clock" aria-label="Heure actuelle">--:--</span>
+        <button class="status-dot" id="statusDot" type="button" title="État de la connexion" aria-label="État de la connexion">
+          <span class="dot"></span>
+          <span class="status-label" id="statusLabel">Connexion</span>
+        </button>
+        <button class="icon-btn" id="installBtn" type="button" title="Installer l'application" hidden aria-label="Installer l'application">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="Navigation principale">
+      <nav class="sidebar-nav" id="sidebarNav"></nav>
+      <div class="sidebar-foot">
+        <div class="sidebar-card" id="sidebarStatus"></div>
+        <p class="tiny muted">MeCasa · local &amp; privé</p>
+      </div>
+    </aside>
+
+    <main class="view" id="view" tabindex="-1">
+      <div class="boot" id="boot">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Connexion à la maison…</p>
+      </div>
+    </main>
+
+    <nav class="tabbar" id="tabbar" aria-label="Navigation mobile"></nav>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>
+  <div id="sheetRoot"></div>
+
+  <noscript>
+    <div class="noscript">MeCasa a besoin de JavaScript pour afficher l'interface.</div>
+  </noscript>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

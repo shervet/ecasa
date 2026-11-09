@@ -1,0 +1,25 @@
+[Unit]
+Description=MeCasa — pilotage thermique local
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=__DIR__/.venv/bin/python -m mecasa.main
+Restart=always
+RestartSec=5
+TimeoutStopSec=25
+# Écritures limitées au strict nécessaire : l'état et l'historique vivent
+# dans le dossier du projet. Aucun accès privilégié n'est requis.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=__DIR__
+
+[Install]
+WantedBy=multi-user.target

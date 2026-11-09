@@ -1,0 +1,1781 @@
+// Planning hebdomadaire : agenda tactile, éditeur de créneaux, imports Pronote/Wiser.
+
+import { get, post, put } from "../api.js";
+import { icon, modeIcon } from "../icons.js";
+import { openSheet, closeSheet } from "../sheet.js";
+import { devicesInRoom, refreshState, setPref, store } from "../state.js";
+import { toast, toastError } from "../toast.js";
+import {
+  clamp,
+  describeSlot,
+  escapeHtml,
+  fmtDate,
+  fmtTemp,
+  minutesToTime,
+  modeColor,
+  modeLabel,
+  modesList,
+  mondayOf,
+  parseDate,
+  sortByPosition,
+  timeToMinutes,
+  todayIndex,
+  weekDates,
+  weekdayLong,
+  weekdayShort,
+} from "../utils.js";
+
+const HOUR_PX = 56;
+const PRESETS = {
+  Matin: [
+    { time: "06:30", mode: "heat", temp: 20 },
+    { time: "09:00", mode: "off", temp: 17 },
+  ],
+  Journée: [
+    { time: "09:00", mode: "heat", temp: 20 },
+    { time: "17:00", mode: "off", temp: 17 },
+  ],
+  Soir: [
+    { time: "18:00", mode: "heat", temp: 20 },
+    { time: "23:00", mode: "off", temp: 17 },
+  ],
+  Nuit: [
+    { time: "23:00", mode: "off", temp: 17 },
+    { time: "06:30", mode: "heat", temp: 19 },
+  ],
+  Absence: [
+    { time: "08:00", mode: "off", temp: 16 },
+    { time: "18:00", mode: "heat", temp: 20 },
+  ],
+  "Week-end": [
+    { time: "09:00", mode: "heat", temp: 20 },
+    { time: "23:30", mode: "off", temp: 17 },
+  ],
+};
+
+// Modèles prédéfinis pour toute la semaine
+const WEEK_PRESETS = {
+  vacances: [
+    [ // Lundi
+      { time: "07:00", mode: "heat", temp: 19 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "16:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Mardi
+      { time: "07:00", mode: "heat", temp: 19 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "16:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Mercredi
+      { time: "07:00", mode: "heat", temp: 19 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "16:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Jeudi
+      { time: "07:00", mode: "heat", temp: 19 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "16:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Vendredi
+      { time: "07:00", mode: "heat", temp: 19 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "16:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Samedi
+      { time: "08:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Dimanche
+      { time: "08:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+  ],
+  travail: [
+    [ // Lundi
+      { time: "06:30", mode: "heat", temp: 20 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "17:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Mardi
+      { time: "06:30", mode: "heat", temp: 20 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "17:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Mercredi
+      { time: "06:30", mode: "heat", temp: 20 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "17:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Jeudi
+      { time: "06:30", mode: "heat", temp: 20 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "17:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Vendredi
+      { time: "06:30", mode: "heat", temp: 20 },
+      { time: "09:00", mode: "off", temp: 17 },
+      { time: "17:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Samedi
+      { time: "08:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Dimanche
+      { time: "08:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+  ],
+  weekend: [
+    [ // Lundi - absence jour
+      { time: "08:00", mode: "off", temp: 16 },
+    ],
+    [ // Mardi
+      { time: "08:00", mode: "off", temp: 16 },
+    ],
+    [ // Mercredi
+      { time: "08:00", mode: "off", temp: 16 },
+    ],
+    [ // Jeudi
+      { time: "08:00", mode: "off", temp: 16 },
+    ],
+    [ // Vendredi
+      { time: "08:00", mode: "off", temp: 16 },
+    ],
+    [ // Samedi
+      { time: "08:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+    [ // Dimanche
+      { time: "08:00", mode: "heat", temp: 20 },
+      { time: "23:00", mode: "off", temp: 17 },
+    ],
+  ],
+  absence: Array.from({ length: 7 }, () => [
+    { time: "08:00", mode: "off", temp: 16 },
+    { time: "18:00", mode: "heat", temp: 19 },
+  ]),
+};
+
+let root = null;
+let targets = [];
+let target = null;
+let models = {};
+let week = "A";
+let day = todayIndex();
+let dirty = false;
+let appliedModelByTarget = {};
+let selectedModelByTarget = {};
+let viewMode = "day"; // "day" | "week"
+let modelEdit = null; // { index, name, room, model, original }
+
+export default {
+  title: "Planning",
+
+  async mount(view) {
+    root = view;
+    dirty = false;
+    day = Number.isInteger(store.prefs.day) ? store.prefs.day : todayIndex();
+
+    view.innerHTML = `
+      <div class="page">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">Planning</h1>
+            <p class="page-sub" id="planSub">Semaines type par pièce, créneaux et imports.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn" type="button" id="planImport">${icon("upload", 17)} Importer</button>
+            <button class="btn btn-primary" type="button" id="planPronote">${icon("school", 17)} Pronote</button>
+            <button class="btn btn-primary" type="button" id="planSave" disabled>${icon("save", 17)} Enregistrer</button>
+          </div>
+        </div>
+
+        <div class="planning-nav" id="planNav"></div>
+
+        <div class="planning-toolbar">
+          <div class="row wrap" style="gap:10px;align-items:center">
+            <div class="week-switch" id="planWeekSwitch">
+              <button type="button" data-week="A">Semaine A</button>
+              <button type="button" data-week="B">Semaine B</button>
+            </div>
+            <span class="pill pill-ghost" id="planDirty">À jour</span>
+            <button class="btn btn-sm" type="button" id="planCopy">${icon("copy", 15)} Copier vers l'autre semaine</button>
+          </div>
+        </div>
+
+        <div class="stack" id="planRooms"></div>
+
+        <div id="modelsAnchor" style="scroll-margin-top: calc(var(--topbar-h) + 52px)"></div>
+
+        <div class="card card-pad">
+          <div class="row-between wrap" style="gap:10px">
+            <div>
+              <div class="card-title">${icon("sparkles", 18)} Modèles de semaine</div>
+              <p class="hint mt-1">Remplace toute la semaine d'une pièce par un modèle prédéfini.</p>
+            </div>
+            <div class="row wrap" style="gap:8px;align-items:center">
+              <select class="select" id="planPresetRoom" style="width:auto">
+                ${targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
+              </select>
+              <select class="select" id="planWeekPreset" style="width:auto">
+                <option value="vacances">Vacances</option>
+                <option value="travail">Semaine travail</option>
+                <option value="weekend">Week-end prolongé</option>
+                <option value="absence">Absence</option>
+              </select>
+              <button class="btn btn-sm btn-primary" type="button" id="planApplyWeekPreset">${icon("check", 14)} Appliquer (efface la semaine)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-pad">
+          <div class="row-between wrap" style="gap:10px">
+            <div>
+              <div class="card-title">${icon("copy", 18)} Modèles personnalisés</div>
+              <p class="hint mt-1">Sauvegarde la semaine en cours d'une pièce, réapplique-la plus tard.</p>
+            </div>
+            <div class="row wrap" style="gap:8px;align-items:center">
+              <select class="select" id="planModelRoom" style="width:auto">
+                ${targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
+              </select>
+              <input class="input" id="planModelName" placeholder="Nom du modèle" style="width:min(200px,50vw)">
+              <button class="btn btn-sm" type="button" id="planModelSave">${icon("save", 14)} Sauvegarder</button>
+            </div>
+          </div>
+          <div class="row wrap" style="gap:8px;align-items:center;margin-top:8px">
+            <select class="select" id="planModelList" style="width:auto;min-width:200px"><option value="">— choisir un modèle —</option></select>
+            <button class="btn btn-sm" type="button" id="planModelApply">${icon("check", 14)} Appliquer à la pièce sélectionnée</button>
+            <button class="btn btn-sm btn-danger" type="button" id="planModelDelete">${icon("trash", 14)}</button>
+          </div>
+        </div>
+
+        <div class="card card-pad" id="modelInlineBox" style="display:none;margin-top:10px">
+          <div class="row-between wrap" style="gap:10px">
+            <div>
+              <div class="card-title">${icon("edit", 18)} Édition du modèle <span id="modelInlineName"></span></div>
+              <p class="hint mt-1">Modifie les créneaux ci-dessous, puis clique sur « Enregistrer le modèle ».</p>
+            </div>
+            <div class="week-switch" id="modelInlineWeekSwitch">
+              <button type="button" data-model-week="A">Semaine A</button>
+              <button type="button" data-model-week="B">Semaine B</button>
+            </div>
+          </div>
+          <div class="week-grid" id="modelInlineGrid"></div>
+          <div class="row wrap" style="gap:8px;margin-top:10px">
+            <button class="btn btn-sm btn-primary" type="button" data-model-save>${icon("save", 14)} Enregistrer le modèle</button>
+            <button class="btn btn-sm" type="button" data-model-close>${icon("x", 14)} Fermer</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    buildTargets();
+    if (!targets.length) {
+      view.querySelector("#planRooms").innerHTML = `<div class="empty">
+        <span class="empty-icon">${icon("calendar", 24)}</span>
+        <strong>Aucune zone à programmer</strong>
+        <p>Ajoute d'abord un appareil dans Réglages → Pièces &amp; appareils.</p>
+      </div>`;
+      view.querySelector("#planSave").disabled = true;
+      return;
+    }
+
+    paintPlanNav();
+
+    week = store.prefs.week === "A" || store.prefs.week === "B" ? store.prefs.week : store.state?.week || "A";
+    setPref("week", week);
+
+    if (!targets.length) return;
+    target = targets[0];
+    rebuildModels();
+    paintWeekSwitch();
+    paintRooms();
+    paintDirty();
+    paintSub();
+
+    const presetRoomSelect = view.querySelector("#planPresetRoom");
+    const modelRoomSelect = view.querySelector("#planModelRoom");
+    const roomOptions = targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("");
+    if (presetRoomSelect) presetRoomSelect.innerHTML = roomOptions;
+    if (modelRoomSelect) modelRoomSelect.innerHTML = roomOptions;
+
+    view.querySelectorAll("[data-week]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const next = button.dataset.week;
+        if (next === week) return;
+        if (dirty && !confirm("Des modifications ne sont pas enregistrées. Changer de semaine ?")) return;
+        week = next;
+        setPref("week", week);
+        rebuildModels();
+        dirty = false;
+        paintWeekSwitch();
+        paintRooms();
+        paintDirty();
+        paintSub();
+      });
+    });
+
+    view.querySelector("#planSave").addEventListener("click", save);
+    view.querySelector("#planCopy").addEventListener("click", copyToOtherWeek);
+    view.querySelector("#planImport").addEventListener("click", openImportSheet);
+    view.querySelector("#planPronote")?.addEventListener("click", () => {
+      if (!target) { toast("Choisis d'abord une zone.", { type: "warn" }); return; }
+      openPronoteSheet();
+    });
+
+    // Appliquer un modèle prédéfini pour toute la semaine
+    view.querySelector("#planApplyWeekPreset")?.addEventListener("click", () => {
+      const roomId = view.querySelector("#planPresetRoom")?.value;
+      const presetKey = view.querySelector("#planWeekPreset")?.value;
+      const t = targets.find((x) => x.id === roomId);
+      if (!t) { toast("Choisis d'abord une pièce.", { type: "warn" }); return; }
+      target = t;
+      rebuildModels();
+      applyWeekPreset(presetKey);
+    });
+
+    root?.querySelector("#planModelSave")?.addEventListener("click", () => {
+      const name = root.querySelector("#planModelName")?.value?.trim();
+      const roomId = root.querySelector("#planModelRoom")?.value;
+      const t = targets.find((x) => x.id === roomId);
+      if (!name) { toast("Donne un nom au modèle.", { type: "warn" }); return; }
+      if (!t) { toast("Choisis une pièce.", { type: "warn" }); return; }
+      rebuildModels();
+      const model = models[t.id];
+      if (!model) { toast("Aucun planning à sauvegarder.", { type: "warn" }); return; }
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      saved.push({ name, room: t.label, days: { A: model.A, B: model.B } });
+      localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
+      toast(`Modèle « ${name} » sauvegardé.`);
+      loadModels();
+    });
+
+    root?.querySelector("#planModelList")?.addEventListener("change", () => {
+      const select = root.querySelector("#planModelList");
+      const idx = Number(select?.value);
+      if (!Number.isInteger(idx) || idx < 0) { hideModelInline(); return; }
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      const m = saved[idx];
+      if (!m) { hideModelInline(); return; }
+      showModelInline(idx, m);
+    });
+
+    root?.querySelector("#planModelApply")?.addEventListener("click", () => {
+      const select = root.querySelector("#planModelList");
+      const idx = Number(select?.value);
+      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      const m = saved[idx];
+      if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
+      const roomId = root.querySelector("#planModelRoom")?.value;
+      const t = targets.find((x) => x.id === roomId);
+      if (!t) { toast("Choisis une pièce.", { type: "warn" }); return; }
+      if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;
+      t.device.programs = t.device.programs || {};
+      t.device.programs.A = cloneDays(m.days?.A);
+      t.device.programs.B = cloneDays(m.days?.B);
+      rebuildModels();
+      dirty = true;
+      paintRooms();
+      paintDirty();
+      toast(`Modèle « ${m.name} » appliqué.`);
+    });
+
+    root?.querySelector("#planModelDelete")?.addEventListener("click", () => {
+      const select = root.querySelector("#planModelList");
+      const idx = Number(select?.value);
+      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
+      if (!confirm("Supprimer ce modèle ?")) return;
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      saved.splice(idx, 1);
+      localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
+      toast("Modèle supprimé.");
+      loadModels();
+      hideModelInline();
+    });
+
+    // Boutons du panneau d'édition inline d'un modèle
+    view.querySelectorAll("[data-model-week]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!inlineModel) return;
+        inlineModel.week = btn.dataset.modelWeek === "B" ? "B" : "A";
+        paintInlineWeekSwitch();
+        renderModelInlineGrid();
+      });
+    });
+    view.querySelector("[data-model-save]")?.addEventListener("click", saveInlineModel);
+    view.querySelector("[data-model-close]")?.addEventListener("click", hideModelInline);
+
+    loadModels();
+
+    window.addEventListener("beforeunload", warnUnload);
+  },
+
+  unmount() {
+    closeSheet();
+    window.removeEventListener("beforeunload", warnUnload);
+    inlineModel = null;
+    root = null;
+  },
+
+  onState() {
+    if (!root) return;
+    paintLive();
+  },
+};
+
+function modelOptions() {
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+  return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
+}
+
+function loadModels() {
+  const select = root?.querySelector("#planModelList");
+  if (!select) return;
+  let savedModels = [];
+  try { savedModels = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { savedModels = []; }
+  select.innerHTML = '<option value="">— choisir un modèle —</option>' + savedModels.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
+}
+
+/* --------------------------------------------------- édition inline d'un modèle */
+
+// État de l'édition inline d'un modèle.
+let inlineModel = null; // { index, name, days: { A, B }, week: "A"|"B" }
+
+function showModelInline(modelIndex, model) {
+  const inlineBox = root?.querySelector("#modelInlineBox");
+  if (!inlineBox) return;
+  inlineModel = {
+    index: modelIndex,
+    name: model.name || "",
+    days: {
+      A: cloneDays(model.days?.A),
+      B: cloneDays(model.days?.B),
+    },
+    week: week === "B" ? "B" : "A",
+  };
+  const nameNode = root.querySelector("#modelInlineName");
+  if (nameNode) nameNode.textContent = `« ${inlineModel.name} »`;
+  inlineBox.style.display = "block";
+  paintInlineWeekSwitch();
+  renderModelInlineGrid();
+  inlineBox.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function paintInlineWeekSwitch() {
+  root?.querySelectorAll("[data-model-week]").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.modelWeek === inlineModel?.week);
+  });
+}
+
+function renderModelInlineGrid() {
+  const grid = root?.querySelector("#modelInlineGrid");
+  if (!grid || !inlineModel) return;
+  const dates = weekDates(mondayOf(new Date()));
+  const weekKey = inlineModel.week;
+  const days = inlineModel.days[weekKey] || Array.from({ length: 7 }, () => []);
+
+  let html = "";
+  for (let index = 0; index < 7; index++) {
+    const d = parseDate(dates[index]) || new Date();
+    const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
+    const slots = (days[index] || []).slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+    let rows = "";
+    if (slots.length) {
+      for (const slot of slots) {
+        const end = slotEnd(days[index] || [], slot);
+        const slotIndex = (days[index] || []).indexOf(slot);
+        rows += `<button type="button" class="week-slot" data-mday="${index}" data-mslot="${slotIndex}" style="--slot-color:${modeColor(slot.mode)}">`;
+        rows += `<span class="week-slot-time">${escapeHtml(slot.time)}${end ? "–" + escapeHtml(end) : ""}</span>`;
+        rows += `<span class="week-slot-temp">${fmtTemp(slot.temp)} °C</span>`;
+        rows += `<span class="week-slot-mode">${escapeHtml(modeLabel(slot.mode, store.meta))}</span>`;
+        rows += "</button>";
+      }
+    } else {
+      rows = '<div class="week-slot week-slot-empty">—</div>';
+    }
+    html += '<div class="week-col">';
+    html += '<div class="week-col-head">';
+    html += `<span class="week-col-dow">${weekdayShort(index)}</span>`;
+    html += `<span class="week-col-dom">${dom}</span>`;
+    html += "</div>";
+    html += '<div class="week-col-body">';
+    html += rows;
+    html += `<button type="button" class="week-add" data-madd="${index}" title="Ajouter un créneau">+</button>`;
+    html += "</div></div>";
+  }
+  grid.innerHTML = html;
+
+  grid.querySelectorAll(".week-slot[data-mday]").forEach((el) => {
+    el.addEventListener("click", () => {
+      openModelSlotEditorInline(Number(el.dataset.mday), Number(el.dataset.mslot));
+    });
+  });
+  grid.querySelectorAll(".week-add").forEach((el) => {
+    el.addEventListener("click", () => {
+      openModelSlotEditorInline(Number(el.dataset.madd), null);
+    });
+  });
+}
+
+function openModelSlotEditorInline(dayIndex, slotIndex) {
+  if (!inlineModel) return;
+  const days = inlineModel.days[inlineModel.week] ||
+    (inlineModel.days[inlineModel.week] = Array.from({ length: 7 }, () => []));
+  const slots = days[dayIndex] || (days[dayIndex] = []);
+  const existing = slotIndex !== null && slotIndex >= 0 ? slots[slotIndex] : null;
+  let time = existing?.time || "09:00";
+  let mode = existing?.mode || "heat";
+  let temp = Number(existing?.temp ?? 20);
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <div class="form-grid">
+      <label class="field">
+        <span class="label">Heure</span>
+        <input class="input" type="time" step="900" value="${escapeHtml(time)}" data-time>
+      </label>
+      <label class="field">
+        <span class="label">Consigne</span>
+        <div class="input-row">
+          <button class="btn btn-sm" type="button" data-temp="-1">−</button>
+          <input class="input" type="number" min="16" max="30" step="0.5" value="${temp}" data-temp-input style="text-align:center">
+          <button class="btn btn-sm" type="button" data-temp="1">+</button>
+        </div>
+      </label>
+    </div>
+    <div class="field">
+      <span class="label">Mode</span>
+      <div class="mode-grid" data-mode-grid>
+        ${modesList(store.meta)
+          .map(
+            ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
+              ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
+            </button>`
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `
+    ${existing ? `<button class="btn btn-danger" type="button" data-delete>${icon("trash", 17)} Supprimer</button>` : ""}
+    <button class="btn btn-primary" type="button" data-validate>${icon("check", 17)} ${existing ? "Mettre à jour" : "Ajouter"}</button>
+  `;
+
+  const sheet = openSheet({
+    title: existing ? "Modifier le créneau" : "Nouveau créneau",
+    sub: `${weekdayLong(dayIndex)} · modèle ${inlineModel.name}`,
+    body,
+    footer,
+  });
+
+  const timeInput = body.querySelector("[data-time]");
+  const tempInput = body.querySelector("[data-temp-input]");
+  const paint = () => {
+    body.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("is-active", b.dataset.mode === mode));
+    tempInput.value = String(temp);
+  };
+  timeInput.addEventListener("input", () => { time = timeInput.value || time; });
+  body.querySelectorAll("[data-temp]").forEach((b) => {
+    b.addEventListener("click", () => { temp = clamp(temp + Number(b.dataset.temp) * 0.5, 16, 30); paint(); });
+  });
+  tempInput.addEventListener("input", () => { temp = clamp(tempInput.value, 16, 30); });
+  body.querySelectorAll("[data-mode]").forEach((b) => {
+    b.addEventListener("click", () => { mode = b.dataset.mode; paint(); });
+  });
+  paint();
+
+  footer.querySelector("[data-validate]")?.addEventListener("click", () => {
+    const slot = { time: timeInput.value || "00:00", mode, temp: Number(clamp(temp, 16, 30)) };
+    if (existing) {
+      const idx = slots.indexOf(existing);
+      if (idx >= 0) slots[idx] = slot;
+      else slots.push(slot);
+    } else {
+      slots.push(slot);
+    }
+    slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+    closeSheet();
+    renderModelInlineGrid();
+  });
+
+  footer.querySelector("[data-delete]")?.addEventListener("click", () => {
+    if (existing) {
+      const idx = slots.indexOf(existing);
+      if (idx >= 0) slots.splice(idx, 1);
+    }
+    closeSheet();
+    renderModelInlineGrid();
+  });
+
+  return sheet;
+}
+
+function saveInlineModel() {
+  if (!inlineModel) return;
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+  // Re-résout l'index par nom : l'ordre a pu changer (import Wiser, suppression).
+  const wanted = String(inlineModel.name || "").trim().toLowerCase();
+  let index = saved.findIndex(
+    (m) => m && String(m.name || "").trim().toLowerCase() === wanted
+  );
+  if (index < 0) index = inlineModel.index;
+  if (!saved[index]) { toast("Modèle introuvable.", { type: "warn" }); return; }
+  saved[index] = {
+    ...saved[index],
+    days: {
+      A: cloneDays(inlineModel.days.A),
+      B: cloneDays(inlineModel.days.B),
+    },
+  };
+  inlineModel.index = index;
+  localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
+  toast(`Modèle « ${inlineModel.name} » mis à jour.`);
+  loadModels();
+  const select = root?.querySelector("#planModelList");
+  if (select) select.value = String(index);
+}
+
+function hideModelInline() {
+  const inlineBox = root?.querySelector("#modelInlineBox");
+  if (inlineBox) inlineBox.style.display = "none";
+  inlineModel = null;
+}
+
+/* --------------------------------------------------------------- cibles */
+
+function buildTargets() {
+  const state = store.state;
+  targets = [];
+  if (!state) return;
+
+  const rooms = sortByPosition(state.rooms || []);
+  for (const room of rooms) {
+    const devices = devicesInRoom(state, room.id);
+    if (!devices.length) continue;
+    const actuator = devices.find((d) => Number(d.device_id) === Number(room.actuator_device_id));
+    const device = actuator || devices[0];
+    targets.push({
+      id: `room:${room.id}`,
+      kind: "room",
+      targetId: room.id,
+      room,
+      device,
+      devices,
+      label: room.name,
+      sub: `${devices.length} appareil${devices.length > 1 ? "s" : ""}`,
+    });
+  }
+
+  // Appareils sans pièce (cas orphelins).
+  const knownRooms = new Set(rooms.map((room) => Number(room.id)));
+  for (const device of state.devices || []) {
+    if (knownRooms.has(Number(device.room_id))) continue;
+    targets.push({
+      id: `device:${device.device_id}`,
+      kind: "device",
+      targetId: device.device_id,
+      room: null,
+      device,
+      devices: [device],
+      label: device.name,
+      sub: "Sans pièce",
+    });
+  }
+}
+
+function cloneDays(days) {
+  const source = Array.isArray(days) ? days : [];
+  return Array.from({ length: 7 }, (_, index) => {
+    const list = Array.isArray(source[index]) ? source[index] : [];
+    return list
+      .map((slot) => ({
+        time: slot.time || "00:00",
+        mode: slot.mode || "off",
+        temp: Number(slot.temp ?? 20),
+      }))
+      .sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+  });
+}
+
+function rebuildModels() {
+  models = {};
+  for (const t of targets) {
+    const programs = t.device?.programs || {};
+    models[t.id] = {
+      A: cloneDays(programs.A),
+      B: cloneDays(programs.B),
+    };
+  }
+}
+
+/* --------------------------------------------------------------- rendu */
+
+function paintDeviceSelect() {
+  const select = root?.querySelector("#planDevice");
+  const field = root?.querySelector("#planDeviceField");
+  if (!select) return;
+  const devices = target?.devices || [];
+  if (devices.length <= 1) {
+    if (field) field.style.display = "none";
+    return;
+  }
+  if (field) field.style.display = "";
+  select.innerHTML = devices
+    .map((device) =>
+      `<option value="${device.device_id}"${Number(device.device_id) === Number(target?.device?.device_id) ? " selected" : ""}>${escapeHtml(device.name)}</option>`
+    )
+    .join("");
+}
+
+function paintWeekSwitch() {
+  root?.querySelectorAll("[data-week]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.week === week);
+  });
+}
+
+function paintPlanNav() {
+  const nav = root?.querySelector("#planNav");
+  if (!nav) return;
+  let html = targets.map((t) => `<button type="button" class="plan-nav-btn" data-jump-room="${t.id}">${escapeHtml(t.label)}</button>`).join("");
+  html += `<button type="button" class="plan-nav-btn" data-jump-models>Modèles</button>`;
+  nav.innerHTML = html;
+
+  nav.querySelectorAll("[data-jump-room]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const el = root?.querySelector(`[data-room-anchor="${btn.dataset.jumpRoom}"]`);
+      if (!el) return;
+      const navEl = root?.querySelector("#planNav");
+      const offset = (document.querySelector(".topbar")?.offsetHeight || 64) + (navEl?.offsetHeight || 0) + 8;
+      const top = el.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    });
+  });
+  nav.querySelectorAll("[data-jump-models]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const el = root?.querySelector("#modelsAnchor");
+      if (!el) return;
+      const navEl = root?.querySelector("#planNav");
+      const offset = (document.querySelector(".topbar")?.offsetHeight || 64) + (navEl?.offsetHeight || 0) + 8;
+      const top = el.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    });
+  });
+}
+
+function paintSub() {
+  const node = root?.querySelector("#planSub");
+  if (!node) return;
+  node.textContent = `Semaine ${week} · ${targets.length} pièce${targets.length > 1 ? "s" : ""}`;
+}
+
+function paintRooms() {
+  const host = root?.querySelector("#planRooms");
+  if (!host) return;
+  if (!targets.length) {
+    host.innerHTML = '<div class="empty"><span class="empty-icon">' + icon("calendar", 24) + '</span><strong>Aucune pièce équipée</strong><p>Ajoute un appareil dans Réglages.</p></div>';
+    return;
+  }
+
+  const dates = weekDates(mondayOf(new Date()));
+  const nowIndex = todayIndex();
+  const nowWeek = store.state?.week;
+
+  let html = "";
+  for (const t of targets) {
+    const programs = t.device?.programs || {};
+    const model = models[t.id];
+    const days = cloneDays((model || programs)[week] ?? (model || programs).A);
+    const appliedIdx = appliedModelByTarget[t.id];
+    const selVal = selectedModelByTarget[t.id] ?? "";
+    const hasDevices = (t.devices || []).length > 1;
+    let deviceSelect = "";
+    if (hasDevices) {
+      deviceSelect = '<select class="select plan-device-select" data-target="' + t.id + '" style="width:auto">';
+      for (const d of (t.devices || [])) {
+        const sel = Number(d.device_id) === Number(t.device?.device_id) ? " selected" : "";
+        deviceSelect += '<option value="' + d.device_id + '"' + sel + '>' + escapeHtml(d.name) + '</option>';
+      }
+      deviceSelect += "</select>";
+    } else {
+      deviceSelect = '<span class="tiny muted">' + escapeHtml(t.device?.name || "") + '</span>';
+    }
+
+    // model select
+    let savedModels = [];
+    try { savedModels = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { savedModels = []; }
+    let modelSelect = '<select class="select plan-model-select" data-target="' + t.id + '" style="width:auto;min-width:150px"><option value="">— modèle —</option>';
+    for (let i = 0; i < savedModels.length; i++) {
+      const sel = String(i) === String(selVal) ? " selected" : "";
+      modelSelect += '<option value="' + i + '"' + sel + '>' + escapeHtml(savedModels[i].name) + '</option>';
+    }
+    modelSelect += "</select>";
+    const isApplied = selVal !== "" && appliedIdx !== undefined && Number(appliedIdx) === Number(selVal);
+    const applyBtnClass = "btn btn-sm plan-apply-btn" + (isApplied ? " is-applied" : "");
+    const applyBtnDisabled = isApplied ? " disabled" : "";
+
+    html += '<div class="room-plan" data-room-anchor="' + t.id + '">';
+    html += '<div class="room-plan-head">';
+    html += '<div class="room-plan-title">' + escapeHtml(t.label) + '</div>';
+    html += deviceSelect;
+    html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '">' + icon("trash", 14) + ' Vider cette pièce</button>';
+    html += '</div>';
+    html += '<div class="room-plan-model-row">';
+    html += modelSelect;
+    html += '<button class="btn btn-sm plan-apply-btn' + (isApplied ? " is-applied" : "") + '" type="button" data-apply-model="' + t.id + '"' + (isApplied ? " disabled" : "") + ' title="Appliquer le modèle">' + icon("check", 14) + '</button>';
+    html += '</div>';
+    let columns = "";
+    for (let index = 0; index < days.length; index++) {
+      const date = dates[index];
+      const d = parseDate(date) || new Date();
+      const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
+      const isToday = index === nowIndex && week === nowWeek;
+      const slots = days[index] || [];
+      const items = slots.slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+      let rows = "";
+      if (items.length) {
+        for (const slot of items) {
+          const end = slotEnd(slots, slot);
+          const slotIndex = slots.indexOf(slot);
+          rows += '<button type="button" class="week-slot" data-target="' + t.id + '" data-day="' + index + '" data-slotindex="' + slotIndex + '" style="--slot-color:' + modeColor(slot.mode) + '">';
+          rows += '<span class="week-slot-time">' + escapeHtml(slot.time) + (end ? "\u2013" + escapeHtml(end) : "") + '</span>';
+          rows += '<span class="week-slot-temp">' + fmtTemp(slot.temp) + ' °C</span>';
+          rows += '<span class="week-slot-mode">' + escapeHtml(modeLabel(slot.mode, store.meta)) + '</span>';
+          rows += '</button>';
+        }
+      } else {
+        rows = '<div class="week-slot week-slot-empty">—</div>';
+      }
+      columns += '<div class="week-col' + (isToday ? " is-today" : "") + '">';
+      columns += '<div class="week-col-head">';
+      columns += '<span class="week-col-dow">' + weekdayShort(index) + '</span>';
+      columns += '<span class="week-col-dom">' + dom + '</span>';
+      columns += '</div>';
+      columns += '<div class="week-col-body">';
+      columns += rows;
+      columns += '<button type="button" class="week-add" data-target="' + t.id + '" data-day="' + index + '" title="Ajouter un créneau">+</button>';
+      columns += '</div></div>';
+    }
+
+    html += '<div class="week-grid">' + columns + '</div>';
+    html += '</div>';
+  }
+
+  host.innerHTML = html;
+
+  // Wire slot clicks
+  host.querySelectorAll(".week-slot[data-target]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const tid = el.dataset.target;
+      const tt = targets.find((x) => x.id === tid);
+      if (!tt) return;
+      target = tt;
+      rebuildModels();
+      const wd = Number(el.dataset.day);
+      const si = Number(el.dataset.slotindex);
+      openSlotEditor(target, wd, si >= 0 ? si : null);
+    });
+  });
+
+  // Wire add buttons
+  host.querySelectorAll(".week-add").forEach((el) => {
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const tid = el.dataset.target;
+      const tt = targets.find((x) => x.id === tid);
+      if (!tt) return;
+      target = tt;
+      rebuildModels();
+      const wd = Number(el.dataset.day);
+      openSlotEditor(target, wd, null, 9 * 60);
+    });
+  });
+
+  // Wire device selects
+  host.querySelectorAll(".plan-device-select").forEach((sel) => {
+    sel.addEventListener("change", (event) => {
+      const tid = sel.dataset.target;
+      const t = targets.find((x) => x.id === tid);
+      if (!t) return;
+      const nextId = Number(event.target.value);
+      const device = (t.devices || []).find((d) => Number(d.device_id) === nextId);
+      if (!device) return;
+      t.device = device;
+      rebuildModels();
+      paintRooms();
+      paintDirty();
+      paintSub();
+    });
+  });
+
+  // Wire apply model buttons
+  host.querySelectorAll("[data-apply-model]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tid = btn.dataset.applyModel;
+      const t = targets.find((x) => x.id === tid);
+      if (!t) return;
+      const sel = host.querySelector(`.plan-model-select[data-target="${tid}"]`);
+      const idx = Number(sel?.value);
+      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      const m = saved[idx];
+      if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
+      if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;
+      t.device.programs = t.device.programs || {};
+      t.device.programs.A = cloneDays(m.days?.A);
+      t.device.programs.B = cloneDays(m.days?.B);
+      selectedModelByTarget[tid] = idx;
+      appliedModelByTarget[tid] = idx;
+      rebuildModels();
+      dirty = true;
+      paintRooms();
+      paintDirty();
+      toast(`Modèle « ${m.name} » appliqué.`);
+    });
+  });
+
+  // Reset applied state when model selection changes
+  host.querySelectorAll(".plan-model-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const tid = sel.dataset.target;
+      selectedModelByTarget[tid] = sel.value;
+      if (String(appliedModelByTarget[tid]) !== String(sel.value)) {
+        delete appliedModelByTarget[tid];
+      }
+      const btn = host.querySelector(`[data-apply-model="${tid}"]`);
+      if (btn) {
+        btn.classList.remove("is-applied");
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function clearRoom(t) {
+  if (!t) return;
+  if (!confirm(`Vider tous les créneaux de la semaine ${week} pour ${t.label} ?`)) return;
+  const model = models[t.id];
+  if (model) {
+    model[week] = Array.from({ length: 7 }, () => []);
+  }
+  dirty = true;
+  paintRooms();
+  paintDirty();
+  toast(`${t.label} vidée pour la semaine ${week}. Pense à enregistrer.`, { type: "info" });
+}
+
+function slotEnd(slots, slot) {
+  const sorted = (slots || []).slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+  const idx = sorted.indexOf(slot);
+  const next = sorted[idx + 1];
+  return next ? next.time : null;
+}
+
+function openModelEditor(modelIndex, model) {
+  const monday = mondayOf(new Date());
+  const dates = weekDates(monday);
+  const modelCopy = {
+    A: cloneDays(model.days?.A),
+    B: cloneDays(model.days?.B),
+  };
+  let currentWeek = week === "B" ? "B" : "A";
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <div class="row-between wrap" style="gap:10px;align-items:center">
+      <div>
+        <div class="card-title">Édition du modèle « ${escapeHtml(model.name)} »</div>
+        <p class="hint mt-1">Édite les créneaux comme dans le planning. Les modifications sont sauvegardées dans le modèle.</p>
+      </div>
+      <div class="week-switch">
+        <button type="button" data-mweek="A"${currentWeek === "A" ? ' class="is-active"' : ""}>Semaine A</button>
+        <button type="button" data-mweek="B"${currentWeek === "B" ? ' class="is-active"' : ""}>Semaine B</button>
+      </div>
+    </div>
+    <div class="week-grid" id="modelWeekGrid"></div>
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `
+    <button class="btn" type="button" data-cancel>Annuler</button>
+    <button class="btn btn-primary" type="button" data-save-model>${icon("save", 17)} Enregistrer le modèle</button>
+  `;
+
+  const sheet = openSheet({
+    title: "Éditeur de modèle",
+    sub: model.name,
+    body,
+    footer,
+  });
+
+  function renderGrid() {
+    const grid = body.querySelector("#modelWeekGrid");
+    if (!grid) return;
+    const days = modelCopy[currentWeek] || Array.from({ length: 7 }, () => []);
+    let html = "";
+    for (let index = 0; index < days.length; index++) {
+      const date = dates[index];
+      const d = parseDate(date) || new Date();
+      const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
+      const slots = days[index] || [];
+      const items = slots.slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+      let rows = "";
+      if (items.length) {
+        for (const slot of items) {
+          const end = slotEnd(slots, slot);
+          const slotIndex = slots.indexOf(slot);
+          rows += '<button type="button" class="week-slot" data-mday="' + index + '" data-mslot="' + slotIndex + '" style="--slot-color:' + modeColor(slot.mode) + '">';
+          rows += '<span class="week-slot-time">' + escapeHtml(slot.time) + (end ? "\u2013" + escapeHtml(end) : "") + '</span>';
+          rows += '<span class="week-slot-temp">' + fmtTemp(slot.temp) + ' °C</span>';
+          rows += '<span class="week-slot-mode">' + escapeHtml(modeLabel(slot.mode, store.meta)) + '</span>';
+          rows += '</button>';
+        }
+      } else {
+        rows = '<div class="week-slot week-slot-empty">—</div>';
+      }
+      html += '<div class="week-col">';
+      html += '<div class="week-col-head">';
+      html += '<span class="week-col-dow">' + weekdayShort(index) + '</span>';
+      html += '<span class="week-col-dom">' + dom + '</span>';
+      html += '</div>';
+      html += '<div class="week-col-body">';
+      html += rows;
+      html += '<button type="button" class="week-add" data-madd="' + index + '" title="Ajouter un créneau">+</button>';
+      html += '</div></div>';
+    }
+    grid.innerHTML = html;
+
+    grid.querySelectorAll(".week-slot[data-mday]").forEach((el) => {
+      el.addEventListener("click", () => {
+        openModelSlotEditor(modelCopy, currentWeek, Number(el.dataset.mday), Number(el.dataset.mslot), () => renderGrid());
+      });
+    });
+    grid.querySelectorAll(".week-add").forEach((el) => {
+      el.addEventListener("click", () => {
+        openModelSlotEditor(modelCopy, currentWeek, Number(el.dataset.madd), null, () => renderGrid());
+      });
+    });
+  }
+
+  body.querySelectorAll("[data-mweek]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      body.querySelectorAll("[data-mweek]").forEach((b) => b.classList.toggle("is-active", b === btn));
+      currentWeek = btn.dataset.mweek === "B" ? "B" : "A";
+      renderGrid();
+    });
+  });
+
+  footer.querySelector("[data-cancel]")?.addEventListener("click", () => closeSheet());
+  footer.querySelector("[data-save-model]")?.addEventListener("click", () => {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+    if (saved[modelIndex]) {
+      saved[modelIndex] = {
+        ...saved[modelIndex],
+        days: {
+          A: cloneDays(modelCopy.A),
+          B: cloneDays(modelCopy.B),
+        },
+      };
+      localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
+      toast("Modèle mis à jour.");
+      loadModels();
+      closeSheet();
+    }
+  });
+
+  renderGrid();
+  return sheet;
+}
+
+function openModelSlotEditor(modelCopy, weekKey, dayIndex, slotIndex, onChange) {
+  const days = modelCopy[weekKey];
+  const slots = days[dayIndex] || [];
+  const existing = slotIndex !== null ? slots[slotIndex] : null;
+  let time = existing?.time || "09:00";
+  let mode = existing?.mode || "heat";
+  let temp = Number(existing?.temp ?? 20);
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <div class="form-grid">
+      <label class="field">
+        <span class="label">Heure</span>
+        <input class="input" type="time" step="900" value="${escapeHtml(time)}" data-time>
+      </label>
+      <label class="field">
+        <span class="label">Consigne</span>
+        <div class="input-row">
+          <button class="btn btn-sm" type="button" data-temp="-1">−</button>
+          <input class="input" type="number" min="16" max="30" step="0.5" value="${temp}" data-temp-input style="text-align:center">
+          <button class="btn btn-sm" type="button" data-temp="1">+</button>
+        </div>
+      </label>
+    </div>
+    <div class="field">
+      <span class="label">Mode</span>
+      <div class="mode-grid" data-mode-grid>
+        ${modesList(store.meta)
+          .map(
+            ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
+              ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
+            </button>`
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `
+    ${existing ? `<button class="btn btn-danger" type="button" data-delete>${icon("trash", 17)} Supprimer</button>` : ""}
+    <button class="btn btn-primary" type="button" data-validate>${icon("check", 17)} ${existing ? "Mettre à jour" : "Ajouter"}</button>
+  `;
+
+  const sheet = openSheet({
+    title: existing ? "Modifier le créneau" : "Nouveau créneau",
+    sub: `${weekdayLong(dayIndex)} · semaine ${weekKey}`,
+    body,
+    footer,
+  });
+
+  const timeInput = body.querySelector("[data-time]");
+  const tempInput = body.querySelector("[data-temp-input]");
+
+  const paint = () => {
+    body.querySelectorAll("[data-mode]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.mode === mode);
+    });
+    tempInput.value = String(temp);
+  };
+
+  timeInput.addEventListener("input", () => { time = timeInput.value || time; });
+  body.querySelectorAll("[data-temp]").forEach((button) => {
+    button.addEventListener("click", () => {
+      temp = clamp(temp + Number(button.dataset.temp) * 0.5, 16, 30);
+      paint();
+    });
+  });
+  tempInput.addEventListener("input", () => { temp = clamp(tempInput.value, 16, 30); });
+  body.querySelectorAll("[data-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      mode = button.dataset.mode;
+      paint();
+    });
+  });
+
+  paint();
+
+  footer.querySelector("[data-validate]")?.addEventListener("click", () => {
+    const slot = {
+      time: timeInput.value || "00:00",
+      mode,
+      temp: Number(clamp(temp, 16, 30)),
+    };
+    if (existing) {
+      const idx = slots.indexOf(existing);
+      if (idx >= 0) slots[idx] = slot;
+      else slots.push(slot);
+    } else {
+      slots.push(slot);
+    }
+    slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+    days[dayIndex] = slots;
+    closeSheet();
+    if (onChange) onChange();
+  });
+
+  footer.querySelector("[data-delete]")?.addEventListener("click", () => {
+    if (existing) {
+      const idx = slots.indexOf(existing);
+      if (idx >= 0 && idx < slots.length) slots.splice(idx, 1);
+    }
+    days[dayIndex] = slots;
+    closeSheet();
+    if (onChange) onChange();
+  });
+
+  return sheet;
+}
+
+function paintDirty() {
+  const node = root?.querySelector("#planDirty");
+  const button = root?.querySelector("#planSave");
+  if (node) {
+    node.textContent = dirty ? "Non enregistré" : "À jour";
+    node.className = `pill ${dirty ? "pill-warn" : "pill-ghost"}`;
+  }
+  if (button) button.disabled = !dirty;
+}
+
+function paintLive() {
+  if (!root || dirty) return;
+  const node = root.querySelector("#planDirty");
+  if (node) {
+    node.textContent = "À jour";
+    node.className = "pill pill-ghost";
+  }
+}
+
+/* --------------------------------------------------------------- éditeur */
+
+function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
+  if (!target) return;
+  const model = models[target.id];
+  if (!model) return;
+  const slots = model[week][dayIndex];
+  const existing = slotIndex !== null ? slots[slotIndex] : null;
+  let time = existing?.time || minutesToTime(minutes);
+  let mode = existing?.mode || "heat";
+  let temp = Number(existing?.temp ?? 20);
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <div class="form-grid">
+      <label class="field">
+        <span class="label">Heure</span>
+        <input class="input" type="time" step="900" value="${escapeHtml(time)}" data-time>
+      </label>
+      <label class="field">
+        <span class="label">Consigne</span>
+        <div class="input-row">
+          <button class="btn btn-sm" type="button" data-temp="-1">−</button>
+          <input class="input" type="number" min="16" max="30" step="0.5" value="${temp}" data-temp-input style="text-align:center">
+          <button class="btn btn-sm" type="button" data-temp="1">+</button>
+        </div>
+      </label>
+    </div>
+
+    <div class="field">
+      <span class="label">Mode</span>
+      <div class="mode-grid" data-mode-grid>
+        ${modesList(store.meta)
+          .filter(([key]) => (target.device?.device_type === "wiser" ? key === "heat" || key === "off" : true))
+          .map(
+            ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
+              ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
+            </button>`
+          )
+          .join("")}
+      </div>
+      ${target.device?.device_type === "wiser" ? '<p class="hint">Sur Wiser, « Arrêt » est appliqué par une consigne hors gel à 6 °C.</p>' : ""}
+    </div>
+
+    <label class="field">
+      <span class="label">Dupliquer aussi vers</span>
+      <select class="select" data-duplicate>
+        <option value="">Ne pas dupliquer</option>
+        ${Array.from({ length: 7 }, (_, i) => (i === dayIndex ? "" : `<option value="${i}">${weekdayLong(i)}</option>`)).join("")}
+        <option value="all">Tous les autres jours</option>
+      </select>
+    </label>
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `
+    ${existing ? `<button class="btn btn-danger" type="button" data-delete>${icon("trash", 17)} Supprimer</button>` : ""}
+    <button class="btn btn-primary" type="button" data-validate>${icon("check", 17)} ${existing ? "Mettre à jour" : "Ajouter"}</button>
+  `;
+
+  const sheet = openSheet({
+    title: existing ? "Modifier le créneau" : "Nouveau créneau",
+    sub: `${weekdayLong(dayIndex)} · semaine ${week} · ${target.label}`,
+    body,
+    footer,
+  });
+
+  const timeInput = body.querySelector("[data-time]");
+  const tempInput = body.querySelector("[data-temp-input]");
+
+  const paint = () => {
+    body.querySelectorAll("[data-mode]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.mode === mode);
+    });
+    tempInput.value = String(temp);
+  };
+
+  timeInput.addEventListener("input", () => {
+    time = timeInput.value || time;
+  });
+
+  body.querySelectorAll("[data-temp]").forEach((button) => {
+    button.addEventListener("click", () => {
+      temp = clamp(temp + Number(button.dataset.temp) * 0.5, 16, 30);
+      paint();
+    });
+  });
+
+  tempInput.addEventListener("input", () => {
+    temp = clamp(tempInput.value, 16, 30);
+  });
+
+  body.querySelectorAll("[data-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      mode = button.dataset.mode;
+      paint();
+    });
+  });
+
+  paint();
+
+  footer.querySelector("[data-validate]")?.addEventListener("click", () => {
+    const m = models[target.id];
+    const slots = m?.[week]?.[dayIndex];
+    if (!slots) return;
+    const slot = {
+      time: timeInput.value || "00:00",
+      mode,
+      temp: Number(clamp(temp, 16, 30)),
+    };
+
+    if (existing) {
+      const idx = slots.indexOf(existing);
+      if (idx >= 0) slots[idx] = slot;
+      else slots.push(slot);
+    } else {
+      slots.push(slot);
+    }
+
+    const duplicate = body.querySelector("[data-duplicate]")?.value;
+    if (duplicate) {
+      const indexes = duplicate === "all" ? [0, 1, 2, 3, 4, 5, 6] : [Number(duplicate)];
+      for (const targetDay of indexes) {
+        if (targetDay === dayIndex) continue;
+        const otherSlots = m?.[week]?.[targetDay];
+        if (otherSlots) upsertSlot(otherSlots, slot);
+      }
+    }
+
+    slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+    dirty = true;
+    closeSheet();
+    paintRooms();
+    paintDirty();
+    toast(existing ? "Créneau modifié." : "Créneau ajouté.", { type: "info", timeout: 2200 });
+  });
+
+  footer.querySelector("[data-delete]")?.addEventListener("click", () => {
+    const m = models[target.id];
+    const slots = m?.[week]?.[dayIndex];
+    if (slots) {
+      const idx = existing ? slots.indexOf(existing) : slotIndex;
+      if (idx >= 0 && idx < slots.length) slots.splice(idx, 1);
+    }
+    dirty = true;
+    closeSheet();
+    paintRooms();
+    paintDirty();
+    toast("Créneau supprimé.", { type: "info", timeout: 2200 });
+  });
+
+  return sheet;
+}
+
+function upsertSlot(list, slot) {
+  const index = list.findIndex((item) => item.time === slot.time);
+  if (index >= 0) list[index] = { ...slot };
+  else list.push({ ...slot });
+  list.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+}
+
+function applyPreset(name) {
+  const preset = PRESETS[name];
+  if (!preset || !target) return;
+  const model = models[target.id];
+  if (!model) return;
+  const slots = model[week][day];
+  if (slots.length && !confirm(`Remplacer les ${slots.length} créneaux de ${weekdayLong(day)} par le modèle « ${name} » ?`)) {
+    return;
+  }
+  model[week][day] = preset.map((slot) => ({ ...slot }));
+  dirty = true;
+  paintRooms();
+  paintDirty();
+  toast(`Modèle « ${name} » appliqué.`, { type: "info", timeout: 2400 });
+}
+
+function applyWeekPreset(key) {
+  const preset = WEEK_PRESETS[key];
+  if (!preset || !target) return;
+  const model = models[target.id];
+  if (!model) return;
+  if (!confirm(`Remplacer toute la semaine ${week} de ${target.label} par le modèle « ${key} » ? (Tous les créneaux existants seront effacés)`)) {
+    return;
+  }
+  model[week] = preset.map((daySlots) => 
+    Array.isArray(daySlots) ? daySlots.map((slot) => ({ ...slot })).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time)) : []
+  );
+  dirty = true;
+  paintRooms();
+  paintDirty();
+  toast(`Modèle « ${key} » appliqué à toute la semaine ${week}.`, { type: "info", timeout: 2400 });
+}
+
+function dominantMode(slots) {
+  const counts = new Map();
+  for (const slot of slots) counts.set(slot.mode, (counts.get(slot.mode) || 0) + 1);
+  let best = null;
+  let bestCount = 0;
+  for (const [mode, count] of counts) {
+    if (count > bestCount) {
+      best = mode;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/* --------------------------------------------------------------- actions */
+
+async function save() {
+  const button = root?.querySelector("#planSave");
+  if (button) button.disabled = true;
+  try {
+    for (const t of targets) {
+      const model = models[t.id];
+      if (!model) continue;
+      await put(`/api/programs/${t.targetId}/${week}`, { days: model[week] });
+    }
+    dirty = false;
+    toast(`Planning ${week} enregistré.`);
+    await refreshState({ silent: true });
+    reloadFromState();
+  } catch (err) {
+    toastError(err);
+    paintDirty();
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function clearWeek() {
+  if (!confirm(`Supprimer tous les créneaux de la semaine ${week} pour toutes les pièces ?`)) return;
+  for (const t of targets) {
+    const model = models[t.id];
+    if (!model) continue;
+    model[week] = Array.from({ length: 7 }, () => []);
+  }
+  dirty = true;
+  paintRooms();
+  paintDirty();
+  toast(`Semaine ${week} vidée. Pense à enregistrer.`, { type: "info" });
+}
+
+async function copyToOtherWeek() {
+  if (!target) return;
+  const model = models[target.id];
+  if (!model) return;
+  const other = week === "A" ? "B" : "A";
+  if (!confirm(`Copier les créneaux de la semaine ${week} vers la semaine ${other} ?`)) return;
+
+  try {
+    await put(`/api/programs/${target.targetId}/${week}`, { days: model[week] });
+    await put(`/api/programs/${target.targetId}/${other}`, { days: model[week] });
+    dirty = false;
+    toast(`Semaine ${week} copiée vers ${other}.`);
+    await refreshState({ silent: true });
+    reloadFromState();
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+/* --------------------------------------------------------------- imports */
+
+function openImportSheet() {
+  if (!target) return;
+  const device = target.device;
+  const canWiser = device?.device_type === "wiser";
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <button class="btn btn-block" type="button" data-import="pronote" style="justify-content:flex-start;height:auto;padding:14px">
+      <span style="display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:var(--primary-soft);color:var(--primary)">${icon("school", 20)}</span>
+      <span style="text-align:left">
+        <span style="display:block;font-weight:700">Emploi du temps Pronote</span>
+        <span class="hint">Chauffe la pièce selon les cours de la semaine.</span>
+      </span>
+    </button>
+    <button class="btn btn-block" type="button" data-import="wiser" style="justify-content:flex-start;height:auto;padding:14px" ${canWiser ? "" : "disabled"}>
+      <span style="display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:var(--accent-soft);color:var(--accent)">${icon("hub", 20)}</span>
+      <span style="text-align:left">
+        <span style="display:block;font-weight:700">Planning natif Wiser</span>
+        <span class="hint">${canWiser ? "Récupère les créneaux du Hub pour cette zone." : "Disponible uniquement pour une zone Wiser."}</span>
+      </span>
+    </button>
+    <p class="hint">L'import remplace la semaine ${week} de ${escapeHtml(target.label)}. Tu pourras encore ajuster les créneaux.</p>
+  `;
+
+  const sheet = openSheet({
+    title: "Importer un planning",
+    sub: `${target.label} · semaine ${week}`,
+    body,
+  });
+
+  body.querySelector('[data-import="pronote"]')?.addEventListener("click", () => {
+    closeSheet();
+    openPronoteSheet();
+  });
+
+  body.querySelector('[data-import="wiser"]')?.addEventListener("click", () => {
+    closeSheet();
+    openWiserSheet();
+  });
+
+  return sheet;
+}
+
+function openPronoteSheet() {
+  let selectedTarget = target;
+  if (!selectedTarget) {
+    selectedTarget = targets[0] || null;
+  }
+  let device = selectedTarget?.device;
+  if (!device) return;
+
+  let plan = null;
+  const monday = mondayOf(new Date());
+  let savedPronoteTarget = null;
+  try {
+    savedPronoteTarget = localStorage.getItem("mecasa.pronoteTargetId");
+  } catch {}
+
+  if (savedPronoteTarget) {
+    const found = targets.find((t) => t.id === savedPronoteTarget);
+    if (found) {
+      selectedTarget = found;
+      device = selectedTarget.device;
+    }
+  }
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <label class="field">
+      <span class="label">Importer dans la pièce</span>
+      <select class="select" data-pronote-target>
+        ${targets.map((t) => `<option value="${t.id}"${t.id === selectedTarget?.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
+      </select>
+    </label>
+    <label class="field">
+      <span class="label">Semaine à analyser</span>
+      <input class="input" type="date" value="${monday}" data-week-start>
+      <span class="hint">Le lundi de la semaine scolaire. L'aperçu ne modifie rien.</span>
+    </label>
+    <button class="btn" type="button" data-preview>${icon("search", 17)} Charger l'aperçu</button>
+    <div data-preview-zone></div>
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer dans la semaine ${week}</button>`;
+
+  const sheet = openSheet({
+    title: "Import Pronote",
+    sub: `Emploi du temps → ${selectedTarget.label}`,
+    body,
+    footer,
+  });
+
+  const previewZone = body.querySelector("[data-preview-zone]");
+  const importButton = footer.querySelector("[data-do-import]");
+  const targetSelect = body.querySelector("[data-pronote-target]");
+
+  targetSelect?.addEventListener("change", () => {
+    const tid = targetSelect.value;
+    const t = targets.find((x) => x.id === tid);
+    if (t) {
+      selectedTarget = t;
+      device = selectedTarget.device;
+      try { localStorage.setItem("mecasa.pronoteTargetId", t.id); } catch {}
+      sheet.querySelector(".sheet-sub").textContent = `Emploi du temps → ${t.label}`;
+    }
+  });
+
+  body.querySelector("[data-preview]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    previewZone.innerHTML = `<div class="boot" style="min-height:120px"><span class="spinner"></span><p>Lecture de Pronote…</p></div>`;
+    try {
+      const start = body.querySelector("[data-week-start]")?.value || monday;
+      plan = await post("/api/pronote/preview", { week: start });
+      previewZone.innerHTML = renderPronotePreview(plan);
+      importButton.disabled = false;
+    } catch (err) {
+      previewZone.innerHTML = `<div class="hint is-bad">${escapeHtml(err.message)}</div>`;
+      importButton.disabled = true;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  importButton.addEventListener("click", async () => {
+    if (!plan || !device) return;
+    importButton.disabled = true;
+    try {
+      const start = body.querySelector("[data-week-start]")?.value || monday;
+      try { localStorage.setItem("mecasa.pronoteTargetId", selectedTarget.id); } catch {}
+      await post("/api/pronote/import", {
+        device_id: Number(device.device_id),
+        week,
+        week_start: start,
+        days: plan.days,
+        preview_week_type: plan.week_type,
+      });
+      toast(`Planning Pronote importé dans ${selectedTarget.label}.`);
+      closeSheet();
+      await refreshState({ silent: true });
+      dirty = false;
+      reloadFromState();
+    } catch (err) {
+      toastError(err);
+      importButton.disabled = false;
+    }
+  });
+
+  return sheet;
+}
+
+function renderPronotePreview(plan) {
+  const days = plan?.days || [];
+  const dates = weekDates(plan?.week_start || mondayOf(new Date()));
+  return `
+    <div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
+      <div class="row-between">
+        <div>
+          <div class="tiny muted">Semaine ${escapeHtml(plan?.week_type || "—")} · ISO ${plan?.iso_week ?? "—"}</div>
+          <div style="font-weight:700;margin-top:2px">${(plan?.lessons || []).length} cours détectés</div>
+        </div>
+        <span class="pill pill-ok">Aperçu</span>
+      </div>
+    </div>
+    <div class="stack">
+      ${days
+        .map(
+          (daySlots, index) => `<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--line)">
+            <span style="font-size:12.5px;font-weight:650">${weekdayLong(index)} <span class="muted">${fmtDate(dates[index])}</span></span>
+            <span class="tiny muted">${(daySlots || []).map((slot) => escapeHtml(describeSlot(slot, store.meta))).join(" · ") || "aucun cours"}</span>
+          </div>`
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function openWiserSheet() {
+  const device = target?.device;
+  if (!device) return;
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `<div class="boot" style="min-height:140px"><span class="spinner"></span><p>Lecture du Hub Wiser…</p></div>`;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer dans la semaine ${week}</button>`;
+
+  const sheet = openSheet({
+    title: "Planning Wiser",
+    sub: `${target.label} · semaine ${week}`,
+    body,
+    footer,
+  });
+
+  const importButton = footer.querySelector("[data-do-import]");
+
+  (async () => {
+    try {
+      const preview = await get(`/api/wiser/schedule/${device.device_id}`);
+      const days = preview.days || [];
+      body.innerHTML = `
+        <div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
+          <div class="row-between">
+            <div>
+              <div class="tiny muted">Planning natif</div>
+              <div style="font-weight:700;margin-top:2px">${escapeHtml(preview.schedule_name || "Sans nom")}</div>
+            </div>
+            <span class="pill pill-accent">${escapeHtml(preview.room_name || target.label)}</span>
+          </div>
+        </div>
+        <div class="stack">
+          ${days
+            .map(
+              (daySlots, index) => `<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--line)">
+                <span style="font-size:12.5px;font-weight:650">${weekdayLong(index)}</span>
+                <span class="tiny muted">${(daySlots || []).map((slot) => escapeHtml(describeSlot(slot, store.meta))).join(" · ") || "aucun créneau"}</span>
+              </div>`
+            )
+            .join("")}
+        </div>
+        <p class="hint">L'import remplace les créneaux MeCasa de la semaine ${week} pour cette zone.</p>
+      `;
+      importButton.disabled = false;
+    } catch (err) {
+      body.innerHTML = `<div class="hint is-bad">${escapeHtml(err.message)}</div>`;
+    }
+  })();
+
+  importButton.addEventListener("click", async () => {
+    importButton.disabled = true;
+    try {
+      await post("/api/wiser/import", { device_id: Number(device.device_id), weeks: [week] });
+      toast("Planning Wiser importé.");
+      closeSheet();
+      await refreshState({ silent: true });
+      dirty = false;
+      reloadFromState();
+    } catch (err) {
+      toastError(err);
+      importButton.disabled = false;
+    }
+  });
+
+  return sheet;
+}
+
+/* --------------------------------------------------------------- divers */
+
+function reloadFromState() {
+  buildTargets();
+  if (!targets.length) return;
+  target = targets[0];
+  rebuildModels();
+  paintWeekSwitch();
+  paintRooms();
+  paintDirty();
+  paintSub();
+}
+
+function warnUnload(event) {
+  if (!dirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+}

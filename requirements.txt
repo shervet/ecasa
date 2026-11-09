@@ -1,0 +1,3 @@
+# Dépendance facultative : uniquement nécessaire pour le planning Pronote.
+# Le reste du planificateur fonctionne avec la bibliothèque standard Python.
+pronotepy>=2.0.0

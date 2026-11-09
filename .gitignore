@@ -1,0 +1,17 @@
+config.json
+config.local.json
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+*.db
+*.sqlite3
+.env
