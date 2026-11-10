@@ -253,9 +253,34 @@ Mise en place, dans **Réglages → Électricité** :
 
 Le token reste local : `GET /api/config` expose seulement `med_token_set`.
 Les réponses Enedis (Wh) sont converties en kWh. Les appels sont mis en cache
-**en mémoire** 6 h (aucune écriture disque) et découpés par année, ce qui reste
-sous le quota MyElectricalData de 50 appels/jour/PDL. Le bouton **Tester la
-connexion** interroge les 7 derniers jours sans enregistrer la configuration.
+**en mémoire** jusqu'à la prochaine synchronisation automatique (3 h le
+lendemain, aucune écriture disque) et découpés par année, ce qui reste sous le
+quota MyElectricalData de 50 appels/jour/PDL. Le bouton **Tester la connexion**
+interroge les 7 derniers jours sans enregistrer la configuration. Le bouton
+**Actualiser** de la carte force un nouvel appel immédiat.
+
+**Synchronisation automatique** : une fois par jour vers 3 h, MeCasa récupère la
+consommation électrique et le planning Pronote (voir ci-dessous). Chaque tâche
+n'est tentée qu'une fois par jour : un échec est journalisé et attend le
+lendemain, ou une synchro manuelle. La synchro manuelle (bouton Actualiser,
+import Pronote) reste toujours possible et ne réinitialise pas le compteur
+quotidien.
+
+### Planning Pronote et pièce liée
+
+Dans **Réglages → Pronote**, renseigner le compte et sélectionner la **pièce
+liée au planning**. Chaque nuit vers 3 h, MeCasa récupère les semaines A et B
+depuis Pronote et les applique à cette pièce sans validation, en conservant les
+créneaux du week-end déjà saisis à la main. L'import manuel depuis la page
+**Planning** cible la même pièce (ou l'appareil choisi) et n'écrase pas les
+week-ends.
+
+### Redémarrage des services externes
+
+`POST /api/control/restart` (bouton **Redémarrer** de l'interface) relance
+également, quand ils sont présents, **pm2**, les unités **systemd** Node et le
+conteneur Docker **MyElectricalData** local. Ces relances sont tolérantes aux
+absences (journalisées, jamais bloquantes).
 
 ## API
 
@@ -278,7 +303,7 @@ machine locale, sauf si `allow_remote_admin` est activé.
 | DELETE | `/api/override/{device_id}` | Reprise du planning. |
 | GET/PUT | `/api/weeks` | Surcharges de semaine A/B. |
 | GET | `/api/stats?range=day\|week\|month&date=…&room_id=…` | Statistiques. |
-| GET | `/api/energy?view=day\|week\|month\|year&month=…` | Consommation électrique. |
+| GET | `/api/energy?view=day\|week\|month\|year&month=…&refresh=1` | Consommation électrique (`refresh=1` force l'appel réseau). |
 | POST | `/api/energy/test` | Teste le token et le PDL MyElectricalData. |
 | POST | `/api/apply`, `/api/sync` | Applique ou resynchronise. |
 | POST | `/api/pronote/search\|test\|preview\|import` | Pronote. |
@@ -310,7 +335,9 @@ Les tests couvrent le stockage (persistance, rechargement, forçages, créneaux,
 journal), les règles de semaine, l'agrégation des statistiques, les défauts de
 climatisation Atlantic (détection des capacités, application soufflerie /
 orientation, non-réécriture, mode Arrêt) et la consommation électrique
-(parsing Enedis, cache mémoire, agrégation multi-années).
+(parsing Enedis, cache mémoire, agrégation multi-années) et la synchronisation
+quotidienne (synchro unique par jour, import Pronote sur pièce, services
+externes).
 
 ## Sécurité
 

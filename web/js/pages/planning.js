@@ -1622,7 +1622,7 @@ function openPronoteSheet() {
   body.className = "stack";
   body.innerHTML = `
     <label class="field">
-      <span class="label">Importer dans la pièce</span>
+      <span class="label">Importer dans</span>
       <select class="select" data-pronote-target>
         ${targets.map((t) => `<option value="${t.id}"${t.id === selectedTarget?.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
       </select>
@@ -1685,8 +1685,14 @@ function openPronoteSheet() {
     try {
       const start = body.querySelector("[data-week-start]")?.value || monday;
       try { localStorage.setItem("mecasa.pronoteTargetId", selectedTarget.id); } catch {}
+      // La synchro automatique écrit sur la pièce : l'import manuel doit
+      // viser la même cible, sinon les deux imports se contredisent.
+      const targetPayload =
+        selectedTarget.kind === "room"
+          ? { room_id: Number(selectedTarget.targetId) }
+          : { device_id: Number(device.device_id) };
       await post("/api/pronote/import", {
-        device_id: Number(device.device_id),
+        ...targetPayload,
         week,
         week_start: start,
         days: plan.days,

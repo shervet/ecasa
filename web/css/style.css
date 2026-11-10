@@ -39,6 +39,14 @@
   --bad: #b64a44;
   --bad-soft: #f7dfdc;
 
+  /* Séries de graphiques : contraste volontaire entre N, N-1 et N-2. */
+  --series-1: #2f6b5f;
+  --series-2: #d9824f;
+  --series-3: #8e6bbf;
+  --series-4: #4f86b8;
+  --series-5: #b08a1e;
+  --series-6: #b8506a;
+
   /* Lignes et ombres */
   --line: #e3dccf;
   --line-strong: #d3c9b9;
@@ -100,6 +108,14 @@ html[data-theme="dark"] {
   --warn-soft: #362c1a;
   --bad: #e08a84;
   --bad-soft: #3a2321;
+
+  /* Séries de graphiques : teintes plus claires pour le fond sombre. */
+  --series-1: #6fb8a5;
+  --series-2: #e59a6a;
+  --series-3: #b79cf0;
+  --series-4: #7fb2dd;
+  --series-5: #e0c060;
+  --series-6: #e58fa0;
 
   --line: #2b3530;
   --line-strong: #3a453f;
@@ -2081,6 +2097,24 @@ svg {
   padding-bottom: 4px;
 }
 
+/* Glisser horizontalement pour changer de semaine / de jours. */
+.chart-wrap.is-draggable {
+  touch-action: pan-y;
+  cursor: grab;
+  overscroll-behavior-x: contain;
+}
+
+/* Le SVG doit aussi laisser passer le geste horizontal (pointer events)
+   tout en conservant le défilement vertical de la page. */
+.chart-wrap.is-draggable svg {
+  touch-action: pan-y;
+}
+
+.chart-wrap.is-draggable.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .chart-wrap svg {
   width: 100%;
   height: auto;
@@ -2148,10 +2182,13 @@ svg {
 
 /* Tooltip de graphique (courbes et barres) */
 .chart-tooltip {
-  position: absolute;
+  /* Ajoutée à <body> et fixe : la bulle apparaît au-dessus de la barre
+     cliquée, même dans un conteneur qui défile ou sur un écran mobile.
+     Le z-index la place au-dessus de la navigation et des cartes. */
+  position: fixed;
   display: none;
   pointer-events: none;
-  z-index: 5;
+  z-index: 400;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -2159,12 +2196,64 @@ svg {
   font-size: 0.8rem;
   line-height: 1.35;
   color: var(--text);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  max-width: 220px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  max-width: min(240px, calc(100vw - 20px));
+  white-space: nowrap;
 }
 
 .chart-bar {
   cursor: pointer;
+}
+
+/* Navigation de la consommation (mois entre les flèches). */
+.energy-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.energy-month .select {
+  min-width: 150px;
+  text-align: center;
+  font-weight: 650;
+}
+
+.energy-period {
+  margin-top: 5px;
+  min-height: 16px;
+  text-align: center;
+}
+
+.energy-swipe-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.energy-table-wrap {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.energy-table .period-name {
+  display: block;
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.energy-table .period-year {
+  display: block;
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.energy-table td.energy-period-cell {
+  min-width: 132px;
+  white-space: normal;
 }
 
 /* Carte repliable (Détail) */

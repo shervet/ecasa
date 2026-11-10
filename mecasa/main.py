@@ -36,11 +36,14 @@ from .atlantic import AtlanticClient, AtlanticError, AuthError, MockAtlanticClie
 from .energy import (
     ENERGY_VIEWS,
     MAX_HISTORY_DAYS,
+    MED_DEFAULT_URL,
     EnergyService,
     build_energy,
+    parse_med_start,
     test_energy,
 )
 from .engine import Engine, _caps, _mode_value, device_name
+from .external_services import restart_external_services
 from .find_wiser import scan_network
 from .pronote import (
     STUDENT_STATUSES,
@@ -89,6 +92,9 @@ DEFAULT_CONFIG = {
     "pronote_comfort_temp": 20,
     "pronote_reduced_mode": "heat",
     "pronote_reduced_temp": 16,
+    # Pièce liée au planning Pronote : 0 = aucune. Quand une pièce est liée,
+    # le planning est récupéré chaque nuit à 3 h et appliqué automatiquement.
+    "pronote_room_id": 0,
     "weather_enabled": True,
     "weather_city": "",
     "weather_latitude": 48.8566,
@@ -304,6 +310,7 @@ def public_config(config: dict) -> dict:
         "pronote_comfort_temp": float(config.get("pronote_comfort_temp", 20) or 20),
         "pronote_reduced_mode": str(config.get("pronote_reduced_mode", "heat")),
         "pronote_reduced_temp": float(config.get("pronote_reduced_temp", 16) or 16),
+        "pronote_room_id": int(config.get("pronote_room_id") or 0),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
         "weather_latitude": float(config.get("weather_latitude", 48.8566) or 0),
@@ -481,6 +488,15 @@ def save_config(body: dict) -> tuple[dict, bool]:
                 )
             updated[key] = round(temp, 1)
 
+    if "pronote_room_id" in body:
+        try:
+            room_id = int(body.get("pronote_room_id") or 0)
+        except (TypeError, ValueError) as err:
+            raise ValueError("Pièce Pronote invalide") from err
+        if room_id < 0:
+            raise ValueError("Pièce Pronote invalide")
+        updated["pronote_room_id"] = room_id
+
     if "weather_enabled" in body:
         updated["weather_enabled"] = bool(body.get("weather_enabled"))
 
@@ -624,6 +640,358 @@ def aligned_week_start(store: MemoryStore, base_monday, target: str,
             return monday
         monday += timedelta(days=7)
     return None
+
+
+# --------------------------------------------- import et synchro Pronote
+
+
+def _merge_weekend_slots(days: list, existing: list[dict]) -> list[list[dict]]:
+    """Conserve les créneaux samedi/dimanche déjà présents dans la pièce.
+
+    L'import Pronote ne concerne que les jours de classe ; les week-ends
+    personnalisés à la main ne doivent pas être écrasés.
+    """
+    result = [list(day or []) for day in days]
+    if not existing:
+        return result
+    by_day: list[list[dict]] = [[] for _ in range(7)]
+    for slot in existing:
+        by_day[int(slot["weekday"])].append(slot)
+    for weekday in (5, 6):
+        if by_day[weekday] and not result[weekday]:
+            result[weekday] = [
+                {
+                    "time": (
+                        f"{int(slot['minutes']) // 60:02d}:"
+                        f"{int(slot['minutes']) % 60:02d}"
+                    ),
+                    "mode": slot.get("mode", "off"),
+                    "temp": slot.get("temp", 20),
+                    "fan": slot.get("fan"),
+                }
+                for slot in sorted(
+                    by_day[weekday], key=lambda item: int(item["minutes"])
+                )
+            ]
+    return result
+
+
+def import_pronote_weeks(
+    store: MemoryStore,
+    config: dict,
+    target_id: int,
+    base_monday,
+    weeks: list[str],
+    *,
+    room: bool = False,
+    preview_days: list | None = None,
+    preview_type: str | None = None,
+    body: dict | None = None,
+) -> dict[str, str]:
+    """Importe une ou deux semaines Pronote dans une pièce ou un appareil.
+
+    Renvoie la date source utilisée pour chaque semaine A/B. Lève
+    ``PronoteError`` ou ``ValueError`` avec un message affichable.
+    """
+    week_starts: dict[str, str] = {}
+    for target in weeks:
+        if preview_days is not None and target == preview_type:
+            days = preview_days
+            source_start = base_monday
+        else:
+            source_start = aligned_week_start(store, base_monday, target)
+            if source_start is None:
+                hint = ""
+                if store.settings().get("week_mode") != "parity":
+                    hint = (
+                        " Le mode d'alternance actuel ne distingue pas "
+                        "les semaines A et B (Réglages → Semaines A/B)."
+                    )
+                raise PronoteError(
+                    f"Aucune semaine {target} trouvée dans les 26 semaines "
+                    "qui suivent la date choisie." + hint
+                )
+            plan = build_pronote_plan(config, source_start, body or {})
+            days = plan["days"]
+
+        if not isinstance(days, list) or len(days) != 7:
+            raise ValueError("Planning Pronote invalide : 7 jours attendus")
+
+        existing = (
+            store.slots(room_id=target_id, week=target)
+            if room
+            else store.slots(target_id, target)
+        )
+        if room and not existing:
+            # Anciennes données : le planning peut encore être rattaché à
+            # l'actionneur ou au thermostat de la pièce.
+            room_data = store.room(target_id) or {}
+            for key in ("thermostat_device_id", "actuator_device_id"):
+                device_id = room_data.get(key)
+                if not device_id:
+                    continue
+                existing = store.slots(int(device_id), target)
+                if existing:
+                    break
+
+        days = _merge_weekend_slots(days, existing)
+        if room:
+            store.set_slots(room_id=target_id, week=target, days=days)
+        else:
+            store.set_slots(target_id, target, days)
+        week_starts[target] = source_start.isoformat()
+    return week_starts
+
+
+SYNC_HOUR = 3
+SYNC_STATE_FILE = DATA_DIR / "sync.json"
+
+
+def _sync_state_path(path=None) -> Path:
+    return Path(path) if path else SYNC_STATE_FILE
+
+
+def load_sync_state(path=None) -> dict:
+    """Dernières dates de synchro réussies (une par tâche)."""
+    try:
+        data = json.loads(_sync_state_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_sync_state(state: dict, path=None) -> bool:
+    """Écrit l'état de synchro de façon atomique. Ne lève jamais."""
+    target = _sync_state_path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(
+            json.dumps(state, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        tmp.replace(target)
+    except OSError as err:
+        print(f"[sync] état non enregistré : {err}")
+        return False
+    return True
+
+
+def daily_sync_due(
+    now: datetime,
+    state: dict | None = None,
+    hour: int = SYNC_HOUR,
+) -> bool:
+    """Vrai si une synchro quotidienne reste à faire.
+
+    Chaque tâche est suivie séparément (``energy`` et ``pronote``) : elle ne
+    s'exécute qu'une fois par jour, après ``hour`` (3 h). Une tentative, même
+    en échec, est comptée : il n'y a donc pas de réessai automatique le
+    même jour. La relance reste manuelle (bouton Actualiser des
+    statistiques, import Pronote depuis le planning).
+    """
+    if now.hour < hour:
+        return False
+    today = now.date().isoformat()
+    state = state or {}
+    return state.get("energy") != today or state.get("pronote") != today
+
+
+def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
+    """Récupère le planning Pronote et l'applique à la pièce liée.
+
+    Ne lève pas d'exception : renvoie un état ``skipped`` ou ``ok``.
+    """
+    config = load_config()
+    try:
+        room_id = int(config.get("pronote_room_id") or 0)
+    except (TypeError, ValueError):
+        room_id = 0
+    if not room_id:
+        return {"ok": False, "skipped": "no_room"}
+    if not app.store.room(room_id):
+        return {"ok": False, "skipped": "unknown_room"}
+    if not all(
+        str(config.get(key) or "").strip()
+        for key in ("pronote_url", "pronote_username", "pronote_password")
+    ):
+        return {"ok": False, "skipped": "not_configured"}
+
+    now = now or datetime.now()
+    monday = now.date() - timedelta(days=now.weekday())
+    week_starts = import_pronote_weeks(
+        app.store,
+        config,
+        room_id,
+        monday,
+        ["A", "B"],
+        room=True,
+    )
+    detail = ", ".join(
+        f"semaine {target} (du {start})" for target, start in week_starts.items()
+    )
+    app.store.log(
+        "info",
+        f"Planning Pronote synchronisé automatiquement — {detail}",
+    )
+    app.engine.tick(force=True)
+    return {
+        "ok": True,
+        "room_id": room_id,
+        "week_starts": week_starts,
+        "week_start": monday.isoformat(),
+    }
+
+
+def _energy_configured(config: dict) -> bool:
+    return bool(
+        config.get("med_enabled")
+        and str(config.get("med_token") or "").strip()
+        and str(config.get("med_pdl") or "").strip()
+    )
+
+
+def run_daily_sync(
+    app,
+    now: datetime | None = None,
+    state: dict | None = None,
+    state_path=None,
+) -> dict:
+    """Exécute les tâches quotidiennes dues : électricité puis Pronote.
+
+    Ne lève pas d'exception et **n'exécute chaque tâche qu'une seule fois par
+    jour** : la date est persistée dès la tentative, réussie ou non. Un échec
+    est journalisé et attend le lendemain, ou une synchro manuelle (bouton
+    Actualiser des statistiques, import Pronote depuis le planning).
+    """
+    now = now or datetime.now()
+    today = now.date().isoformat()
+    state = dict(state if state is not None else load_sync_state(state_path))
+    config = load_config()
+    result: dict = {"at": now.isoformat(timespec="seconds"), "ok": True,
+                    "energy": None, "pronote": None}
+
+    if state.get("energy") != today:
+        state["energy"] = today
+        if not _energy_configured(config):
+            result["energy"] = {"ok": False, "skipped": "not_configured"}
+        else:
+            try:
+                values = app.energy.daily(
+                    str(config.get("med_url") or MED_DEFAULT_URL).strip()
+                    or MED_DEFAULT_URL,
+                    str(config.get("med_pdl") or "").strip(),
+                    str(config.get("med_token") or "").strip(),
+                    parse_med_start(config.get("med_start"), now.date()),
+                    now.date(),
+                    refresh=True,
+                )
+            except Exception as err:  # noqa: BLE001 - réseau ou quota
+                result["energy"] = {"ok": False, "error": str(err)}
+                result["ok"] = False
+                state["energy_error"] = str(err)
+            else:
+                result["energy"] = {
+                    "ok": True,
+                    "last_date": max(values) if values else None,
+                }
+                state.pop("energy_error", None)
+
+    if state.get("pronote") != today:
+        state["pronote"] = today
+        try:
+            pronote = run_pronote_auto_import(app, now)
+        except Exception as err:  # noqa: BLE001
+            pronote = {"ok": False, "error": str(err)}
+        result["pronote"] = pronote
+        if pronote.get("ok") or pronote.get("skipped") in (
+            "no_room", "unknown_room", "not_configured",
+        ):
+            state.pop("pronote_error", None)
+        else:
+            result["ok"] = False
+            state["pronote_error"] = (
+                pronote.get("error") or pronote.get("skipped") or "échec"
+            )
+
+    state["at"] = result["at"]
+    save_sync_state(state, state_path)
+
+    energy = result.get("energy")
+    if energy is not None:
+        if energy.get("ok"):
+            app.store.log(
+                "info",
+                "Consommation synchronisée"
+                f" (dernière donnée {energy.get('last_date') or '—'})",
+            )
+            print(f"[sync] électricité ok — {energy.get('last_date') or '—'}")
+        elif not energy.get("skipped"):
+            app.store.log(
+                "erreur",
+                f"Synchro consommation impossible : {energy.get('error')}",
+            )
+            print(f"[sync] électricité en échec : {energy.get('error')}")
+
+    pronote = result.get("pronote")
+    if pronote is not None:
+        if pronote.get("ok"):
+            # Le journal détaillé (semaines importées) est déjà écrit par
+            # run_pronote_auto_import : on n'ajoute qu'une trace console.
+            print(f"[sync] Pronote pièce {pronote.get('room_id')}")
+        elif not pronote.get("skipped"):
+            app.store.log(
+                "erreur",
+                "Synchro Pronote impossible : "
+                f"{pronote.get('error') or pronote.get('skipped')}",
+            )
+            print(f"[sync] Pronote en échec : {pronote}")
+    return result
+
+
+class DailySync:
+    """Fil de fond : une synchro électricité + Pronote par jour, à 3 h.
+
+    Si MeCasa démarre après 3 h, le rattrapage se fait immédiatement, sauf
+    si la tâche a déjà été tentée ce jour-là (état persisté dans
+    ``data/sync.json``). Il n'y a donc jamais deux synchros automatiques le
+    même jour, même après plusieurs redémarrages.
+    """
+
+    def __init__(self, app, hour: int = SYNC_HOUR, check_seconds: float = 60,
+                 state_path=None):
+        self.app = app
+        self.hour = hour
+        self.check_seconds = check_seconds
+        self.state_path = state_path
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="daily-sync", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            now = datetime.now()
+            state = load_sync_state(self.state_path)
+            if daily_sync_due(now, state, self.hour):
+                try:
+                    run_daily_sync(self.app, now, state, self.state_path)
+                except Exception as err:  # noqa: BLE001
+                    self.app.store.log(
+                        "erreur", f"Synchronisation quotidienne : {err}"
+                    )
+                    print(f"[sync] échec : {err}")
+            self._stop.wait(self.check_seconds)
 
 
 # ------------------------------------------------------------------ tailscale
@@ -1356,9 +1724,39 @@ class Handler(BaseHTTPRequestHandler):
 
         def run() -> None:
             engine.stop()
+            sync = getattr(self.app, "daily_sync", None)
+            if sync is not None:
+                sync.stop()
             thread = getattr(engine, "_thread", None)
             if thread and thread.is_alive():
                 thread.join(timeout=20)
+            if restart:
+                # Un redémarrage doit aussi remettre à jour les services qui
+                # tournent à côté de MeCasa (pm2, unités systemd Node,
+                # MyElectricalData local). Les erreurs sont seulement
+                # journalisées : MeCasa doit redémarrer dans tous les cas.
+                try:
+                    results = restart_external_services(load_config())
+                except Exception as err:  # noqa: BLE001
+                    results = [{
+                        "name": "services externes",
+                        "attempted": True,
+                        "ok": False,
+                        "detail": str(err),
+                    }]
+                for item in results:
+                    if not item.get("attempted"):
+                        continue
+                    state = "ok" if item.get("ok") else "échec"
+                    store.log(
+                        "info" if item.get("ok") else "erreur",
+                        f"Redémarrage {item['name']} : {state} — "
+                        f"{item.get('detail') or ''}".strip(),
+                    )
+                    print(
+                        f"[restart] {item['name']} : {state}"
+                        f" {item.get('detail') or ''}".strip()
+                    )
             store.close()
             if restart:
                 try:
@@ -1580,10 +1978,15 @@ class Handler(BaseHTTPRequestHandler):
             # Vue « Jour » : fenêtre glissante (paramètres optionnels).
             day = (query.get("day") or [""])[0]
             days = (query.get("days") or [""])[0]
+            # Synchro manuelle : contourne le cache (préchargé à 3 h).
+            refresh = (query.get("refresh") or [""])[0].lower() in (
+                "1", "true", "oui", "yes",
+            )
             self._json(
                 200,
                 build_energy(
-                    app.energy, load_config(), view, month, day=day, days=days
+                    app.energy, load_config(), view, month, day=day, days=days,
+                    refresh=refresh,
                 ),
             )
             return
@@ -1810,13 +2213,19 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "POST" and path == "/api/pronote/import":
             body = self._body()
+            raw_room = body.get("room_id")
+            use_room = raw_room not in (None, "", 0, "0")
             try:
-                device_id = int(body.get("device_id"))
+                target_id = int(raw_room if use_room else body.get("device_id"))
             except (TypeError, ValueError):
-                self._json(400, {"error": "device_id manquant"})
+                self._json(400, {"error": "room_id ou device_id manquant"})
                 return
 
-            if not app.store.device(device_id):
+            if use_room:
+                if not app.store.room(target_id):
+                    self._json(404, {"error": "Pièce inconnue"})
+                    return
+            elif not app.store.device(target_id):
                 self._json(404, {"error": "Appareil inconnu"})
                 return
 
@@ -1849,57 +2258,18 @@ class Handler(BaseHTTPRequestHandler):
 
             weeks = list(dict.fromkeys(weeks))
             config = load_config()
-            week_starts: dict[str, str] = {}
             try:
-                for target in weeks:
-                    if preview_days is not None and target == preview_type:
-                        days = preview_days
-                        source_start = base_monday
-                    else:
-                        source_start = aligned_week_start(
-                            app.store, base_monday, target
-                        )
-                        if source_start is None:
-                            hint = ""
-                            if app.store.settings().get("week_mode") != "parity":
-                                hint = (
-                                    " Le mode d'alternance actuel ne distingue pas "
-                                    "les semaines A et B (Réglages → Semaines A/B)."
-                                )
-                            self._json(400, {
-                                "error": (
-                                    f"Aucune semaine {target} trouvée dans les 26 "
-                                    "semaines qui suivent la date choisie." + hint
-                                )
-                            })
-                            return
-                        plan = build_pronote_plan(config, source_start, body)
-                        days = plan["days"]
-                    if not isinstance(days, list) or len(days) != 7:
-                        self._json(400, {
-                            "error": "Planning Pronote invalide : 7 jours attendus"
-                        })
-                        return
-                    # Conserver les créneaux du week-end existants (sam/dim) :
-                    # l'import Pronote ne touche qu'aux jours de classe.
-                    existing = app.store.slots(device_id, target)
-                    if existing:
-                        by_day = [[] for _ in range(7)]
-                        for slot in existing:
-                            by_day[int(slot["weekday"])].append(slot)
-                        for weekday in (5, 6):
-                            if by_day[weekday] and not (days[weekday] or []):
-                                days[weekday] = [
-                                    {
-                                        "time": f"{int(s['minutes']) // 60:02d}:{int(s['minutes']) % 60:02d}",
-                                        "mode": s.get("mode", "off"),
-                                        "temp": s.get("temp", 20),
-                                        "fan": s.get("fan"),
-                                    }
-                                    for s in sorted(by_day[weekday], key=lambda x: int(x["minutes"]))
-                                ]
-                    app.store.set_slots(device_id, target, days)
-                    week_starts[target] = source_start.isoformat()
+                week_starts = import_pronote_weeks(
+                    app.store,
+                    config,
+                    target_id,
+                    base_monday,
+                    weeks,
+                    room=use_room,
+                    preview_days=preview_days,
+                    preview_type=preview_type,
+                    body=body,
+                )
             except PronoteError as err:
                 self._json(400, {"error": str(err)})
                 return
@@ -1911,11 +2281,17 @@ class Handler(BaseHTTPRequestHandler):
                 f"semaine {target} (du {start})"
                 for target, start in week_starts.items()
             )
-            app.store.log("info", f"Planning Pronote importé — {detail}", device_id)
+            target_label = "pièce" if use_room else "appareil"
+            app.store.log(
+                "info",
+                f"Planning Pronote importé ({target_label} {target_id}) — {detail}",
+                None if use_room else target_id,
+            )
             app.engine.tick(force=True)
             self._json(200, {
                 "ok": True,
-                "device_id": device_id,
+                "room_id": target_id if use_room else None,
+                "device_id": None if use_room else target_id,
                 "weeks": weeks,
                 "week_starts": week_starts,
                 "week_start": base_monday.isoformat(),
@@ -2397,6 +2773,10 @@ def main() -> None:
     count = app.static.load()
     server.app = app  # type: ignore[attr-defined]
 
+    daily_sync = DailySync(app)
+    app.daily_sync = daily_sync
+    daily_sync.start()
+
     tailscale_startup = apply_tailscale_startup(config)
 
     def _stop(signum, frame):  # noqa: ARG001
@@ -2437,6 +2817,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nArrêt.")
     finally:
+        daily_sync.stop()
         engine.stop()
         store.close()
         server.server_close()

@@ -2,8 +2,9 @@
 
 Le module interroge l'API ``daily_consumption`` de MyElectricalData et agrège
 les mesures journalières pour l'onglet Statistiques. Aucune donnée n'est
-écrite sur le disque : le cache vit en mémoire et expire au bout de quelques
-heures, ce qui limite les appels (quotas MyElectricalData).
+écrite sur le disque : le cache vit en mémoire jusqu'au prochain passage de
+la synchro quotidienne (3 h), ce qui limite les appels (quotas
+MyElectricalData). Une synchro manuelle peut le forcer.
 
 Deux formats de réponse sont acceptés :
 
@@ -33,11 +34,32 @@ MED_DEFAULT_URL = "https://www.myelectricaldata.fr"
 # (36 mois d'historique). On borne donc la période demandée à cette limite.
 MAX_HISTORY_DAYS = 1095
 
-# Le token MyElectricalData est valable un an. Les données journalières
-# évoluent lentement : un cache de 6 h laisse au plus 4 rafraîchissements par
-# jour et reste sous le quota de 50 appels/jour/PDL.
-CACHE_SECONDS = 6 * 3600
+# Les données journalières n'évoluent qu'une fois par jour : le cache vit
+# jusqu'au prochain passage de la synchro quotidienne (3 h), ce qui limite les
+# appels MyElectricalData au strict nécessaire. Une synchro manuelle peut
+# forcer le rafraîchissement.
+SYNC_HOUR = 3
 ERROR_RETRY_SECONDS = 60
+
+
+def next_sync_time(now: datetime | None = None) -> datetime:
+    """Prochain passage de la synchro quotidienne (3 h du matin)."""
+    now = now or datetime.now()
+    target = now.replace(hour=SYNC_HOUR, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
+
+
+def cache_ttl(now: datetime | None = None) -> int:
+    """Durée de vie du cache : jusqu'au prochain passage de 3 h.
+
+    Le relevé est préchargé à 3 h par la synchro quotidienne, puis réutilisé
+    toute la journée. La valeur minimale évite un cache expiré dans la
+    seconde qui suit un chargement juste avant 3 h.
+    """
+    now = now or datetime.now()
+    return max(60, int((next_sync_time(now) - now).total_seconds()))
 
 ENERGY_VIEWS = ("day", "week", "month", "year")
 
@@ -81,7 +103,7 @@ class EnergyService:
         self._errors: dict[tuple, tuple[float, str]] = {}
 
     def daily(self, base_url: str, pdl: str, token: str, start: date,
-              end: date) -> dict[str, float]:
+              end: date, refresh: bool = False) -> dict[str, float]:
         """Consommation journalière en kWh entre deux dates incluses.
 
         Le résultat est indexé par date ISO (``YYYY-MM-DD``). Les années sont
@@ -89,6 +111,9 @@ class EnergyService:
         seule année manquante ne fait pas tout recharger. La clé de cache
         inclut une empreinte du token pour qu'une rotation de token ne serve
         pas d'anciennes valeurs.
+
+        ``refresh=True`` ignore le cache (synchro manuelle) tout en le
+        réécrivant avec les valeurs fraîches.
         """
         if start > end:
             raise EnergyError("Période de consommation invalide")
@@ -111,7 +136,7 @@ class EnergyService:
             error_key = (base, pdl, token_key)
             now = time.time()
             with self._lock:
-                cached = self._cache.get(key)
+                cached = None if refresh else self._cache.get(key)
                 if cached and cached[0] > now:
                     values.update(cached[1])
                     continue
@@ -127,14 +152,14 @@ class EnergyService:
                 raise
 
             with self._lock:
-                self._cache[key] = (time.time() + CACHE_SECONDS, chunk)
+                self._cache[key] = (time.time() + cache_ttl(), chunk)
                 self._errors.pop(error_key, None)
                 if len(self._cache) > 64:
-                    threshold = time.time() - CACHE_SECONDS * 2
+                    horizon = time.time()
                     self._cache = {
                         item: value
                         for item, value in self._cache.items()
-                        if value[0] > threshold
+                        if value[0] > horizon
                     }
                 if len(self._errors) > 64:
                     cutoff = time.time() - ERROR_RETRY_SECONDS
@@ -165,7 +190,8 @@ class EnergyService:
 
 
 def build_energy(service, config: dict, view: str = "month", month=None,
-                 today: date | None = None, day=None, days=None) -> dict:
+                 today: date | None = None, day=None, days=None,
+                 refresh: bool = False) -> dict:
     """Construit la réponse de ``GET /api/energy``.
 
     ``view`` vaut ``day``, ``week``, ``month`` ou ``year``. Les séries sont
@@ -174,6 +200,11 @@ def build_energy(service, config: dict, view: str = "month", month=None,
 
     En vue ``day``, ``day`` (date ISO) fixe le jour de référence de la
     fenêtre glissante et ``days`` sa taille (7 par défaut).
+
+    En vue ``week``, ``day`` désigne un jour au sein de la semaine affichée
+    (seuls le mois et le jour du mois comptent) : la fenêtre est la semaine
+    ISO complète (lundi → dimanche) qui le contient, comparée d'année en
+    année sur les mêmes jours calendaires. ``days`` est ignoré.
     """
     today = today or date.today()
     view = view if view in ENERGY_VIEWS else "month"
@@ -220,7 +251,7 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     payload["start"] = start.isoformat()
 
     try:
-        daily = service.daily(base_url, pdl, token, start, today)
+        daily = service.daily(base_url, pdl, token, start, today, refresh=refresh)
     except EnergyError as err:
         payload["error"] = str(err)
         return payload
@@ -247,6 +278,8 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     window = None
     if view == "day":
         window = _day_window(points, month, ref_day, window_size, today)
+    elif view == "week":
+        window = _week_window(points, month, ref_day, today)
     _fill_view(payload, points, view, month, today, window)
     payload["summary"] = _summary(points, view, month, today, window)
     return payload
@@ -338,8 +371,9 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
     Les séries comparent le même jour du mois d'une année sur l'autre : la
     fenêtre porte donc sur les numéros de jour (1–31). Elle est clippée sur
     les données disponibles : jamais au-delà d'aujourd'hui pour le mois
-    courant, jamais au-delà du dernier jour avec une donnée du mois, et elle
-    commence au 1er si moins de ``size`` jours sont écoulés.
+    courant, jamais au-delà du dernier jour relevé (celui de cette année pour
+    le mois en cours, toutes années pour un mois passé), et elle commence au
+    1er si moins de ``size`` jours sont écoulés.
     """
     selected = [day for day in points if day.month == month]
     years = {day.year for day in selected}
@@ -350,7 +384,18 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
     limit = max_day
     if today.month == month:
         limit = min(limit, today.day)
-    if selected:
+        if selected:
+            # Mois en cours : on s'arrête à la dernière donnée de cette
+            # année. Une donnée ancienne (ex. le 30 novembre de l'an dernier)
+            # ne doit pas laisser apparaître un jour encore sans relevé
+            # (ex. le 10 novembre alors que la consommation du 10 n'est pas
+            # encore disponible).
+            current = [day.day for day in selected if day.year == today.year]
+            if current:
+                limit = min(limit, max(current))
+    elif selected:
+        # Mois passé : la comparaison porte sur le dernier jour disponible,
+        # toutes années confondues.
         limit = min(limit, max(day.day for day in selected))
     limit = max(1, limit)
     end = min(max(ref_day or limit, 1), limit)
@@ -362,6 +407,86 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
         "limit": limit,
         "size": size,
         "days": list(range(start, end + 1)),
+    }
+
+
+def _week_window(points: dict[date, float], month: int, ref_day: int | None,
+                 today: date) -> dict:
+    """Semaine ISO (lundi → dimanche) affichée par la vue ``week``.
+
+    La date de référence est reconstruite dans l'année courante à partir du
+    mois sélectionné et du jour du mois (``ref_day``) : comme pour la vue
+    ``day``, seuls le mois et le jour comptent, car la comparaison porte sur
+    les **mêmes jours calendaires de chaque année**. Sans ``ref_day``, la
+    semaine courante s'applique.
+
+    Bornage : la référence ne dépasse jamais ``today`` ni le dernier jour
+    avec donnée de l'année en cours — impossible d'afficher une semaine
+    entièrement future ou sans donnée récente. La semaine affichée reste
+    entière (7 jours, lundi → dimanche), même si elle court après le jour
+    borné : les jours sans donnée sont simplement vides.
+
+    La fenêtre est une liste de paires ``(mois, jour)`` — et non de dates
+    pleines — pour être comparée d'année en année. Une semaine ISO peut
+    chevaucher deux mois (30/11 → 06/12), voire deux ans (29/12 → 04/01) :
+    les paires le gèrent nativement, et le 29 février d'une année bissextile
+    tombe sur ``None`` les autres années.
+
+    Clés renvoyées :
+
+    - ``mdays`` : les 7 paires ``(mois, jour)`` de la fenêtre ;
+    - ``days`` : les 7 dates pleines dans l'année de référence ;
+    - ``iso_week`` : numéro de semaine ISO du lundi ;
+    - ``first`` / ``limit`` : lundis (dates) de la première et de la dernière
+      semaine navigables dans l'année de référence ;
+    - ``label`` : libellé court sans année, ex. ``Semaine 46 · 09–15
+      novembre`` (ou ``Semaine 49 · 30/11–06/12`` à cheval sur deux mois).
+    """
+    ref = today
+    last = max(points) if points else today
+    if ref_day is not None:
+        try:
+            ref = date(today.year, month, ref_day)
+        except ValueError:
+            ref = today
+        # Une date passée ou courante ne dépasse pas la dernière donnée
+        # (ex. le 14 mars alors que le relevé s'arrête le 9). En revanche,
+        # un mois futur reste navigable : la semaine est alors comparée aux
+        # mêmes jours calendaires des années précédentes.
+        if ref <= today and last.year == ref.year:
+            ref = min(ref, last)
+    elif last.year == ref.year:
+        ref = min(ref, last)
+    monday = ref - timedelta(days=ref.weekday())
+    days = [monday + timedelta(days=offset) for offset in range(7)]
+
+    limit_bound = min(today, last) if last.year == today.year else today
+    limit = limit_bound - timedelta(days=limit_bound.weekday())
+    jan_first = date(today.year, 1, 1)
+    first = jan_first - timedelta(days=jan_first.weekday())
+
+    iso_week = monday.isocalendar()[1]
+    start_day, end_day = days[0], days[-1]
+    if start_day.month == end_day.month:
+        label = (
+            f"Semaine {iso_week} · {start_day.day:02d}–{end_day.day:02d} "
+            f"{MONTH_LONG[start_day.month - 1].capitalize()}"
+        )
+    else:
+        label = (
+            f"Semaine {iso_week} · "
+            f"{start_day.day:02d}/{start_day.month:02d}–"
+            f"{end_day.day:02d}/{end_day.month:02d}"
+        )
+    return {
+        "month": month,
+        "iso_week": iso_week,
+        "size": 7,
+        "mdays": [(day.month, day.day) for day in days],
+        "days": days,
+        "first": first,
+        "limit": limit,
+        "label": label,
     }
 
 
@@ -412,22 +537,44 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         return
 
     if view == "week":
-        grouped: dict[tuple[int, int], float] = {}
-        years = set()
-        for day, value in points.items():
-            iso_year, iso_week, _ = day.isocalendar()
-            years.add(iso_year)
-            grouped[(iso_year, iso_week)] = grouped.get((iso_year, iso_week), 0.0) + value
-        years = sorted(years)
+        # Fenêtre de 7 jours (lundi → dimanche) comparée d'année en année :
+        # une barre par jour calendaire, une série par année avec donnée dans
+        # la fenêtre. ``window`` expose des repères JJ/MM (affichage) et ISO
+        # (navigation côté client : comparaison lexicographique fiable).
+        window = window or _week_window(points, month, None, today)
+        mdays = window["mdays"]
+        mdays_set = set(mdays)
+        years = sorted(
+            {day.year for day in points if (day.month, day.day) in mdays_set}
+        )
         payload["years"] = years
-        payload["labels"] = [f"S{week}" for week in range(1, 54)]
+        payload["labels"] = [
+            f"{day_number:02d}/{month_number:02d}"
+            for month_number, day_number in mdays
+        ]
+        payload["window"] = {
+            "start": f"{window['days'][0].day:02d}/{window['days'][0].month:02d}",
+            "end": f"{window['days'][-1].day:02d}/{window['days'][-1].month:02d}",
+            "start_iso": window["days"][0].isoformat(),
+            "end_iso": window["days"][-1].isoformat(),
+            "first_iso": window["first"].isoformat(),
+            "limit_iso": window["limit"].isoformat(),
+            "month": window["month"],
+            "iso_week": window["iso_week"],
+            "size": window["size"],
+            "label": window["label"],
+        }
         series = []
         for year in years:
-            values = [None] * 53
-            for week in range(1, 54):
-                total = grouped.get((year, week))
-                if total is not None:
-                    values[week - 1] = _round(total)
+            values = []
+            for month_number, day_number in mdays:
+                try:
+                    key = date(year, month_number, day_number)
+                except ValueError:
+                    # 29 février hors année bissextile.
+                    values.append(None)
+                    continue
+                values.append(_round(points[key]) if key in points else None)
             series.append({"key": str(year), "label": str(year), "values": values})
         payload["series"] = series
         return
@@ -490,7 +637,8 @@ def _period_totals(points: dict[date, float], view: str, month: int,
     ``total(year)`` -> ``(kwh, jours)`` calculé sur la période comparable :
 
     - ``day``   : les jours de la fenêtre affichée (mêmes jours du mois) ;
-    - ``week``  : la semaine ISO courante ;
+    - ``week``  : les 7 jours de la fenêtre affichée (mêmes jours
+      calendaires, la semaine pouvant chevaucher deux mois) ;
     - ``year``  : l'année complète (l'année en cours reste partielle) ;
     - ``month`` : l'année à date (même date pour les années passées).
     """
@@ -519,22 +667,23 @@ def _period_totals(points: dict[date, float], view: str, month: int,
         return years, total
 
     if view == "week":
-        _, iso_week, _ = today.isocalendar()
+        # Les 7 jours de la fenêtre affichée (paires mois/jour), comparés
+        # d'année en année — exactement la période du graphique.
+        mdays = set(window["mdays"]) if window else set()
 
         def total(year: int) -> tuple[float, int]:
             kwh = 0.0
             count = 0
             for day, value in points.items():
-                day_year, day_week, _ = day.isocalendar()
-                if day_year == year and day_week == iso_week:
+                if day.year == year and (day.month, day.day) in mdays:
                     kwh += value
                     count += 1
             return kwh, count
 
         years = {
-            day.isocalendar()[0]
+            day.year
             for day in points
-            if day.isocalendar()[1] == iso_week
+            if (day.month, day.day) in mdays
         }
         return years, total
 
@@ -608,7 +757,8 @@ def _summary(points: dict[date, float], view: str, month: int,
 
     - ``day`` : la fenêtre affichée du mois sélectionné, dernière année
       avec données dans la fenêtre ;
-    - ``week`` : la semaine ISO courante ;
+    - ``week`` : la semaine affichée (7 jours calendaires), dernière année
+      avec données dans la fenêtre ;
     - ``year`` : la dernière année avec données ;
     - ``month`` : l'année en cours, à date.
 
@@ -652,15 +802,18 @@ def _summary(points: dict[date, float], view: str, month: int,
             label = f"{MONTH_LONG[month - 1].capitalize()} {ref}"
             previous_label = f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"
     elif view == "week":
-        iso_year, iso_week, _ = today.isocalendar()
-        # La semaine ISO courante n'a pas toujours de données (elle ne fait
-        # que commencer) : on compare alors la dernière année qui en a.
+        # La semaine affichée n'a pas toujours de données pour l'année en
+        # cours (elle ne fait que commencer) : on compare alors la dernière
+        # année qui en a. Le libellé reprend celui de la fenêtre.
         if years_scope:
             ref = max(years_scope)
         else:
-            ref = iso_year
-        label = f"Semaine {iso_week} · {ref}"
-        previous_label = f"Semaine {iso_week} · {ref - 1}"
+            ref = today.year
+        base = window["label"] if window else (
+            f"Semaine {today.isocalendar()[1]}"
+        )
+        label = f"{base} {ref}"
+        previous_label = f"{base} {ref - 1}"
     elif view == "year":
         ref = max({day.year for day in points})
         label = f"Année {ref}"
@@ -674,8 +827,11 @@ def _summary(points: dict[date, float], view: str, month: int,
     prev_total, prev_count = total_for(ref - 1)
 
     # Les totaux sont « à date » quand l'année de référence n'est pas
-    # terminée : l'interface doit le signaler.
-    partial = count > 0 and ref == today.year and view in ("month", "year")
+    # terminée : l'interface doit le signaler. En vue semaine, la fenêtre
+    # affichée peut courir après aujourd'hui (jours futurs sans donnée).
+    partial = (
+        count > 0 and ref == today.year and view in ("week", "month", "year")
+    )
 
     return {
         "year": ref,

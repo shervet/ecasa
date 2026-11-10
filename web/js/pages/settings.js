@@ -140,6 +140,22 @@ export default {
     root = view;
     if (!store.config) await refreshConfig({ silent: true });
 
+    const atlanticConfigured = Boolean(cfg().email || cfg().password_set);
+    const navItems = [
+      ["appearance", "Apparence"],
+      ["engine", "Moteur"],
+      ["weeks", "Semaines A/B"],
+      ["rooms", "Pièces"],
+      ["weather", "Météo"],
+      ["devices", "Appareils"],
+      ...(atlanticConfigured ? [["climate", "Clim"]] : []),
+      ["pronote", "Pronote"],
+      ["server", "Serveur"],
+      ["tailscale", "Tailscale"],
+      ["storage", "Stockage"],
+      ["energy", "Électricité"],
+    ];
+
     view.innerHTML = `
       <div class="page">
         <div class="page-head">
@@ -164,20 +180,7 @@ export default {
         </div>
 
         <div class="settings-nav" id="settingsNav">
-          ${[
-            ["appearance", "Apparence"],
-            ["engine", "Moteur"],
-            ["climate", "Clim"],
-            ["weeks", "Semaines A/B"],
-            ["rooms", "Pièces"],
-            ["devices", "Appareils"],
-            ["pronote", "Pronote"],
-            ["weather", "Météo"],
-            ["energy", "Électricité"],
-            ["storage", "Stockage"],
-            ["server", "Serveur"],
-            ["tailscale", "Tailscale"],
-          ]
+          ${navItems
             .map(([id, label]) => `<a href="#/settings" data-jump="${id}">${label}</a>`)
             .join("")}
         </div>
@@ -185,16 +188,16 @@ export default {
         <div class="settings-layout">
           ${appearanceSection()}
           ${engineSection()}
-          ${climateSection()}
           ${weeksSection()}
           ${roomsSection()}
-          ${devicesSection()}
-          ${pronoteSection()}
           ${weatherSection()}
-          ${energySection()}
-          ${storageSection()}
+          ${devicesSection()}
+          ${atlanticConfigured ? climateSection() : ""}
+          ${pronoteSection()}
           ${serverSection()}
           ${tailscaleSection()}
+          ${storageSection()}
+          ${energySection()}
           <p class="hint">
             MeCasa ${escapeHtml(store.system?.app?.version || "")} · les secrets ne sont jamais renvoyés à l'interface.
           </p>
@@ -445,6 +448,10 @@ function devicesSection() {
 
 function pronoteSection() {
   const c = cfg();
+  const rooms = [...(store.state?.rooms || [])].sort(
+    (a, b) => Number(a.position ?? 0) - Number(b.position ?? 0)
+  );
+  const linkedRoom = Number(c.pronote_room_id || 0);
   return section(
     "pronote",
     "Pronote",
@@ -500,6 +507,19 @@ function pronoteSection() {
         <input class="input" data-key="pronote_morning_prep_minutes" data-number type="number" min="0" max="180" value="${escapeHtml(c.pronote_morning_prep_minutes ?? 20)}">
       </label>
     </div>
+    <label class="field">
+      <span class="label">Pièce liée au planning</span>
+      <select class="select" data-key="pronote_room_id">
+        <option value="0"${linkedRoom ? "" : " selected"}>Aucune — import manuel seulement</option>
+        ${rooms
+          .map(
+            (room) =>
+              `<option value="${room.id}"${Number(room.id) === linkedRoom ? " selected" : ""}>${escapeHtml(room.name)}</option>`
+          )
+          .join("")}
+      </select>
+      <span class="hint">Quand une pièce est liée, l'emploi du temps Pronote est récupéré chaque nuit à 3 h et appliqué à cette pièce (semaines A et B), sans validation.</span>
+    </label>
     <div class="form-grid">
       <label class="field">
         <span class="label">Confort : mode</span>

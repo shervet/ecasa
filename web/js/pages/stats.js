@@ -59,6 +59,8 @@ let energyMonth = Number(readPref("stats.energyMonth", new Date().getMonth() + 1
 let energyDay = readPref("stats.energyDay", todayIso());
 let energyDays = Number(readPref("stats.energyDays", 7));
 let energyRequestId = 0;
+let energyPayload = null;
+let temperatureTooltipAbort = null;
 
 export default {
   title: "Statistiques",
@@ -74,7 +76,9 @@ export default {
     if (!parseDate(energyDay)) energyDay = todayIso();
     const energyDate = parseDate(energyDay);
     if (energyDate && energyDate.getMonth() + 1 !== energyMonth) {
-      energyDay = isoDay(new Date(energyDate.getFullYear(), energyMonth - 1, 1));
+      // Garde le dernier jour du mois choisi : la fenêtre « 7 jours » est
+      // ainsi utile dès l'ouverture, sans rester bloquée sur le 1er.
+      energyDay = defaultEnergyDay(energyMonth);
     }
     if (!parseDate(anchor)) anchor = todayIso();
 
@@ -154,6 +158,9 @@ export default {
 
   unmount() {
     energyRequestId += 1;
+    temperatureTooltipAbort?.abort();
+    temperatureTooltipAbort = null;
+    energyPayload = null;
     root = null;
   },
 };
@@ -339,15 +346,20 @@ function attachChartTooltip() {
   if (!wrap || !svg || !data?.buckets?.length) return;
 
   wrap.querySelector(".chart-tooltip")?.remove();
+  temperatureTooltipAbort?.abort();
+  const controller = new AbortController();
+  temperatureTooltipAbort = controller;
 
   const tooltip = document.createElement("div");
   tooltip.className = "chart-tooltip";
+  tooltip.style.position = "fixed";
   wrap.appendChild(tooltip);
 
   const buckets = data.buckets;
   const count = buckets.length;
   const W = 760, M_LEFT = 42, M_RIGHT = 14;
   const innerW = W - M_LEFT - M_RIGHT;
+  let pinned = false;
 
   function nearestIndex(clientX) {
     const rect = svg.getBoundingClientRect();
@@ -357,8 +369,25 @@ function attachChartTooltip() {
     return Math.max(0, Math.min(count - 1, idx));
   }
 
-  function show(clientX) {
-    const index = nearestIndex(clientX);
+  function place(clientX, clientY) {
+    // Mesure fiable : la bulle doit être visible avant offsetWidth/Height.
+    tooltip.style.display = "block";
+    const width = tooltip.offsetWidth || 0;
+    const height = tooltip.offsetHeight || 0;
+    const pad = 10;
+    let left = clientX - width / 2;
+    left = Math.max(pad, Math.min(left, Math.max(pad, window.innerWidth - width - pad)));
+    // L'information apparaît juste au-dessus du doigt (ou en dessous si le
+    // haut de l'écran est atteint), exactement là où l'on a cliqué.
+    let top = clientY - height - 16;
+    if (top < pad) top = clientY + 18;
+    top = Math.max(pad, Math.min(top, Math.max(pad, window.innerHeight - height - pad)));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
+
+  function show(event) {
+    const index = nearestIndex(event.clientX);
     const bucket = buckets[index];
     if (!bucket) return;
     const lines = [`<strong>${escapeHtml(bucket.label || bucket.short || "")}</strong>`];
@@ -367,11 +396,7 @@ function attachChartTooltip() {
     if (bucket.outside !== null && bucket.outside !== undefined) lines.push(`Extérieur : ${fmtTemp(bucket.outside)} °C`);
     if (bucket.count) lines.push(`${bucket.count} mesure${bucket.count > 1 ? "s" : ""}`);
     tooltip.innerHTML = lines.join("<br>");
-    tooltip.style.display = "block";
-    const rect = wrap.getBoundingClientRect();
-    const x = clientX - rect.left;
-    tooltip.style.left = `${Math.min(x + 12, rect.width - 230)}px`;
-    tooltip.style.top = `12px`;
+    place(event.clientX, event.clientY);
 
     // Repère vertical sur la position survolée/cliquée.
     let marker = svg.querySelector(".chart-marker");
@@ -392,27 +417,42 @@ function attachChartTooltip() {
   }
 
   function hide() {
+    pinned = false;
     tooltip.style.display = "none";
     const marker = svg.querySelector(".chart-marker");
     if (marker) marker.style.display = "none";
   }
 
-  let pinned = false;
-  svg.addEventListener("mousemove", (event) => {
-    if (pinned) return;
-    show(event.clientX);
+  svg.addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "mouse" || pinned) return;
+    show(event);
   });
-  svg.addEventListener("mouseleave", () => {
-    if (!pinned) hide();
+  svg.addEventListener("pointerleave", (event) => {
+    if (event.pointerType !== "mouse" || pinned) return;
+    hide();
   });
-  svg.addEventListener("click", (event) => {
+  svg.addEventListener("pointerdown", (event) => {
     if (pinned) {
-      pinned = false;
-      tooltip.style.display = "none";
+      hide();
     } else {
       pinned = true;
-      show(event.clientX);
+      show(event);
     }
+  });
+
+  // Un appui hors du graphique referme la bulle épinglée ; le défilement
+  // de la page aussi, pour ne pas laisser une info figée à l'écran.
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!wrap.contains(event.target)) hide();
+    },
+    { capture: true, signal: controller.signal }
+  );
+  window.addEventListener("scroll", hide, {
+    passive: true,
+    capture: true,
+    signal: controller.signal,
   });
 }
 
@@ -428,7 +468,7 @@ function periodLabel(payload) {
 
 /* ------------------------------------------------------- consommation */
 
-async function loadEnergy() {
+async function loadEnergy(refresh = false) {
   if (!root) return;
   const host = root.querySelector("#energyContent");
   if (!host) return;
@@ -438,16 +478,22 @@ async function loadEnergy() {
     <div class="boot" style="min-height:160px"><span class="spinner"></span><p>Chargement de la consommation…</p></div>
   </div>`;
 
+  const isPeriod = energyView === "day" || energyView === "week";
   try {
     const payload = await get(
       `/api/energy${query({
         view: energyView,
-        month: energyView === "day" ? energyMonth : undefined,
-        day: energyView === "day" ? energyDay : undefined,
+        // Les vues jour et semaine sont ancrées sur un mois + un jour :
+        // c'est ce couple qui pilote la navigation par flèches / glisser.
+        month: isPeriod ? energyMonth : undefined,
+        day: isPeriod ? energyDay : undefined,
         days: energyView === "day" ? energyDays : undefined,
+        // Synchro manuelle : force l'appel à Enedis au lieu du cache de 3 h.
+        refresh: refresh ? 1 : undefined,
       })}`
     );
     if (id !== energyRequestId) return;
+    energyPayload = payload;
     paintEnergy(payload);
   } catch (err) {
     if (id !== energyRequestId) return;
@@ -464,21 +510,35 @@ function paintEnergy(payload) {
   const host = root?.querySelector("#energyContent");
   if (!host) return;
 
+  energyPayload = payload;
   const ok = Boolean(payload?.ok);
   const summary = payload?.summary || {};
-  const window_ = payload?.window || null;
   const isDay = energyView === "day";
+  const isWeek = energyView === "week";
+  const isPeriod = isDay || isWeek;
 
-  const dayNav = isDay
-    ? `<div class="row" style="gap:4px;align-items:center">
-        <button class="icon-btn" type="button" id="energyPrev" aria-label="7 jours précédents"${
-          window_ && window_.start <= 1 ? " disabled" : ""
-        }>${icon("chevron-left", 18)}</button>
-        <span class="tiny" id="energyWindow">${dayWindowLabel(window_, energyDay)}</span>
-        <button class="icon-btn" type="button" id="energyNext" aria-label="7 jours suivants"${
-          window_ && window_.end >= window_.limit ? " disabled" : ""
-        }>${icon("chevron-right", 18)}</button>
-      </div>`
+  // Le mois est placé entre les deux flèches : on change de semaine / de
+  // fenêtre de jours sans quitter le mois, et le libellé de période reste
+  // lisible juste en dessous.
+  const nav = isPeriod
+    ? `<div class="energy-nav">
+        <button class="icon-btn" type="button" id="energyPrev" aria-label="${
+          isWeek ? "Semaine précédente" : "Jours précédents"
+        }"${navDisabled(payload, -1) ? " disabled" : ""}>${icon("chevron-left", 18)}</button>
+        <label class="energy-month">
+          <span class="sr-only">Mois</span>
+          <select class="select" id="energyMonth">
+            ${MONTHS.map(
+              (label, index) =>
+                `<option value="${index + 1}"${index + 1 === energyMonth ? " selected" : ""}>${label}</option>`
+            ).join("")}
+          </select>
+        </label>
+        <button class="icon-btn" type="button" id="energyNext" aria-label="${
+          isWeek ? "Semaine suivante" : "Jours suivants"
+        }"${navDisabled(payload, 1) ? " disabled" : ""}>${icon("chevron-right", 18)}</button>
+      </div>
+      <div class="energy-period tiny muted">${escapeHtml(periodNavLabel(payload))}</div>`
     : "";
 
   const controls = `<div class="row-between wrap" style="gap:10px">
@@ -489,22 +549,12 @@ function paintEnergy(payload) {
       ).join("")}
     </div>
     ${
-      isDay
-        ? `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-            <label class="field" style="min-width:150px">
-              <span class="sr-only">Mois</span>
-              <select class="select" id="energyMonth">
-                ${MONTHS.map(
-                  (label, index) =>
-                    `<option value="${index + 1}"${index + 1 === energyMonth ? " selected" : ""}>${label}</option>`
-                ).join("")}
-              </select>
-            </label>
-            ${dayNav}
-          </div>`
+      isPeriod
+        ? `<span class="tiny muted energy-swipe-hint">${icon("calendar-days", 14)} Glisser sur le graphique</span>`
         : ""
     }
-  </div>`;
+  </div>
+  ${nav}`;
 
   let body = "";
   if (!ok) {
@@ -524,7 +574,6 @@ function paintEnergy(payload) {
     const labels = payload.labels || [];
     const hasByYear = Array.isArray(summary.by_year) && summary.by_year.length;
     body = `
-      ${hasByYear ? byYearTable(summary) : energyKpiGrid(summary)}
       ${barChart({
         labels,
         series,
@@ -533,6 +582,7 @@ function paintEnergy(payload) {
         ariaLabel: "Consommation électrique par année",
       })}
       ${chartLegend(series)}
+      ${hasByYear ? energyTable(payload) : energyKpiGrid(summary)}
       <p class="hint mt-2">
         Source MyElectricalData (Enedis)${
           payload.last_date ? ` · dernière donnée ${fmtDate(payload.last_date)}` : ""
@@ -547,7 +597,10 @@ function paintEnergy(payload) {
         <div class="card-title">${icon("zap", 18)} Consommation électrique</div>
         <div class="card-sub">${escapeHtml(energySubtitle(payload))}</div>
       </div>
-      <span class="pill ${ok ? "pill-ok" : "pill-ghost"}">${ok ? "kWh" : "hors ligne"}</span>
+      <div class="row" style="gap:8px;align-items:center">
+        <span class="pill ${ok ? "pill-ok" : "pill-ghost"}">${ok ? "kWh" : "hors ligne"}</span>
+        <button class="icon-btn" type="button" id="energyRefresh" aria-label="Synchroniser maintenant" title="Synchroniser maintenant">${icon("refresh", 16)}</button>
+      </div>
     </div>
     <div class="card-body">
       ${controls}
@@ -565,36 +618,199 @@ function paintEnergy(payload) {
 
   host.querySelector("#energyMonth")?.addEventListener("change", (event) => {
     energyMonth = Number(event.target.value) || new Date().getMonth() + 1;
-    const current = parseDate(energyDay) || new Date();
-    energyDay = isoDay(new Date(current.getFullYear(), energyMonth - 1, 1));
+    // Ouvre la fin du mois choisi (les 7 derniers jours disponibles), plutôt
+    // que le 1er qui ne montrait qu'une journée.
+    energyDay = defaultEnergyDay(energyMonth);
     writePref("stats.energyMonth", energyMonth);
     writePref("stats.energyDay", energyDay);
     loadEnergy();
   });
 
-  host.querySelector("#energyPrev")?.addEventListener("click", () => shiftEnergyDay(-energyDays));
-  host.querySelector("#energyNext")?.addEventListener("click", () => shiftEnergyDay(energyDays));
+  host.querySelector("#energyPrev")?.addEventListener("click", () => shiftEnergy(-1));
+  host.querySelector("#energyNext")?.addEventListener("click", () => shiftEnergy(1));
+  // La synchro automatique n'a lieu qu'à 3 h : ce bouton permet de forcer
+  // une actualisation manuelle à tout moment.
+  host.querySelector("#energyRefresh")?.addEventListener("click", () => loadEnergy(true));
 
   const barWrap = host.querySelector(".chart-wrap");
-  attachBarTooltip(barWrap, { unit: "kWh" });
+  if (barWrap) {
+    attachBarTooltip(barWrap, { unit: "kWh" });
+    // En vue jour / semaine, un glisser horizontal sur la courbe change de
+    // période — même geste qu'un défilement en restant appuyé.
+    if (isPeriod) attachEnergyDrag(barWrap);
+  }
 }
 
-function byYearTable(summary) {
-  const rows = summary.by_year;
+/* ------------------------------------------------ navigation consommation */
+
+function defaultEnergyDay(month) {
+  const now = new Date();
+  if (Number(month) === now.getMonth() + 1) return isoDay(now);
+  const last = new Date(now.getFullYear(), Number(month), 0).getDate();
+  return isoDay(new Date(now.getFullYear(), Number(month) - 1, last));
+}
+
+function shiftEnergy(direction) {
+  if (energyView === "week") shiftEnergyWeek(direction);
+  else if (energyView === "day") shiftEnergyDay(direction * energyDays);
+}
+
+function shiftEnergyWeek(direction) {
+  const window_ = energyPayload?.window;
+  const base = parseDate(window_?.start_iso);
+  if (!base || !window_) return;
+
+  let target = addDays(base, direction * 7);
+  const first = parseDate(window_.first_iso);
+  const limit = parseDate(window_.limit_iso);
+  if (first && target < first) target = first;
+  if (limit && target > limit) target = limit;
+
+  const iso = isoDay(target);
+  if (iso === window_.start_iso) return;
+  energyDay = iso;
+  energyMonth = target.getMonth() + 1;
+  writePref("stats.energyDay", energyDay);
+  writePref("stats.energyMonth", energyMonth);
+  loadEnergy();
+}
+
+function shiftEnergyDay(delta) {
+  // Le serveur raisonne en numéro de jour dans le mois sélectionné :
+  // on borne donc le jour au mois courant avant de demander la fenêtre.
+  const current = parseDate(energyDay) || new Date();
+  const year = current.getFullYear();
+  const month = (energyMonth || 1) - 1;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(Math.max(current.getDate() + delta, 1), lastDay);
+  energyDay = isoDay(new Date(year, month, day));
+  writePref("stats.energyDay", energyDay);
+  loadEnergy();
+}
+
+function navDisabled(payload, direction) {
+  const window_ = payload?.window;
+  if (!window_) return true;
+  if (payload.view === "week") {
+    if (!window_.start_iso) return true;
+    return direction < 0
+      ? window_.start_iso <= window_.first_iso
+      : window_.start_iso >= window_.limit_iso;
+  }
+  if (payload.view === "day") {
+    return direction < 0 ? window_.start <= 1 : window_.end >= window_.limit;
+  }
+  return false;
+}
+
+function periodNavLabel(payload) {
+  const window_ = payload?.window;
+  if (!window_) return "";
+  if (payload.view === "week") return window_.label || "";
+  if (payload.view === "day") return dayWindowLabel(window_, energyDay);
+  return "";
+}
+
+function attachEnergyDrag(wrap) {
+  wrap.classList.add("is-draggable");
+  // Seuil volontairement court : sur un téléphone, un glisser de 3 cm doit
+  // suffire. Le geste reste horizontal uniquement pour laisser le
+  // défilement vertical de la page (touch-action: pan-y).
+  const threshold = 30;
+  let startX = 0;
+  let startY = 0;
+  let lastDx = 0;
+  let tracking = false;
+  let moved = false;
+
+  const finish = () => {
+    tracking = false;
+    wrap.classList.remove("is-dragging");
+  };
+
+  wrap.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    tracking = true;
+    moved = false;
+    lastDx = 0;
+    startX = event.clientX;
+    startY = event.clientY;
+    wrap.classList.add("is-dragging");
+    try {
+      wrap.setPointerCapture(event.pointerId);
+    } catch {
+      /* capture non disponible (ancien WebView) : on continue sans */
+    }
+  });
+
+  wrap.addEventListener("pointermove", (event) => {
+    if (!tracking) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    lastDx = dx;
+    if (!moved) {
+      // On ne prend la main que sur un geste franchement horizontal :
+      // le défilement vertical de la page reste possible.
+      if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
+      moved = true;
+    }
+    if (Math.abs(dx) >= threshold) {
+      finish();
+      shiftEnergy(dx < 0 ? 1 : -1);
+    }
+  });
+
+  wrap.addEventListener("pointerup", () => {
+    // Repli : un glisser un peu court mais net est quand même pris en compte.
+    if (tracking && moved && Math.abs(lastDx) >= 20) {
+      finish();
+      shiftEnergy(lastDx < 0 ? 1 : -1);
+      return;
+    }
+    finish();
+  });
+  wrap.addEventListener("pointercancel", finish);
+  wrap.addEventListener("pointerleave", () => {
+    if (tracking && !moved) finish();
+  });
+  // Un glisser ne doit pas déclencher le clic de barre (info) à la fin.
+  wrap.addEventListener(
+    "click",
+    (event) => {
+      if (!moved) return;
+      event.preventDefault();
+      event.stopPropagation();
+      moved = false;
+    },
+    true
+  );
+}
+
+function energyTable(payload) {
+  const summary = payload.summary || {};
+  const rows = summary.by_year || [];
+  if (!rows.length) return "";
+
+  const view = payload.view;
+  const window_ = payload.window || null;
+  const firstHeader = view === "week" ? "Semaine" : view === "day" ? "Jour" : "Année";
+  const valueHeader =
+    view === "week" ? "Conso semaine" : view === "day" ? "Conso jour" : "Consommation";
   const partial = summary.partial
     ? `<p class="hint mt-2">Totaux à date : l’année en cours n’est pas terminée, la comparaison porte sur la même période.</p>`
     : "";
-  return `<div style="overflow-x:auto">
-    <table class="stats-table">
+
+  return `<div class="energy-table-wrap">
+    <table class="stats-table energy-table">
       <thead>
-        <tr><th>Année</th><th>Consommation</th><th>Écart N-1</th></tr>
+        <tr><th>${firstHeader}</th><th>${valueHeader}</th><th>Écart N-1</th></tr>
       </thead>
       <tbody>
         ${rows
           .map((row) => {
             const delta = row.delta_pct;
             return `<tr>
-              <td>${escapeHtml(row.label ?? row.year ?? "—")}</td>
+              <td class="energy-period-cell">${periodRowLabel(view, row.year, window_)}</td>
               <td>${row.kwh === null || row.kwh === undefined ? "—" : `${fmtNumber(row.kwh, 0)} kWh`}</td>
               <td>${delta === null || delta === undefined ? "—" : `${delta > 0 ? "+" : ""}${fmtNumber(delta, 1)} %`}</td>
             </tr>`;
@@ -604,6 +820,16 @@ function byYearTable(summary) {
     </table>
     ${partial}
   </div>`;
+}
+
+function periodRowLabel(view, year, window_) {
+  if (view === "week" && window_) {
+    return `<span class="period-name">${escapeHtml(window_.label || `Semaine ${window_.iso_week || ""}`)}</span><span class="period-year">${year}</span>`;
+  }
+  if (view === "day" && window_) {
+    return `<span class="period-name">${escapeHtml(dayWindowLabel(window_, energyDay, year))}</span><span class="period-year">${year}</span>`;
+  }
+  return `<span class="period-name">${year}</span>`;
 }
 
 function energyKpiGrid(summary) {
@@ -634,27 +860,17 @@ function energyKpiGrid(summary) {
   </div>`;
 }
 
-function dayWindowLabel(window_, energyDayIso) {
+function dayWindowLabel(window_, energyDayIso, year = null) {
   if (!window_) return "";
   const date = parseDate(energyDayIso) || new Date();
-  const year = date.getFullYear();
-  const month = (energyMonth || 1) - 1;
-  const start = new Date(year, month, window_.start);
-  const end = new Date(year, month, window_.end);
+  const displayYear = year ?? date.getFullYear();
+  const month = (window_.month || energyMonth || 1) - 1;
+  const start = new Date(displayYear, month, window_.start);
+  const end = new Date(displayYear, month, window_.end);
+  if (window_.start === window_.end) {
+    return fmtDate(start, { day: "numeric", month: "long" });
+  }
   return `${fmtDate(start)} → ${fmtDate(end)}`;
-}
-
-function shiftEnergyDay(delta) {
-  // Le serveur ne raisonne qu'en numéro de jour dans le mois sélectionné :
-  // on borne donc le jour au mois courant avant de demander la fenêtre.
-  const date = parseDate(energyDay) || new Date();
-  const year = date.getFullYear();
-  const month = (energyMonth || 1) - 1;
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const day = Math.min(Math.max(date.getDate() + delta, 1), lastDay);
-  energyDay = isoDay(new Date(year, month, day));
-  writePref("stats.energyDay", energyDay);
-  loadEnergy();
 }
 
 function energySubtitle(payload) {
@@ -662,6 +878,10 @@ function energySubtitle(payload) {
   const view = payload.view_label || "Mois";
   if (payload.view === "day") {
     return `${view} · ${payload.month_label || ""} · comparaison par année`;
+  }
+  if (payload.view === "week") {
+    const label = payload.window?.label || view;
+    return `${label} · comparaison par année`;
   }
   if (payload.view === "year") return `${view} · total annuel`;
   return `${view} · comparaison par année`;

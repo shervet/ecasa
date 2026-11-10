@@ -172,11 +172,15 @@ export function barChart({
     (groupW - groupPad * 2 - barGap * (visible.length - 1)) / visible.length
   );
   const y = (value) => M.top + innerH - (value / max) * innerH;
+  // Palette dédiée aux séries : N, N-1 et N-2 restent nettement distinctes
+  // (vert, orange, violet, bleu…), en clair comme en sombre.
   const palette = [
-    "var(--primary)",
-    "var(--warm)",
-    "var(--cool)",
-    "var(--accent)",
+    "var(--series-1)",
+    "var(--series-2)",
+    "var(--series-3)",
+    "var(--series-4)",
+    "var(--series-5)",
+    "var(--series-6)",
   ];
 
   const gridCount = 4;
@@ -228,39 +232,91 @@ export function chartLegend(series = []) {
     .join("")}</div>`;
 }
 
+const TOOLTIP_DISMISS = "chart-tooltip:dismiss";
+let tooltipDismissBound = false;
+// Chaque bulle connaît son graphique : indispensable puisqu'elle vit dans
+// <body> et non dans le conteneur du graphique.
+const tooltipOwners = new WeakMap();
+
+/** Supprime les bulles dont le graphique a été remplacé par un rendu. */
+function purgeTooltips() {
+  document.querySelectorAll(".chart-tooltip").forEach((tip) => {
+    const owner = tooltipOwners.get(tip);
+    if (owner && owner.isConnected) return;
+    tooltipOwners.delete(tip);
+    tip.remove();
+  });
+}
+
+/** Referme les bulles quand on touche ailleurs ou qu'on fait défiler la page. */
+function bindTooltipDismiss() {
+  if (tooltipDismissBound) return;
+  tooltipDismissBound = true;
+
+  const dismissAll = () => {
+    document.querySelectorAll(".chart-tooltip").forEach((tip) => {
+      if (!tip.style.display || tip.style.display === "none") return;
+      tip.dispatchEvent(new Event(TOOLTIP_DISMISS));
+    });
+  };
+
+  // Un appui dans le graphique referme puis rouvre la bulle via l'écouteur
+  // du graphique lui-même : le résultat reste la barre touchée.
+  document.addEventListener("pointerdown", dismissAll, true);
+
+  // La bulle est ancrée à une barre : on la referme dès que la page bouge.
+  window.addEventListener("scroll", dismissAll, {
+    passive: true,
+    capture: true,
+  });
+}
+
 /**
  * Tooltip interactif pour les barres d'un graphique en barres.
- * Affiche label, série et valeur au survol/clic. Le tooltip reste visible
- * dans le conteneur et suit la barre active lors d'un défilement horizontal.
+ * Affiche label, série et valeur au survol/clic dans une fenêtre flottante
+ * placée au-dessus de la barre cliquée.
+ *
+ * La bulle est ajoutée à <body> avec un positionnement fixe : aucun
+ * conteneur qui défile, aucun `overflow` ni `backdrop-filter` d'un ancêtre
+ * ne peut la rogner ou la cacher derrière la navigation.
  */
 export function attachBarTooltip(wrap, { unit = "" } = {}) {
   if (!wrap) return;
+  bindTooltipDismiss();
+  purgeTooltips();
 
-  let tooltip = wrap.querySelector(".chart-tooltip");
-  if (!tooltip) {
+  let tooltip = wrap.__chartTooltip;
+  if (!tooltip || !tooltip.isConnected) {
     tooltip = document.createElement("div");
     tooltip.className = "chart-tooltip";
-    wrap.appendChild(tooltip);
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.style.position = "fixed";
+    document.body.appendChild(tooltip);
+    wrap.__chartTooltip = tooltip;
+    tooltipOwners.set(tooltip, wrap);
   }
 
   let activeRect = null;
+  let pinned = false;
 
-  function place(rect) {
-    const wrapRect = wrap.getBoundingClientRect();
-    // Position du rectangle par rapport au contenu du wrap : le scroll
-    // horizontal décale le SVG, il faut donc l'ajouter pour que le tooltip
-    // reste collé à la barre.
-    const scrollLeft = wrap.scrollLeft || 0;
-    const x = rect.left - wrapRect.left + scrollLeft + rect.width / 2;
-    const y = rect.top - wrapRect.top;
+  function place() {
+    if (!activeRect || !tooltip.isConnected) return;
+    // La bulle doit être mesurable avant d'être positionnée.
+    tooltip.style.display = "block";
+
+    const rect = activeRect.getBoundingClientRect();
+    const width = tooltip.offsetWidth || 0;
+    const height = tooltip.offsetHeight || 0;
     const pad = 8;
-    let left = x - tooltip.offsetWidth / 2;
-    // On borne dans la zone visible du conteneur (pas dans tout le contenu).
-    const minLeft = scrollLeft + pad;
-    const maxLeft = scrollLeft + wrap.clientWidth - tooltip.offsetWidth - pad;
-    left = Math.max(minLeft, Math.min(left, Math.max(minLeft, maxLeft)));
-    let top = y - tooltip.offsetHeight - pad;
-    if (top < pad) top = y + rect.height + pad;
+
+    let left = rect.left + rect.width / 2 - width / 2;
+    left = Math.max(pad, Math.min(left, Math.max(pad, window.innerWidth - width - pad)));
+
+    // Juste au-dessus de la barre ; en dessous si le haut de l'écran manque.
+    let top = rect.top - height - 10;
+    if (top < pad) top = rect.bottom + 10;
+    top = Math.max(pad, Math.min(top, Math.max(pad, window.innerHeight - height - pad)));
+
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
   }
@@ -281,12 +337,12 @@ export function attachBarTooltip(wrap, { unit = "" } = {}) {
     ]
       .filter(Boolean)
       .join("<br>");
-    tooltip.style.display = "block";
-    place(rect);
+    place();
   }
 
   function hide() {
     activeRect = null;
+    pinned = false;
     tooltip.style.display = "none";
   }
 
@@ -297,33 +353,34 @@ export function attachBarTooltip(wrap, { unit = "" } = {}) {
     return target.closest("rect[data-value]");
   }
 
+  tooltip.addEventListener(TOOLTIP_DISMISS, hide);
+
+  // Sur ordinateur, la bulle suit la barre survolée ; sur mobile, un appui
+  // l'épingle au-dessus de la barre touchée.
   wrap.addEventListener("pointerover", (event) => {
+    if (event.pointerType !== "mouse" || pinned) return;
+    const rect = barFrom(event);
+    if (rect) show(rect);
+  });
+  wrap.addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "mouse" || pinned) return;
     const rect = barFrom(event);
     if (rect) show(rect);
   });
   wrap.addEventListener("pointerout", (event) => {
+    if (event.pointerType !== "mouse" || pinned) return;
     if (!wrap.contains(event.relatedTarget)) hide();
-  });
-  wrap.addEventListener("pointermove", (event) => {
-    const rect = barFrom(event);
-    if (rect) show(rect);
   });
   wrap.addEventListener("pointerdown", (event) => {
     const rect = barFrom(event);
     if (rect) {
+      pinned = true;
       show(rect);
     } else {
-      // Clic dans le vide : on referme la valeur affichée.
+      // Appui dans le vide : on referme la valeur affichée.
       hide();
     }
   });
-  wrap.addEventListener(
-    "scroll",
-    () => {
-      if (activeRect) place(activeRect);
-    },
-    { passive: true }
-  );
 }
 
 /** Mini barres pour la répartition des modes sur une période. */
