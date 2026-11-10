@@ -1719,7 +1719,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "public, max-age=3600")
+            if path in ("/", "/index.html", "/sw.js") or path.endswith(
+                (".js", ".css")
+            ):
+                self.send_header("Cache-Control", "no-cache")
+            else:
+                self.send_header("Cache-Control", "public, max-age=3600")
             self._security_headers()
             self.end_headers()
             return
@@ -1738,7 +1743,9 @@ class Handler(BaseHTTPRequestHandler):
         if use_gzip:
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Vary", "Accept-Encoding")
-        if path in ("/", "/index.html", "/sw.js"):
+        if path in ("/", "/index.html", "/sw.js") or path.endswith(
+            (".js", ".css")
+        ):
             self.send_header("Cache-Control", "no-cache")
         else:
             self.send_header("Cache-Control", "public, max-age=3600")
