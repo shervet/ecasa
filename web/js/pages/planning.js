@@ -555,6 +555,7 @@ function openModelSlotEditorInline(dayIndex, slotIndex) {
   const body = document.createElement("div");
   body.className = "stack";
   body.innerHTML = `
+    <p class="hint" style="margin:0 0 8px">Semaine ${escapeHtml(week)}</p>
     <div class="form-grid">
       <label class="field">
         <span class="label">Heure</span>
@@ -878,7 +879,7 @@ function paintRooms() {
 
     html += '<div class="room-plan" data-room-anchor="' + t.id + '">';
     html += '<div class="room-plan-head">';
-    html += '<div class="room-plan-title">' + escapeHtml(t.label) + '</div>';
+    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span></div>';
     html += deviceSelect;
     html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '">' + icon("trash", 14) + ' Vider cette pièce</button>';
     html += '</div>';
@@ -1164,6 +1165,7 @@ function openModelSlotEditor(modelCopy, weekKey, dayIndex, slotIndex, onChange) 
   const body = document.createElement("div");
   body.className = "stack";
   body.innerHTML = `
+    <p class="hint" style="margin:0 0 8px">Semaine ${escapeHtml(week)}</p>
     <div class="form-grid">
       <label class="field">
         <span class="label">Heure</span>
@@ -1299,6 +1301,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
   const body = document.createElement("div");
   body.className = "stack";
   body.innerHTML = `
+    <p class="hint" style="margin:0 0 8px">Semaine ${escapeHtml(week)}</p>
     <div class="form-grid">
       <label class="field">
         <span class="label">Heure</span>

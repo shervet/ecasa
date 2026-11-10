@@ -1,6 +1,6 @@
 /* Service worker MeCasa : coquille en cache, API toujours en réseau. */
 
-const VERSION = "mecasa-v60";
+const VERSION = "mecasa-v61";
 const SHELL = [
   "/",
   "/index.html",

@@ -191,7 +191,6 @@ export default {
           ${roomsSection()}
           ${weatherSection()}
           ${devicesSection()}
-          /* Clim intégré dans devicesSection() */
           ${pronoteSection()}
           ${serverSection()}
           ${tailscaleSection()}
@@ -393,8 +392,10 @@ function devicesSection() {
     "thermometer",
     `<p class="hint">Les appareils sont découverts depuis Atlantic (Cozytouch) ou le Hub Wiser. Tu peux les renommer, les affecter à une pièce et couper leur pilotage. Chaque système garde ses propres réglages et sa liste d'appareils.</p>
 
-    <div id="sec-atlantic" class="stack" style="gap:14px">
-      <h3 class="card-title" style="margin-top:6px">${icon("thermometer", 16)} Cozytouch / Atlantic</h3>
+    <details class="stack" style="gap:14px" open>
+      <summary class="card-title" style="cursor:pointer">${icon("thermometer", 16)} Cozytouch / Atlantic</summary>
+      <div id="sec-atlantic" class="stack" style="gap:14px;margin-top:8px">
+        <h3 class="card-title" style="margin-top:6px;display:none">Cozytouch / Atlantic</h3>
       ${textRow("Adresse e-mail", "email", cfg_.email, { type: "email", placeholder: "moi@exemple.fr", sub: "Le compte utilisé dans l'application Cozytouch." })}
       ${row(
         "Mot de passe",
@@ -456,7 +457,7 @@ function devicesSection() {
         <button class="btn" type="button" id="discover">${icon("search", 16)} Voir le compte Atlantic</button>
         <button class="btn" type="button" data-sync>${icon("refresh", 16)} Synchroniser</button>
       </div>
-    </div>
+    </details>
 
     <details class="stack" style="margin-top:18px">
       <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} Schneider Wiser</summary>
