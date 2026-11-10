@@ -137,33 +137,7 @@ function paintHero() {
       <div class="row wrap" style="gap:6px">
         ${state.status?.mock ? '<span class="pill pill-warn">Simulation</span>' : '<span class="pill pill-ok">Réel</span>'}
         <span class="pill pill-ghost">${state.status?.running ? "Moteur actif" : "Moteur arrêté"}</span>
-        ${weather ? `<details class="weather-details" style="display:inline-block;position:relative">
-  <summary class="pill pill-ghost" style="cursor:pointer;list-style:none">${icon("cloud", 13)} Extérieur ${fmtTemp(weather.temp)} °C</summary>
-  <div id="weatherBox" class="weather-card" style="position:absolute;right:0;top:100%;z-index:50;min-width:280px;margin-top:6px">
-    <div class="weather-head">
-      <div>
-        <div class="card-title">${icon("cloud-sun", 17)} Météo de la semaine</div>
-        <p class="hint mt-1">${escapeHtml(weather.city || "Prévisions locales")} · ${escapeHtml(weather.daily_source || weather.source || "")}</p>
-      </div>
-      <span class="pill pill-ghost">${icon(weatherIconName(weather.code), 14)} ${fmtTemp(weather.temp)} °C</span>
-    </div>
-    ${Array.isArray(weather.daily) && weather.daily.length
-      ? `<div class="weather-days">
-          ${weather.daily.map((day) => {
-            const date = parseDate(day.date);
-            const index = date ? (date.getDay() + 6) % 7 : 0;
-            const today = date && date.toDateString() === new Date().toDateString();
-            return `<div class="weather-day${today ? " is-today" : ""}">
-              <span class="weather-dow">${weekdayShort(index)}</span>
-              <span class="weather-icon">${icon(weatherIconName(day.code), 19)}</span>
-              <span class="weather-max">${fmtTemp(day.tmax, 0)}°</span>
-              <span class="weather-min">${fmtTemp(day.tmin, 0)}°</span>
-            </div>`;
-          }).join("")}
-        </div>`
-      : ""}
-  </div>
-</details>` : ""}
+        ${weather ? `<button class="pill pill-ghost" type="button" id="weatherToggle" style="cursor:pointer">${icon("cloud", 13)} Extérieur ${fmtTemp(weather.temp)} °C</button>` : ""}
       </div>
     </div>
       <div class="hero-stats">
@@ -173,6 +147,73 @@ function paintHero() {
       <div class="hero-stat"><div class="v">${state.status?.last_poll ? fmtTime(state.status.last_poll) : "—"}</div><div class="l">Dernière lecture</div></div>
     </div>
   `;
+
+  // Boîte météo en position fixed (par-dessus, non rognée par le hero).
+  document.querySelectorAll("#weatherBoxFloating").forEach((el) => el.remove());
+  if (weather) {
+    const box = document.createElement("div");
+    box.id = "weatherBoxFloating";
+    box.className = "weather-card";
+    box.style.cssText = "position:fixed;z-index:1000;display:none;min-width:280px;max-width:360px;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-lg);";
+    box.innerHTML = `
+      <div class="weather-head">
+        <div>
+          <div class="card-title">${icon("cloud-sun", 17)} Météo de la semaine</div>
+          <p class="hint mt-1">${escapeHtml(weather.city || "Prévisions locales")} · ${escapeHtml(weather.daily_source || weather.source || "")}</p>
+        </div>
+        <span class="pill pill-ghost">${icon(weatherIconName(weather.code), 14)} ${fmtTemp(weather.temp)} °C</span>
+      </div>
+      ${Array.isArray(weather.daily) && weather.daily.length
+        ? `<div class="weather-days" style="margin-top:8px">
+            ${weather.daily.map((day) => {
+              const date = parseDate(day.date);
+              const index = date ? (date.getDay() + 6) % 7 : 0;
+              const today = date && date.toDateString() === new Date().toDateString();
+              return `<div class="weather-day${today ? " is-today" : ""}">
+                <span class="weather-dow">${weekdayShort(index)}</span>
+                <span class="weather-icon">${icon(weatherIconName(day.code), 19)}</span>
+                <span class="weather-max">${fmtTemp(day.tmax, 0)}°</span>
+                <span class="weather-min">${fmtTemp(day.tmin, 0)}°</span>
+              </div>`;
+            }).join("")}
+          </div>`
+        : ""}
+    `;
+    document.body.appendChild(box);
+
+    const toggle = document.getElementById("weatherToggle");
+    if (toggle) {
+      toggle.onclick = (e) => {
+        const open = box.style.display !== "none";
+        if (open) {
+          box.style.display = "none";
+        } else {
+          const rect = toggle.getBoundingClientRect();
+          box.style.display = "block";
+          const bw = box.offsetWidth || 280;
+          let left = rect.right - bw;
+          left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+          let top = rect.bottom + 6;
+          if (top + box.offsetHeight > window.innerHeight - 8) {
+            top = rect.top - box.offsetHeight - 6;
+          }
+          box.style.left = left + "px";
+          box.style.top = top + "px";
+        }
+      };
+    }
+    // Close on outside click (avoid duplicate listeners)
+    if (!window.__weatherClickBound) {
+      window.__weatherClickBound = true;
+      document.addEventListener("click", (e) => {
+        const b = document.getElementById("weatherBoxFloating");
+        const t = document.getElementById("weatherToggle");
+        if (b && b.style.display !== "none" && !b.contains(e.target) && e.target !== t) {
+          b.style.display = "none";
+        }
+      });
+    }
+  }
 }
 
 function paintStrip() {
