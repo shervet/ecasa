@@ -662,7 +662,7 @@ function defaultEnergyDay(month) {
 function shiftEnergy(direction) {
   if (energyView === "week") shiftEnergyWeek(direction);
   else if (energyView === "month") shiftEnergyMonth(direction);
-  else if (energyView === "day") shiftEnergyDay(direction * energyDays);
+  else if (energyView === "day") shiftEnergyDay(direction);
 }
 
 function shiftEnergyWeek(direction) {
