@@ -140,7 +140,6 @@ export default {
     root = view;
     if (!store.config) await refreshConfig({ silent: true });
 
-    const atlanticConfigured = Boolean(cfg().email || cfg().password_set);
     const navItems = [
       ["appearance", "Apparence"],
       ["engine", "Moteur"],
@@ -388,7 +387,6 @@ function roomsSection() {
 
 function devicesSection() {
   const cfg_ = cfg();
-  const atlanticConfigured = Boolean(cfg_.email || cfg_.password_set);
   return section(
     "devices",
     "Appareils",
@@ -412,7 +410,7 @@ function devicesSection() {
       )}
       <div class="hint" id="atlanticTestResult"></div>
 
-      ${atlanticConfigured ? `
+      ${Boolean(cfg_.email || cfg_.password_set) ? `
       <details class="card card-pad" style="margin-top:8px" open>
         <summary class="card-title" style="cursor:pointer">${icon("fan", 16)} Réglages climatisation (soufflerie / orientation)</summary>
         <div class="stack mt-2" style="gap:10px">

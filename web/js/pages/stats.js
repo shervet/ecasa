@@ -346,15 +346,18 @@ function attachChartTooltip() {
   const svg = wrap?.querySelector("svg");
   if (!wrap || !svg || !data?.buckets?.length) return;
 
-  wrap.querySelector(".chart-tooltip")?.remove();
+  document.querySelectorAll(".chart-tooltip").forEach((t) => {
+    if (t.dataset.owner === "temp") t.remove();
+  });
   temperatureTooltipAbort?.abort();
   const controller = new AbortController();
   temperatureTooltipAbort = controller;
 
   const tooltip = document.createElement("div");
   tooltip.className = "chart-tooltip";
+  tooltip.dataset.owner = "temp";
   tooltip.style.position = "fixed";
-  wrap.appendChild(tooltip);
+  document.body.appendChild(tooltip);
 
   const buckets = data.buckets;
   const count = buckets.length;
