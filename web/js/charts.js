@@ -200,7 +200,7 @@ export function barChart({
       const barH = Math.max(0, innerH - (y(value) - M.top));
       const x = M.left + groupW * index + groupPad + seriesIndex * (barW + barGap);
       const title = `${labels[index] ?? index} · ${item.label} : ${fmtNumber(value, 1)} ${unit}`;
-      bars += `<rect class="chart-bar" x="${x.toFixed(1)}" y="${(M.top + innerH - barH).toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${item.color}" data-label="${escapeHtml(labels[index] ?? index)}" data-series="${escapeHtml(item.label)}" data-value="${Number(value)}" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title></rect>`;
+      bars += `<rect class="chart-bar" x="${x.toFixed(1)}" y="${(M.top + innerH - barH).toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${item.color}" data-index="${index}" data-label="${escapeHtml(labels[index] ?? index)}" data-series="${escapeHtml(item.label)}" data-value="${Number(value)}" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title></rect>`;
     });
   });
 
@@ -273,14 +273,20 @@ function bindTooltipDismiss() {
 
 /**
  * Tooltip interactif pour les barres d'un graphique en barres.
- * Affiche label, série et valeur au survol/clic dans une fenêtre flottante
+ * Affiche label, série et valeur au survol dans une fenêtre flottante
  * placée au-dessus de la barre cliquée.
+ *
+ * Au clic (ou appui), la bulle épingle un **tableau** de la période
+ * cliquée — une ligne par année de la comparaison — quand le serveur
+ * fournit ``table`` ({ labels, rows: [[{ label, value, days, color }]] })
+ * et que plusieurs lignes sont utiles ; sinon elle garde l'affichage
+ * simple.
  *
  * La bulle est ajoutée à <body> avec un positionnement fixe : aucun
  * conteneur qui défile, aucun `overflow` ni `backdrop-filter` d'un ancêtre
  * ne peut la rogner ou la cacher derrière la navigation.
  */
-export function attachBarTooltip(wrap, { unit = "" } = {}) {
+export function attachBarTooltip(wrap, { unit = "", table = null } = {}) {
   if (!wrap) return;
   bindTooltipDismiss();
   purgeTooltips();
@@ -321,7 +327,38 @@ export function attachBarTooltip(wrap, { unit = "" } = {}) {
     tooltip.style.top = `${top}px`;
   }
 
-  function show(rect) {
+  // Lignes du tableau de la période cliquée (une ligne par année), telles
+  // que calculées par le serveur — aucun total n'est recalculé ici.
+  function tableRows(rect) {
+    if (!table || !Array.isArray(table.rows)) return null;
+    const index = Number(rect.dataset.index);
+    if (!Number.isInteger(index)) return null;
+    const rows = table.rows[index];
+    return Array.isArray(rows) ? rows : null;
+  }
+
+  function tooltipTable(rows) {
+    const body = rows
+      .map((row) => {
+        const value =
+          row.value === null || row.value === undefined
+            ? "—"
+            : `${fmtNumber(Number(row.value), 1)} ${unit}`.trim();
+        const days = row.days ? `${row.days} j` : "—";
+        return `<tr>
+          <td><span class="chart-tooltip-dot" style="background:${row.color || "var(--primary)"}"></span>${escapeHtml(row.label)}</td>
+          <td class="num">${escapeHtml(value)}</td>
+          <td class="num">${escapeHtml(days)}</td>
+        </tr>`;
+      })
+      .join("");
+    return `<table class="chart-tooltip-table">
+      <thead><tr><th>Année</th><th class="num">Conso</th><th class="num">Jours</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+  }
+
+  function show(rect, withTable = false) {
     activeRect = rect;
     const label = rect.dataset.label ?? "";
     const series = rect.dataset.series ?? "";
@@ -330,13 +367,21 @@ export function attachBarTooltip(wrap, { unit = "" } = {}) {
       raw === "" || raw === undefined
         ? "—"
         : `${fmtNumber(Number(raw), 1)} ${unit}`.trim();
-    tooltip.innerHTML = [
-      label ? `<strong>${escapeHtml(label)}</strong>` : "",
-      series ? escapeHtml(series) : "",
-      escapeHtml(valueText),
-    ]
-      .filter(Boolean)
-      .join("<br>");
+    const rows = withTable ? tableRows(rect) : null;
+    if (rows && rows.length > 1) {
+      tooltip.innerHTML =
+        (label ? `<strong>${escapeHtml(label)}</strong>` : "") +
+        tooltipTable(rows);
+    } else {
+      // Une seule série (ou pas de tableau) : affichage simple.
+      tooltip.innerHTML = [
+        label ? `<strong>${escapeHtml(label)}</strong>` : "",
+        series ? escapeHtml(series) : "",
+        escapeHtml(valueText),
+      ]
+        .filter(Boolean)
+        .join("<br>");
+    }
     place();
   }
 
@@ -375,7 +420,8 @@ export function attachBarTooltip(wrap, { unit = "" } = {}) {
     const rect = barFrom(event);
     if (rect) {
       pinned = true;
-      show(rect);
+      // Au clic : le tableau des années de la comparaison, s'il est utile.
+      show(rect, true);
     } else {
       // Appui dans le vide : on referme la valeur affichée.
       hide();

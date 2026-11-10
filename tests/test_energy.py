@@ -21,6 +21,7 @@ from mecasa.energy import (  # noqa: E402
     parse_energy_day,
     parse_energy_days,
     parse_energy_month,
+    parse_energy_year,
     parse_med_start,
     test_energy,
 )
@@ -199,17 +200,52 @@ class BuildTests(unittest.TestCase):
         )
 
     def test_month_view(self):
+        # Vue mois : 7 mois consécutifs terminés par le mois courant, les
+        # mois de tête sans aucune donnée (toutes années) sont retirés.
+        # Ici : sept.–nov. sont vides → bloc = déc. 2024 → mars 2025.
         payload = self.build("month")
         self.assertTrue(payload["ok"])
-        self.assertEqual(len(payload["labels"]), 12)
+        self.assertEqual(payload["labels"], ["Déc 24", "Jan 25", "Fév 25", "Mar 25"])
         self.assertEqual(payload["years"], [2024, 2025])
+        window = payload["window"]
+        self.assertEqual(window["size"], 7)
+        self.assertEqual(window["ref"], "2025-03")
+        self.assertEqual(window["first"], "2024-01")
+        self.assertEqual(window["limit"], "2025-03")
+        self.assertTrue(window["can_prev"])
+        self.assertFalse(window["can_next"])
+        self.assertEqual(window["label"], "Déc 24 → Mar 25")
+        self.assertEqual(window["range_label"], "Décembre → Mars")
         first, second = payload["series"]
         self.assertEqual(first["label"], "2024")
-        self.assertEqual(first["values"][0], 15.0)
-        self.assertEqual(first["values"][1], 20.0)
-        self.assertEqual(first["values"][11], 1.0)
-        self.assertEqual(second["values"][0], 3.0)
-        self.assertEqual(second["values"][2], 6.0)
+        self.assertEqual(first["values"], [1.0, 15.0, 20.0, None])
+        self.assertEqual(first["color"], "var(--series-2)")
+        self.assertEqual(second["label"], "2025")
+        self.assertEqual(second["values"], [None, 3.0, 4.0, 6.0])
+        self.assertEqual(second["color"], "var(--series-1)")
+        # Tooltip : une ligne par année pour chaque mois affiché.
+        tooltip = payload["tooltip"]
+        self.assertEqual(tooltip["labels"], payload["labels"])
+        self.assertEqual(len(tooltip["rows"]), 4)
+        self.assertEqual(tooltip["rows"][0][0]["value"], 1.0)   # déc. 2024
+        self.assertEqual(tooltip["rows"][0][0]["days"], 1)
+        self.assertIsNone(tooltip["rows"][0][1]["value"])       # déc. 2025 : futur
+        self.assertEqual(tooltip["rows"][3][1]["value"], 6.0)   # mars 2025
+
+    def test_month_view_without_crossing_year(self):
+        # Bloc entièrement dans l'année courante : pas d'année dans les
+        # libellés de mois.
+        data = {
+            date(2025, 1, 10): 3000,
+            date(2025, 2, 10): 4000,
+            date(2025, 3, 10): 6000,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(service, CONFIG, view="month", today=TODAY)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["labels"], ["Jan", "Fév", "Mar"])
+        self.assertEqual(payload["years"], [2025])
+        self.assertEqual(payload["series"][0]["values"], [3.0, 4.0, 6.0])
 
     def test_day_view(self):
         payload = self.build("day", month=1)
@@ -267,56 +303,60 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("Aucune donnée", payload["error"])
 
-    def test_week_view_window_of_seven_days(self):
+    def test_week_view_block_of_seven_weeks(self):
+        # Vue semaine : 7 semaines ISO consécutives (1 barre = 1 semaine),
+        # terminées par la semaine de référence (bornée à la dernière
+        # donnée, 10 mars → semaine 11). Les semaines de tête sans aucune
+        # donnée (semaines 5 et 6) sont retirées : bloc = S7 → S11.
         payload = self.build("week")
         self.assertTrue(payload["ok"])
-        # Fenêtre : semaine ISO 11 (lundi 10 → dimanche 16 mars), car la
-        # référence (15 mars) est bornée à la dernière donnée (10 mars).
         window = payload["window"]
         self.assertEqual(window["size"], 7)
         self.assertEqual(window["iso_week"], 11)
-        self.assertEqual(window["start"], "10/03")
+        self.assertEqual(window["start"], "10/02")
         self.assertEqual(window["end"], "16/03")
-        self.assertEqual(window["start_iso"], "2025-03-10")
+        self.assertEqual(window["start_iso"], "2025-02-10")
         self.assertEqual(window["end_iso"], "2025-03-16")
+        self.assertEqual(window["ref_iso"], "2025-03-10")
         self.assertEqual(window["limit_iso"], "2025-03-10")
         # Lundi de la semaine contenant le 1er janvier 2025 (un mercredi).
         self.assertEqual(window["first_iso"], "2024-12-30")
-        self.assertEqual(window["label"], "Semaine 11 · 10–16 Mars")
-        # Une étiquette par jour calendaire de la fenêtre (JJ/MM).
-        self.assertEqual(payload["labels"], [
-            "10/03", "11/03", "12/03", "13/03", "14/03", "15/03", "16/03",
-        ])
-        # Une série par année avec donnée dans la fenêtre : seule 2025.
-        self.assertEqual(payload["years"], [2025])
-        series = payload["series"][0]
-        self.assertEqual(series["label"], "2025")
-        self.assertEqual(
-            series["values"], [6.0, None, None, None, None, None, None]
-        )
+        self.assertEqual(window["label"], "Semaines 7 → 11 · 10/02 → 16/03")
+        self.assertTrue(window["can_prev"])
+        self.assertFalse(window["can_next"])
+        # Une étiquette par semaine affichée.
+        self.assertEqual(payload["labels"], ["S7", "S8", "S9", "S10", "S11"])
+        # Une série par année avec donnée dans le bloc : 2024 et 2025.
+        self.assertEqual(payload["years"], [2024, 2025])
+        first, second = payload["series"]
+        self.assertEqual(first["label"], "2024")
+        self.assertEqual(first["values"], [20.0, None, None, None, None])
+        self.assertEqual(first["color"], "var(--series-2)")
+        self.assertEqual(second["label"], "2025")
+        self.assertEqual(second["values"], [4.0, None, None, None, 6.0])
+        self.assertEqual(second["color"], "var(--series-1)")
 
     def test_week_view_explicit_day_selects_week(self):
-        # Le paramètre ``day`` désigne un jour au sein de la semaine : le
-        # 5 janvier 2025 (dimanche) → semaine du 30/12 au 05/01, à cheval
-        # sur deux mois ET deux ans.
+        # Le paramètre ``day`` désigne un jour au sein de la semaine de
+        # référence : le 5 janvier 2025 (dimanche) → semaine du 30/12 au
+        # 05/01, à cheval sur deux mois ET deux ans. Les semaines
+        # précédentes sont vides : le bloc se réduit à cette semaine.
         payload = self.build("week", month=1, day="2025-01-05")
         self.assertTrue(payload["ok"])
         window = payload["window"]
         self.assertEqual(window["start"], "30/12")
         self.assertEqual(window["end"], "05/01")
         self.assertEqual(window["start_iso"], "2024-12-30")
+        self.assertEqual(window["end_iso"], "2025-01-05")
+        self.assertEqual(window["ref_iso"], "2024-12-30")
         self.assertEqual(window["iso_week"], 1)
         self.assertEqual(window["label"], "Semaine 1 · 30/12–05/01")
-        self.assertEqual(payload["labels"], [
-            "30/12", "31/12", "01/01", "02/01", "03/01", "04/01", "05/01",
-        ])
+        self.assertEqual(payload["labels"], ["S1"])
+        self.assertEqual(payload["years"], [2024, 2025])
         series = {item["label"]: item for item in payload["series"]}
-        self.assertEqual(series["2024"]["values"], [
-            None, 1.0, None, None, None, None, 10.0,
-        ])
-        self.assertEqual(series["2025"]["values"], [
-            None, None, None, 3.0, None, None, None,
-        ])
+        # Semaine complète pour chaque année : 2024 = 31/12 + 05/01.
+        self.assertEqual(series["2024"]["values"], [11.0])
+        self.assertEqual(series["2025"]["values"], [3.0])
 
     def test_week_view_spans_two_months(self):
         # Semaine ISO 49 de 2026 : lundi 30/11 → dimanche 06/12.
@@ -337,39 +377,34 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(window["start"], "30/11")
         self.assertEqual(window["end"], "06/12")
         self.assertEqual(window["label"], "Semaine 49 · 30/11–06/12")
-        self.assertEqual(payload["labels"], [
-            "30/11", "01/12", "02/12", "03/12", "04/12", "05/12", "06/12",
-        ])
+        self.assertEqual(payload["labels"], ["S49"])
         series = {item["label"]: item for item in payload["series"]}
-        self.assertEqual(series["2025"]["values"], [
-            3.0, 2.0, None, None, None, None, None,
-        ])
-        self.assertEqual(series["2026"]["values"], [
-            7.0, None, 1.0, None, None, None, None,
-        ])
+        self.assertEqual(series["2025"]["values"], [5.0])
+        self.assertEqual(series["2026"]["values"], [8.0])
+        self.assertEqual(series["2026"]["color"], "var(--series-1)")
+        self.assertEqual(series["2025"]["color"], "var(--series-2)")
 
     def test_week_view_clipped_to_last_data(self):
         # Dernière donnée le dimanche 9 mars : sans jour explicite, la
         # référence (15 mars) est bornée au 9 → semaine 10, pas semaine 11.
+        # Le bloc remonte jusqu'à la semaine 8 (donnée du 20 février).
         data = {date(2025, 2, 20): 3000, date(2025, 3, 9): 5000}
         service = EnergyService(fetcher=FakeFetcher(data=data))
         payload = build_energy(
             service, CONFIG, view="week", today=date(2025, 3, 15)
         )
         window = payload["window"]
-        self.assertEqual(window["start"], "03/03")
+        self.assertEqual(window["start"], "17/02")
         self.assertEqual(window["end"], "09/03")
+        self.assertEqual(payload["labels"], ["S8", "S9", "S10"])
         series = {item["label"]: item for item in payload["series"]}
-        self.assertEqual(
-            series["2025"]["values"],
-            [None, None, None, None, None, None, 5.0],
-        )
+        self.assertEqual(series["2025"]["values"], [3.0, None, 5.0])
         # Un jour demandé au-delà de la dernière donnée est borné pareil.
         payload = build_energy(
             service, CONFIG, view="week", today=date(2025, 3, 15),
             month=3, day="2025-03-14",
         )
-        self.assertEqual(payload["window"]["start"], "03/03")
+        self.assertEqual(payload["window"]["start"], "17/02")
         self.assertEqual(payload["window"]["end"], "09/03")
 
     def test_week_view_future_month_compares_previous_years(self):
@@ -391,51 +426,171 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(window["end"], "03/01")
         self.assertEqual(window["start_iso"], "2026-12-28")
         self.assertEqual(window["label"], "Semaine 53 · 28/12–03/01")
+        self.assertEqual(payload["labels"], ["S53"])
         series = {item["label"]: item for item in payload["series"]}
-        self.assertEqual(series["2025"]["values"], [
-            None, 7.0, None, None, None, None, None,
-        ])
-        self.assertEqual(series["2024"]["values"], [
-            None, None, 3.0, None, None, None, None,
-        ])
+        self.assertEqual(series["2025"]["values"], [7.0])
+        self.assertEqual(series["2024"]["values"], [3.0])
 
     def test_week_view_leap_day(self):
-        # Le 29 février n'existe pas les années communes : valeur None.
+        # Le 29 février n'existe pas les années communes : la semaine de
+        # l'année commune ne totalise que le 28.
         data = {date(2023, 2, 28): 4000, date(2024, 2, 29): 9000}
         service = EnergyService(fetcher=FakeFetcher(data=data))
         payload = build_energy(
             service, {**CONFIG, "med_start": "2023-01-01"}, view="week",
             today=date(2024, 3, 1), month=2, day="2024-02-29",
         )
-        self.assertEqual(payload["labels"], [
-            "26/02", "27/02", "28/02", "29/02", "01/03", "02/03", "03/03",
-        ])
+        self.assertEqual(payload["labels"], ["S9"])
         series = {item["label"]: item for item in payload["series"]}
-        self.assertEqual(series["2023"]["values"], [
-            None, None, 4.0, None, None, None, None,
-        ])
-        self.assertEqual(series["2024"]["values"], [
-            None, None, None, 9.0, None, None, None,
-        ])
+        self.assertEqual(series["2023"]["values"], [4.0])
+        self.assertEqual(series["2024"]["values"], [9.0])
+
+    def test_week_view_excludes_year_without_data_in_window(self):
+        # 2023 n'a des données qu'en juin : hors du bloc de semaines
+        # affiché, elle n'apparaît ni comme barre ni dans la légende.
+        data = {
+            date(2023, 6, 15): 9000,
+            date(2025, 3, 10): 6000,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(
+            service, {**CONFIG, "med_start": "2023-01-01"}, view="week",
+            today=TODAY,
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["years"], [2025])
+        self.assertEqual(
+            [series["label"] for series in payload["series"]], ["2025"]
+        )
+        self.assertEqual(payload["series"][0]["values"], [6.0])
 
     def test_year_view(self):
-        # Vue année : totaux à date (bornés au 15 mars, date de référence).
+        # Vue année : une barre par année avec données sur la période
+        # comparée (totaux à date, bornés au 15 mars, date de référence).
         # 2024 : 10 (05/01) + 5 (20/01) + 20 (10/02) = 35 kWh ; le 1 kWh du
         # 31/12/2024 est après la date de référence et n'est pas compté.
         # 2025 : 3 (02/01) + 4 (15/02) + 6 (10/03) = 13 kWh.
         payload = self.build("year")
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["labels"], ["2024", "2025"])
-        self.assertEqual(payload["series"][0]["values"], [35.0, 13.0])
+        self.assertEqual(payload["years"], [2024, 2025])
+        first, second = payload["series"]
+        self.assertEqual(first["label"], "2024")
+        self.assertEqual(first["values"], [35.0, None])
+        self.assertEqual(first["color"], "var(--series-2)")
+        self.assertEqual(second["label"], "2025")
+        self.assertEqual(second["values"], [None, 13.0])
+        self.assertEqual(second["color"], "var(--series-1)")
+        # Tooltip : une ligne (l'année cliquée) par période.
+        tooltip = payload["tooltip"]
+        self.assertEqual(len(tooltip["rows"]), 2)
+        self.assertEqual(tooltip["rows"][0][0]["value"], 35.0)
+        self.assertEqual(tooltip["rows"][0][0]["days"], 3)
+        self.assertEqual(tooltip["rows"][1][0]["value"], 13.0)
+
+    def test_year_view_excludes_year_without_data_in_period(self):
+        # 2023 n'a des données qu'en décembre : sur la période comparée
+        # (année à date au 15 mars), elle est vide → absente des barres,
+        # de la légende (séries) et de ``summary.by_year``.
+        data = {
+            date(2023, 12, 15): 9000,
+            date(2024, 1, 10): 5000,
+            date(2025, 1, 10): 3000,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(
+            service, {**CONFIG, "med_start": "2023-01-01"}, view="year",
+            today=TODAY,
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["years"], [2024, 2025])
+        self.assertEqual(payload["labels"], ["2024", "2025"])
+        self.assertEqual(
+            [series["label"] for series in payload["series"]],
+            ["2024", "2025"],
+        )
+        self.assertEqual(
+            [row["year"] for row in payload["summary"]["by_year"]],
+            [2025, 2024],
+        )
+
+    def test_color_is_stable_per_year(self):
+        # La couleur dépend du rang de l'année par rapport à l'année
+        # courante (N → series-1, N-1 → series-2), pas de la période
+        # choisie ni des autres années présentes.
+        def colors(payload):
+            return {
+                series["label"]: series["color"]
+                for series in payload["series"]
+            }
+
+        # Deux années dans la fenêtre : 2024 garde series-2.
+        full = self.build("week")
+        self.assertEqual(colors(full), {
+            "2024": "var(--series-2)",
+            "2025": "var(--series-1)",
+        })
+        # 2025 seule dans la fenêtre : elle garde series-1 (pas de
+        # renumérotation par position).
+        data = {date(2024, 12, 31): 1000, date(2025, 3, 10): 6000}
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        single = build_energy(service, CONFIG, view="week", today=TODAY)
+        self.assertEqual(single["years"], [2025])
+        self.assertEqual(colors(single), {"2025": "var(--series-1)"})
+        # Même convention dans les autres vues.
+        self.assertEqual(
+            colors(self.build("month")),
+            {"2024": "var(--series-2)", "2025": "var(--series-1)"},
+        )
+        self.assertEqual(
+            colors(self.build("year")),
+            {"2024": "var(--series-2)", "2025": "var(--series-1)"},
+        )
+        self.assertEqual(
+            colors(self.build("day", month=1)),
+            {"2024": "var(--series-2)", "2025": "var(--series-1)"},
+        )
+
+    def test_tooltip_has_one_row_per_year(self):
+        # Le tableau flottant de la période cliquée : une ligne par année
+        # de la comparaison, avec valeur, nombre de jours et couleur.
+        payload = self.build("week")
+        tooltip = payload["tooltip"]
+        self.assertEqual(tooltip["labels"], payload["labels"])
+        self.assertEqual(len(tooltip["rows"]), len(payload["labels"]))
+        for row in tooltip["rows"]:
+            self.assertEqual(len(row), len(payload["years"]))
+            for entry in row:
+                self.assertIn("label", entry)
+                self.assertIn("value", entry)
+                self.assertIn("days", entry)
+                self.assertIn("color", entry)
+        # Première semaine affichée (S7, 10/02) : 2024 = 20 kWh (1 jour),
+        # 2025 = 4 kWh (1 jour). Dernière (S11) : 2024 sans donnée.
+        first = tooltip["rows"][0]
+        self.assertEqual(first[0]["label"], "2024")
+        self.assertEqual(first[0]["value"], 20.0)
+        self.assertEqual(first[0]["days"], 1)
+        self.assertEqual(first[0]["color"], "var(--series-2)")
+        self.assertEqual(first[1]["label"], "2025")
+        self.assertEqual(first[1]["value"], 4.0)
+        last = tooltip["rows"][-1]
+        self.assertIsNone(last[0]["value"])
+        self.assertEqual(last[0]["days"], 0)
+        self.assertEqual(last[1]["value"], 6.0)
 
     def test_summary_compares_same_period(self):
+        # Vue mois : comparaison du bloc affiché (déc. → mars) d'année en
+        # année. 2025 = 3 + 4 + 6 = 13 kWh ; 2024 = 1 (déc.) + 10 + 5 + 20
+        # = 36 kWh → (13 − 36) / 36 ≈ −63,9 %.
         payload = self.build("month")
         summary = payload["summary"]
         self.assertEqual(summary["year"], 2025)
-        self.assertEqual(summary["label"], "Année 2025")
+        self.assertEqual(summary["label"], "Décembre → Mars 2025")
+        self.assertEqual(summary["previous_label"], "Décembre → Mars 2024")
         self.assertEqual(summary["total_kwh"], 13.0)
-        self.assertEqual(summary["previous_kwh"], 35.0)
-        self.assertEqual(summary["delta_pct"], -62.9)
+        self.assertEqual(summary["previous_kwh"], 36.0)
+        self.assertEqual(summary["delta_pct"], -63.9)
 
     def test_summary_day_view_uses_displayed_window(self):
         # Fenêtre par défaut : 14–20 janvier (dernière donnée du mois).
@@ -509,20 +664,26 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["delta_pct"], 100.0)
 
     def test_summary_by_year_month_view(self):
-        # Vue mois : chaque année à date (15 mars), écart vs N-1 à date.
+        # Vue mois : chaque année sur le bloc affiché (déc. → mars),
+        # écart vs N-1 sur les mêmes mois calendaires.
         payload = self.build("month")
         by_year = payload["summary"]["by_year"]
         self.assertEqual([row["year"] for row in by_year], [2025, 2024])
         current, previous = by_year
         self.assertEqual(current["kwh"], 13.0)
         self.assertEqual(current["days"], 3)
-        # 2024 au 15 mars : 10 + 5 + 20 = 35 → (13 − 35) / 35 = −62,9 %.
-        self.assertEqual(current["delta_pct"], -62.9)
-        self.assertEqual(previous["kwh"], 35.0)
+        # 2024 sur le bloc : 1 + 10 + 5 + 20 = 36 → (13 − 36) / 36 ≈ −63,9 %.
+        self.assertEqual(current["delta_pct"], -63.9)
+        self.assertEqual(previous["kwh"], 36.0)
+        self.assertEqual(previous["days"], 4)
         self.assertIsNone(previous["delta_pct"])  # plus ancienne année
-        # Cohérence avec les totaux historiques du résumé.
+        # Cohérence avec les totaux du résumé et du graphique.
         self.assertEqual(current["kwh"], payload["summary"]["total_kwh"])
         self.assertEqual(current["delta_pct"], payload["summary"]["delta_pct"])
+        series = {item["label"]: item for item in payload["series"]}
+        self.assertEqual(current["kwh"], sum(
+            value for value in series["2025"]["values"] if value is not None
+        ))
 
     def test_summary_by_year_year_view(self):
         # Vue année : totaux à date (bornés au 15 mars), l'année en cours
@@ -612,6 +773,13 @@ class HelpersTests(unittest.TestCase):
         self.assertEqual(parse_energy_days("abc"), 7)
         self.assertEqual(parse_energy_days("0"), 1)
         self.assertEqual(parse_energy_days("99"), 31)
+
+    def test_parse_energy_year(self):
+        self.assertEqual(parse_energy_year("2024-12-01", TODAY), 2024)
+        self.assertEqual(parse_energy_year(None, TODAY), 2025)
+        self.assertEqual(parse_energy_year("pas-une-date", TODAY), 2025)
+        # Jamais dans le futur : ramené à l'année courante.
+        self.assertEqual(parse_energy_year("2030-06-15", TODAY), 2025)
 
     def test_parse_med_start(self):
         self.assertEqual(parse_med_start("2023-06-01", TODAY), date(2023, 6, 1))

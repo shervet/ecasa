@@ -80,6 +80,15 @@ MONTH_LONG = (
     "juillet", "août", "septembre", "octobre", "novembre", "décembre",
 )
 
+# Palette des séries (définie dans ``web/css/style.css``) : une année =
+# une couleur fixe, quel que soit le graphique ou la période choisie.
+SERIES_COLORS = tuple(f"var(--series-{index})" for index in range(1, 7))
+
+
+def _year_color(year: int, today: date) -> str:
+    """Couleur stable d'une année : N → ``--series-1``, N-1 → ``--series-2``…"""
+    return SERIES_COLORS[(today.year - year) % len(SERIES_COLORS)]
+
 
 class EnergyError(RuntimeError):
     """MyElectricalData injoignable ou réponse inexploitable."""
@@ -201,10 +210,20 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     En vue ``day``, ``day`` (date ISO) fixe le jour de référence de la
     fenêtre glissante et ``days`` sa taille (7 par défaut).
 
-    En vue ``week``, ``day`` désigne un jour au sein de la semaine affichée
-    (seuls le mois et le jour du mois comptent) : la fenêtre est la semaine
-    ISO complète (lundi → dimanche) qui le contient, comparée d'année en
-    année sur les mêmes jours calendaires. ``days`` est ignoré.
+    En vue ``week``, ``day`` désigne un jour au sein de la semaine de
+    référence (seuls le mois et le jour du mois comptent) : le bloc affiché
+    est formé des 7 semaines ISO (lundi → dimanche) terminées par cette
+    semaine, comparées d'année en année sur les mêmes jours calendaires.
+    ``days`` est ignoré.
+
+    En vue ``month``, le bloc affiché est formé des 7 mois terminés par le
+    mois sélectionné ; ``day`` (date ISO) fournit alors l'année de
+    référence (année courante par défaut) pour la navigation.
+
+    Toutes les vues renvoient une série par année (avec une ``color``
+    stable : N → ``--series-1``, N-1 → ``--series-2``…) et un bloc
+    ``tooltip`` : pour chaque période affichée, une ligne par année avec
+    la valeur, le nombre de jours mesurés et la couleur de la série.
     """
     today = today or date.today()
     view = view if view in ENERGY_VIEWS else "month"
@@ -235,6 +254,7 @@ def build_energy(service, config: dict, view: str = "month", month=None,
         "days": 0,
         "last_date": None,
         "summary": {},
+        "tooltip": None,
     }
 
     if not enabled:
@@ -280,6 +300,10 @@ def build_energy(service, config: dict, view: str = "month", month=None,
         window = _day_window(points, month, ref_day, window_size, today)
     elif view == "week":
         window = _week_window(points, month, ref_day, today)
+    elif view == "month":
+        window = _month_window(
+            points, month, parse_energy_year(day, today), today
+        )
     _fill_view(payload, points, view, month, today, window)
     payload["summary"] = _summary(points, view, month, today, window)
     return payload
@@ -364,6 +388,23 @@ def parse_energy_days(value, default: int = 7) -> int:
     return min(31, max(1, size))
 
 
+def parse_energy_year(value, today: date | None = None) -> int:
+    """Année de référence de la vue ``month`` (année courante par défaut).
+
+    Le paramètre est une date ISO dont seule l'année compte : la navigation
+    par flèches peut franchir le 1er janvier, mais jamais aller dans le
+    futur (le sélecteur de mois suffit pour viser un mois à venir).
+    """
+    today = today or date.today()
+    if not value:
+        return today.year
+    try:
+        ref = datetime.fromisoformat(str(value)[:10]).date()
+    except ValueError:
+        return today.year
+    return min(max(ref.year, 2000), today.year)
+
+
 def _day_window(points: dict[date, float], month: int, ref_day: int | None,
                 size: int, today: date) -> dict:
     """Fenêtre glissante de ``size`` jours sur le mois sélectionné.
@@ -412,7 +453,7 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
 
 def _week_window(points: dict[date, float], month: int, ref_day: int | None,
                  today: date) -> dict:
-    """Semaine ISO (lundi → dimanche) affichée par la vue ``week``.
+    """Bloc de 7 semaines ISO (lundi → dimanche) affiché par la vue ``week``.
 
     La date de référence est reconstruite dans l'année courante à partir du
     mois sélectionné et du jour du mois (``ref_day``) : comme pour la vue
@@ -420,27 +461,28 @@ def _week_window(points: dict[date, float], month: int, ref_day: int | None,
     les **mêmes jours calendaires de chaque année**. Sans ``ref_day``, la
     semaine courante s'applique.
 
+    Le bloc se termine sur la semaine de référence et remonte six semaines
+    en arrière. Les semaines de tête sans aucune donnée (quelle que soit
+    l'année) sont retirées : pas de barres vides, le bloc est simplement
+    plus court quand l'historique débute.
+
     Bornage : la référence ne dépasse jamais ``today`` ni le dernier jour
     avec donnée de l'année en cours — impossible d'afficher une semaine
-    entièrement future ou sans donnée récente. La semaine affichée reste
-    entière (7 jours, lundi → dimanche), même si elle court après le jour
-    borné : les jours sans donnée sont simplement vides.
-
-    La fenêtre est une liste de paires ``(mois, jour)`` — et non de dates
-    pleines — pour être comparée d'année en année. Une semaine ISO peut
-    chevaucher deux mois (30/11 → 06/12), voire deux ans (29/12 → 04/01) :
-    les paires le gèrent nativement, et le 29 février d'une année bissextile
-    tombe sur ``None`` les autres années.
+    entièrement future sans donnée récente. Un mois futur reste en revanche
+    navigable : les séries viennent alors des années précédentes.
 
     Clés renvoyées :
 
-    - ``mdays`` : les 7 paires ``(mois, jour)`` de la fenêtre ;
-    - ``days`` : les 7 dates pleines dans l'année de référence ;
-    - ``iso_week`` : numéro de semaine ISO du lundi ;
-    - ``first`` / ``limit`` : lundis (dates) de la première et de la dernière
-      semaine navigables dans l'année de référence ;
-    - ``label`` : libellé court sans année, ex. ``Semaine 46 · 09–15
-      novembre`` (ou ``Semaine 49 · 30/11–06/12`` à cheval sur deux mois).
+    - ``weeks`` : les semaines affichées, chacune avec ``mdays`` (7 paires
+      ``(mois, jour)``), ``label`` (``S46``), ``start`` (lundi) et ``end``
+      (dimanche) ;
+    - ``ref`` / ``first`` / ``limit`` : lundis (dates) de la semaine de
+      référence et des bornes de navigation ;
+    - ``iso_week`` : numéro ISO de la semaine de référence ;
+    - ``label`` : libellé du bloc (ex. ``Semaines 7 → 11 · 10/02 →
+      16/03``, ou le libellé détaillé d'une semaine unique) ;
+    - ``can_prev`` / ``can_next`` : navigation possible en arrière / en
+      avant (le bloc voisin contient des données).
     """
     ref = today
     last = max(points) if points else today
@@ -457,36 +499,186 @@ def _week_window(points: dict[date, float], month: int, ref_day: int | None,
             ref = min(ref, last)
     elif last.year == ref.year:
         ref = min(ref, last)
-    monday = ref - timedelta(days=ref.weekday())
-    days = [monday + timedelta(days=offset) for offset in range(7)]
+    ref_monday = ref - timedelta(days=ref.weekday())
+
+    years = sorted({day.year for day in points})
+
+    def week_has_data(monday: date) -> bool:
+        mdays = {
+            (day.month, day.day)
+            for day in (monday + timedelta(days=offset) for offset in range(7))
+        }
+        for year in years:
+            for month_number, day_number in mdays:
+                try:
+                    if date(year, month_number, day_number) in points:
+                        return True
+                except ValueError:
+                    # 29 février hors année bissextile.
+                    continue
+        return False
+
+    # 7 semaines consécutives terminées par la semaine de référence ; on
+    # retire les semaines de tête entièrement vides (première donnée).
+    mondays = [
+        ref_monday - timedelta(weeks=offset) for offset in range(6, -1, -1)
+    ]
+    while len(mondays) > 1 and not week_has_data(mondays[0]):
+        mondays.pop(0)
+
+    weeks = []
+    for monday in mondays:
+        days = [monday + timedelta(days=offset) for offset in range(7)]
+        weeks.append({
+            "mdays": [(day.month, day.day) for day in days],
+            "label": f"S{monday.isocalendar()[1]}",
+            "start": monday,
+            "end": days[-1],
+        })
 
     limit_bound = min(today, last) if last.year == today.year else today
     limit = limit_bound - timedelta(days=limit_bound.weekday())
     jan_first = date(today.year, 1, 1)
     first = jan_first - timedelta(days=jan_first.weekday())
 
-    iso_week = monday.isocalendar()[1]
-    start_day, end_day = days[0], days[-1]
-    if start_day.month == end_day.month:
-        label = (
-            f"Semaine {iso_week} · {start_day.day:02d}–{end_day.day:02d} "
-            f"{MONTH_LONG[start_day.month - 1].capitalize()}"
-        )
+    start_day, end_day = weeks[0]["start"], weeks[-1]["end"]
+    if len(weeks) == 1:
+        iso_week = start_day.isocalendar()[1]
+        if start_day.month == end_day.month:
+            label = (
+                f"Semaine {iso_week} · {start_day.day:02d}–{end_day.day:02d} "
+                f"{MONTH_LONG[start_day.month - 1].capitalize()}"
+            )
+        else:
+            label = (
+                f"Semaine {iso_week} · "
+                f"{start_day.day:02d}/{start_day.month:02d}–"
+                f"{end_day.day:02d}/{end_day.month:02d}"
+            )
     else:
         label = (
-            f"Semaine {iso_week} · "
-            f"{start_day.day:02d}/{start_day.month:02d}–"
+            f"Semaines {start_day.isocalendar()[1]} → "
+            f"{weeks[-1]['start'].isocalendar()[1]} · "
+            f"{start_day.day:02d}/{start_day.month:02d} → "
             f"{end_day.day:02d}/{end_day.month:02d}"
         )
+
+    can_prev = ref_monday > first and any(
+        week_has_data(ref_monday - timedelta(weeks=offset))
+        for offset in range(1, 8)
+    )
+    can_next = ref_monday < limit
+
     return {
         "month": month,
-        "iso_week": iso_week,
+        "iso_week": ref_monday.isocalendar()[1],
         "size": 7,
-        "mdays": [(day.month, day.day) for day in days],
-        "days": days,
+        "weeks": weeks,
+        "ref": ref_monday,
         "first": first,
         "limit": limit,
         "label": label,
+        "can_prev": can_prev,
+        "can_next": can_next,
+    }
+
+
+def _months_back(end_key: tuple[int, int]) -> list[tuple[int, int]]:
+    """Les 7 paires ``(année, mois)`` consécutives terminées par ``end_key``."""
+    months = []
+    year, month = end_key
+    for _ in range(7):
+        months.append((year, month))
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    months.reverse()
+    return months
+
+
+def _month_window(points: dict[date, float], month: int, ref_year: int,
+                  today: date) -> dict:
+    """Bloc de 7 mois consécutifs affiché par la vue ``month``.
+
+    Le mois de référence est le mois sélectionné, placé dans l'année
+    ``ref_year`` (année courante par défaut ; la navigation par flèches
+    peut franchir le 1er janvier). Chaque colonne compare le **même mois
+    calendaire** d'une année sur l'autre ; l'année du libellé est celle de
+    la position dans le calendrier de référence.
+
+    Le bloc remonte six mois en arrière ; les mois de tête sans aucune
+    donnée (quelle que soit l'année) sont retirés, comme pour la vue
+    semaine.
+
+    Clés renvoyées :
+
+    - ``months`` : les colonnes affichées, chacune avec ``year``, ``month``,
+      ``key`` (``YYYY-MM``) et ``label`` (``Nov``, ou ``Nov 25`` quand le
+      bloc franchit une année) ;
+    - ``ref`` / ``first`` / ``limit`` : bornes de navigation ``YYYY-MM`` ;
+    - ``label`` : libellé du bloc (ex. ``Déc 24 → Mar 25``) ;
+    - ``range_label`` : mois sans années (ex. ``Décembre → Mars``), pour le
+      résumé qui ajoute l'année comparée ;
+    - ``can_prev`` / ``can_next`` : navigation possible (bloc voisin non
+      vide).
+    """
+    ref_key = (ref_year, month)
+    months = _months_back(ref_key)
+
+    def month_has_data(number: int) -> bool:
+        return any(day.month == number for day in points)
+
+    while len(months) > 1 and not month_has_data(months[0][1]):
+        months.pop(0)
+
+    first_data = min(points) if points else today
+    first_key = (first_data.year, first_data.month)
+    limit_key = (today.year, today.month)
+    crossed = months[0][0] != months[-1][0]
+    columns = [
+        {
+            "year": year,
+            "month": number,
+            "key": f"{year:04d}-{number:02d}",
+            "label": (
+                f"{MONTH_SHORT[number - 1]} {year % 100:02d}"
+                if crossed
+                else MONTH_SHORT[number - 1]
+            ),
+        }
+        for year, number in months
+    ]
+
+    label = (
+        f"{MONTH_SHORT[months[0][1] - 1]} {months[0][0] % 100:02d} → "
+        f"{MONTH_SHORT[months[-1][1] - 1]} {months[-1][0] % 100:02d}"
+    )
+    range_label = (
+        f"{MONTH_LONG[months[0][1] - 1].capitalize()} → "
+        f"{MONTH_LONG[months[-1][1] - 1].capitalize()}"
+    )
+
+    previous_key = ref_key[0], ref_key[1] - 1
+    if previous_key[1] == 0:
+        previous_key = ref_key[0] - 1, 12
+    can_prev = ref_key > first_key and any(
+        month_has_data(number)
+        for _, number in _months_back(previous_key)
+    )
+    can_next = ref_key < limit_key
+
+    return {
+        "month": month,
+        "size": 7,
+        "months": columns,
+        "ref": f"{ref_key[0]:04d}-{ref_key[1]:02d}",
+        "first": f"{first_key[0]:04d}-{first_key[1]:02d}",
+        "limit": f"{limit_key[0]:04d}-{limit_key[1]:02d}",
+        "label": label,
+        "range_label": range_label,
+        "can_prev": can_prev,
+        "can_next": can_next,
     }
 
 
@@ -509,74 +701,136 @@ def parse_med_start(value, today: date | None = None) -> date:
     return oldest
 
 
+def _tooltip_row(year: int, total: float | None, count: int,
+                 today: date) -> dict:
+    """Une ligne du tableau flottant (clic sur une barre) pour une année."""
+    return {
+        "label": str(year),
+        "year": year,
+        "value": _round(total) if count else None,
+        "days": count,
+        "color": _year_color(year, today),
+    }
+
+
 def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
                today: date, window: dict | None = None) -> None:
     if view == "year":
-        years = sorted({day.year for day in points})
-        payload["years"] = years
-        payload["labels"] = [str(year) for year in years]
-        # Totaux à date (comme le tableau) : l'année en cours est partielle,
-        # on borne donc chaque année au même jour de l'année.
-        totals = []
-        for year in years:
+        # Une barre par année : uniquement les années avec au moins une
+        # donnée sur la période comparée (année à date, l'année en cours
+        # reste partielle), 7 maximum — pas d'année vide ni de placeholder.
+        totals: dict[int, float] = {}
+        counts: dict[int, int] = {}
+        years = []
+        for year in sorted({day.year for day in points}):
             try:
                 limit = date(year, today.month, today.day)
             except ValueError:
                 limit = date(year, today.month, 28)
-            totals.append(
-                _round(
-                    sum(
-                        value for day, value in points.items()
-                        if day.year == year and day <= limit
-                    )
+            count = sum(
+                1 for day in points if day.year == year and day <= limit
+            )
+            if not count:
+                continue
+            years.append(year)
+            counts[year] = count
+            totals[year] = _round(
+                sum(
+                    value for day, value in points.items()
+                    if day.year == year and day <= limit
                 )
             )
-        payload["series"] = [
-            {"key": "total", "label": "Consommation", "values": totals}
-        ]
+        years = years[-7:]
+        payload["years"] = years
+        payload["labels"] = [str(year) for year in years]
+        series = []
+        for index, year in enumerate(years):
+            values = [None] * len(years)
+            values[index] = totals[year]
+            series.append({
+                "key": str(year),
+                "label": str(year),
+                "values": values,
+                "color": _year_color(year, today),
+            })
+        payload["series"] = series
+        payload["tooltip"] = {
+            "labels": payload["labels"],
+            "rows": [
+                [_tooltip_row(year, totals[year], counts[year], today)]
+                for year in years
+            ],
+        }
         return
 
     if view == "week":
-        # Fenêtre de 7 jours (lundi → dimanche) comparée d'année en année :
-        # une barre par jour calendaire, une série par année avec donnée dans
-        # la fenêtre. ``window`` expose des repères JJ/MM (affichage) et ISO
-        # (navigation côté client : comparaison lexicographique fiable).
+        # Une barre par semaine ISO (total de la semaine), une série par
+        # année avec donnée dans le bloc affiché. ``window`` expose des
+        # repères JJ/MM (affichage) et ISO (navigation côté client :
+        # comparaison lexicographique fiable).
         window = window or _week_window(points, month, None, today)
-        mdays = window["mdays"]
-        mdays_set = set(mdays)
+        weeks = window["weeks"]
+        mdays_set = {mday for week in weeks for mday in week["mdays"]}
         years = sorted(
             {day.year for day in points if (day.month, day.day) in mdays_set}
         )
         payload["years"] = years
-        payload["labels"] = [
-            f"{day_number:02d}/{month_number:02d}"
-            for month_number, day_number in mdays
-        ]
+        payload["labels"] = [week["label"] for week in weeks]
+        first_monday, last_sunday = weeks[0]["start"], weeks[-1]["end"]
         payload["window"] = {
-            "start": f"{window['days'][0].day:02d}/{window['days'][0].month:02d}",
-            "end": f"{window['days'][-1].day:02d}/{window['days'][-1].month:02d}",
-            "start_iso": window["days"][0].isoformat(),
-            "end_iso": window["days"][-1].isoformat(),
+            "start": f"{first_monday.day:02d}/{first_monday.month:02d}",
+            "end": f"{last_sunday.day:02d}/{last_sunday.month:02d}",
+            "start_iso": first_monday.isoformat(),
+            "end_iso": last_sunday.isoformat(),
+            "ref_iso": window["ref"].isoformat(),
             "first_iso": window["first"].isoformat(),
             "limit_iso": window["limit"].isoformat(),
             "month": window["month"],
             "iso_week": window["iso_week"],
             "size": window["size"],
             "label": window["label"],
+            "can_prev": window["can_prev"],
+            "can_next": window["can_next"],
         }
-        series = []
-        for year in years:
-            values = []
-            for month_number, day_number in mdays:
-                try:
-                    key = date(year, month_number, day_number)
-                except ValueError:
-                    # 29 février hors année bissextile.
-                    values.append(None)
-                    continue
-                values.append(_round(points[key]) if key in points else None)
-            series.append({"key": str(year), "label": str(year), "values": values})
-        payload["series"] = series
+        week_stats = []
+        for week in weeks:
+            stats = {}
+            for year in years:
+                total = 0.0
+                count = 0
+                for month_number, day_number in week["mdays"]:
+                    try:
+                        key = date(year, month_number, day_number)
+                    except ValueError:
+                        # 29 février hors année bissextile.
+                        continue
+                    if key in points:
+                        total += points[key]
+                        count += 1
+                stats[year] = (total, count)
+            week_stats.append(stats)
+        payload["series"] = [
+            {
+                "key": str(year),
+                "label": str(year),
+                "values": [
+                    _round(stats[year][0]) if stats[year][1] else None
+                    for stats in week_stats
+                ],
+                "color": _year_color(year, today),
+            }
+            for year in years
+        ]
+        payload["tooltip"] = {
+            "labels": payload["labels"],
+            "rows": [
+                [
+                    _tooltip_row(year, stats[year][0], stats[year][1], today)
+                    for year in years
+                ]
+                for stats in week_stats
+            ],
+        }
         return
 
     if view == "day":
@@ -601,46 +855,92 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
             if day.day not in day_numbers:
                 continue
             grouped[(day.year, day.day)] = grouped.get((day.year, day.day), 0.0) + value
-        series = []
-        for year in years:
-            values = [
-                _round(grouped[(year, day_number)])
-                if (year, day_number) in grouped else None
+        payload["series"] = [
+            {
+                "key": str(year),
+                "label": str(year),
+                "values": [
+                    _round(grouped[(year, day_number)])
+                    if (year, day_number) in grouped else None
+                    for day_number in window["days"]
+                ],
+                "color": _year_color(year, today),
+            }
+            for year in years
+        ]
+        payload["tooltip"] = {
+            "labels": payload["labels"],
+            "rows": [
+                [
+                    _tooltip_row(
+                        year,
+                        grouped.get((year, day_number)),
+                        1 if (year, day_number) in grouped else 0,
+                        today,
+                    )
+                    for year in years
+                ]
                 for day_number in window["days"]
-            ]
-            series.append({"key": str(year), "label": str(year), "values": values})
-        payload["series"] = series
+            ],
+        }
         return
 
-    # Vue mensuelle : 12 libellés, une série par année.
-    years = sorted({day.year for day in points})
+    # Vue mois : une barre par mois (total mensuel), une série par année.
+    window = window or _month_window(points, month, today.year, today)
+    columns = window["months"]
+    month_numbers = {column["month"] for column in columns}
+    years = sorted({day.year for day in points if day.month in month_numbers})
     payload["years"] = years
-    payload["labels"] = list(MONTH_SHORT)
-    grouped = {}
-    for day, value in points.items():
-        grouped[(day.year, day.month)] = grouped.get((day.year, day.month), 0.0) + value
-    series = []
-    for year in years:
-        values = [None] * 12
-        for month_number in range(1, 13):
-            total = grouped.get((year, month_number))
-            if total is not None:
-                values[month_number - 1] = _round(total)
-        series.append({"key": str(year), "label": str(year), "values": values})
-    payload["series"] = series
+    payload["labels"] = [column["label"] for column in columns]
+    payload["window"] = window
+    month_stats = []
+    for column in columns:
+        number = column["month"]
+        stats = {}
+        for year in years:
+            total = 0.0
+            count = 0
+            for day, value in points.items():
+                if day.year == year and day.month == number:
+                    total += value
+                    count += 1
+            stats[year] = (total, count)
+        month_stats.append(stats)
+    payload["series"] = [
+        {
+            "key": str(year),
+            "label": str(year),
+            "values": [
+                _round(stats[year][0]) if stats[year][1] else None
+                for stats in month_stats
+            ],
+            "color": _year_color(year, today),
+        }
+        for year in years
+    ]
+    payload["tooltip"] = {
+        "labels": payload["labels"],
+        "rows": [
+            [
+                _tooltip_row(year, stats[year][0], stats[year][1], today)
+                for year in years
+            ]
+            for stats in month_stats
+        ],
+    }
 
 
 def _period_totals(points: dict[date, float], view: str, month: int,
                    today: date, window: dict | None):
     """Renvoie (années concernées, total_par_année) pour la période de la vue.
 
-    ``total(year)`` -> ``(kwh, jours)`` calculé sur la période comparable :
+    ``total(year)`` -> ``(kwh, jours)`` calculé sur la période affichée :
 
     - ``day``   : les jours de la fenêtre affichée (mêmes jours du mois) ;
-    - ``week``  : les 7 jours de la fenêtre affichée (mêmes jours
-      calendaires, la semaine pouvant chevaucher deux mois) ;
-    - ``year``  : l'année complète (l'année en cours reste partielle) ;
-    - ``month`` : l'année à date (même date pour les années passées).
+    - ``week``  : les semaines du bloc affiché (mêmes jours calendaires,
+      la semaine pouvant chevaucher deux mois) ;
+    - ``month`` : les mois du bloc affiché (mêmes mois calendaires) ;
+    - ``year``  : l'année à date (l'année en cours reste partielle).
     """
     if view == "day":
         day_numbers = set(window["days"]) if window else None
@@ -667,9 +967,11 @@ def _period_totals(points: dict[date, float], view: str, month: int,
         return years, total
 
     if view == "week":
-        # Les 7 jours de la fenêtre affichée (paires mois/jour), comparés
+        # Les semaines du bloc affiché (paires mois/jour), comparées
         # d'année en année — exactement la période du graphique.
-        mdays = set(window["mdays"]) if window else set()
+        mdays = set()
+        if window:
+            mdays = {mday for week in window["weeks"] for mday in week["mdays"]}
 
         def total(year: int) -> tuple[float, int]:
             kwh = 0.0
@@ -689,7 +991,9 @@ def _period_totals(points: dict[date, float], view: str, month: int,
 
     if view == "year":
         # Comparaison à date : l'année en cours est partielle, on borne donc
-        # chaque année au même jour de l'année pour que l'écart N-1 ait un sens.
+        # chaque année au même jour de l'année pour que l'écart N-1 ait un
+        # sens. Seules les années avec données à date (comme les barres)
+        # sont retenues, 7 maximum.
         def total(year: int) -> tuple[float, int]:
             try:
                 limit = date(year, today.month, today.day)
@@ -704,23 +1008,29 @@ def _period_totals(points: dict[date, float], view: str, month: int,
             )
             return kwh, count
 
-        return {day.year for day in points}, total
+        years = {
+            year
+            for year in {day.year for day in points}
+            if total(year)[1]
+        }
+        return set(sorted(years)[-7:]), total
 
-    # month : année à date
+    # month : les mois du bloc affiché (mêmes mois calendaires), d'année en
+    # année — exactement la période du graphique.
+    month_numbers = set()
+    if window:
+        month_numbers = {column["month"] for column in window["months"]}
+
     def total(year: int) -> tuple[float, int]:
-        try:
-            limit = date(year, today.month, today.day)
-        except ValueError:
-            limit = date(year, today.month, 28)
         kwh = 0.0
         count = 0
         for day, value in points.items():
-            if day.year == year and day <= limit:
+            if day.year == year and day.month in month_numbers:
                 kwh += value
                 count += 1
         return kwh, count
 
-    return {day.year for day in points}, total
+    return {day.year for day in points if day.month in month_numbers}, total
 
 
 def _delta_pct(total: float, prev_total: float, prev_count: int) -> float | None:
@@ -757,12 +1067,14 @@ def _summary(points: dict[date, float], view: str, month: int,
 
     - ``day`` : la fenêtre affichée du mois sélectionné, dernière année
       avec données dans la fenêtre ;
-    - ``week`` : la semaine affichée (7 jours calendaires), dernière année
-      avec données dans la fenêtre ;
-    - ``year`` : la dernière année avec données ;
-    - ``month`` : l'année en cours, à date.
+    - ``week`` : le bloc de semaines affiché, dernière année avec données
+      dans le bloc ;
+    - ``month`` : le bloc de mois affiché, dernière année avec données
+      dans le bloc ;
+    - ``year`` : la dernière année avec données.
 
-    ``by_year`` décline le même calcul pour chaque année disponible.
+    ``by_year`` décline le même calcul pour chaque année affichée : les
+    années retenues et les totaux sont ceux du graphique.
     """
     empty = {
         "year": None,
@@ -802,7 +1114,7 @@ def _summary(points: dict[date, float], view: str, month: int,
             label = f"{MONTH_LONG[month - 1].capitalize()} {ref}"
             previous_label = f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"
     elif view == "week":
-        # La semaine affichée n'a pas toujours de données pour l'année en
+        # Le bloc affiché n'a pas toujours de données pour l'année en
         # cours (elle ne fait que commencer) : on compare alors la dernière
         # année qui en a. Le libellé reprend celui de la fenêtre.
         if years_scope:
@@ -818,10 +1130,11 @@ def _summary(points: dict[date, float], view: str, month: int,
         ref = max({day.year for day in points})
         label = f"Année {ref}"
         previous_label = f"Année {ref - 1}"
-    else:  # mois : année en cours, à date
-        ref = today.year
-        label = f"Année {ref}"
-        previous_label = f"Année {ref - 1}"
+    else:  # mois : bloc affiché, dernière année avec données dans le bloc
+        ref = max(years_scope) if years_scope else today.year
+        base = window["range_label"] if window else "Année"
+        label = f"{base} {ref}"
+        previous_label = f"{base} {ref - 1}"
 
     total, count = total_for(ref)
     prev_total, prev_count = total_for(ref - 1)

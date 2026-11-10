@@ -478,15 +478,17 @@ async function loadEnergy(refresh = false) {
     <div class="boot" style="min-height:160px"><span class="spinner"></span><p>Chargement de la consommation…</p></div>
   </div>`;
 
-  const isPeriod = energyView === "day" || energyView === "week";
+  const isNav = energyView !== "year";
   try {
     const payload = await get(
       `/api/energy${query({
         view: energyView,
-        // Les vues jour et semaine sont ancrées sur un mois + un jour :
-        // c'est ce couple qui pilote la navigation par flèches / glisser.
-        month: isPeriod ? energyMonth : undefined,
-        day: isPeriod ? energyDay : undefined,
+        // Les vues jour, semaine et mois sont ancrées sur un mois + un
+        // jour : c'est ce couple qui pilote la navigation par flèches /
+        // glisser (en vue mois, seuls le mois et l'année de la date
+        // comptent ; en vue semaine, le mois et le jour du mois).
+        month: isNav ? energyMonth : undefined,
+        day: isNav ? energyDay : undefined,
         days: energyView === "day" ? energyDays : undefined,
         // Synchro manuelle : force l'appel à Enedis au lieu du cache de 3 h.
         refresh: refresh ? 1 : undefined,
@@ -513,18 +515,19 @@ function paintEnergy(payload) {
   energyPayload = payload;
   const ok = Boolean(payload?.ok);
   const summary = payload?.summary || {};
-  const isDay = energyView === "day";
-  const isWeek = energyView === "week";
-  const isPeriod = isDay || isWeek;
+  const isNav = energyView !== "year";
+  const [prevLabel, nextLabel] = {
+    day: ["Jours précédents", "Jours suivants"],
+    week: ["Semaines précédentes", "Semaines suivantes"],
+    month: ["Mois précédents", "Mois suivants"],
+  }[energyView] || ["Précédent", "Suivant"];
 
-  // Le mois est placé entre les deux flèches : on change de semaine / de
-  // fenêtre de jours sans quitter le mois, et le libellé de période reste
-  // lisible juste en dessous.
-  const nav = isPeriod
+  // Le mois est placé entre les deux flèches : on change de bloc (7 jours,
+  // 7 semaines ou 7 mois) sans quitter le sélecteur, et le libellé de
+  // période reste lisible juste en dessous.
+  const nav = isNav
     ? `<div class="energy-nav">
-        <button class="icon-btn" type="button" id="energyPrev" aria-label="${
-          isWeek ? "Semaine précédente" : "Jours précédents"
-        }"${navDisabled(payload, -1) ? " disabled" : ""}>${icon("chevron-left", 18)}</button>
+        <button class="icon-btn" type="button" id="energyPrev" aria-label="${prevLabel}"${navDisabled(payload, -1) ? " disabled" : ""}>${icon("chevron-left", 18)}</button>
         <label class="energy-month">
           <span class="sr-only">Mois</span>
           <select class="select" id="energyMonth">
@@ -534,9 +537,7 @@ function paintEnergy(payload) {
             ).join("")}
           </select>
         </label>
-        <button class="icon-btn" type="button" id="energyNext" aria-label="${
-          isWeek ? "Semaine suivante" : "Jours suivants"
-        }"${navDisabled(payload, 1) ? " disabled" : ""}>${icon("chevron-right", 18)}</button>
+        <button class="icon-btn" type="button" id="energyNext" aria-label="${nextLabel}"${navDisabled(payload, 1) ? " disabled" : ""}>${icon("chevron-right", 18)}</button>
       </div>
       <div class="energy-period tiny muted">${escapeHtml(periodNavLabel(payload))}</div>`
     : "";
@@ -549,7 +550,7 @@ function paintEnergy(payload) {
       ).join("")}
     </div>
     ${
-      isPeriod
+      isNav
         ? `<span class="tiny muted energy-swipe-hint">${icon("calendar-days", 14)} Glisser sur le graphique</span>`
         : ""
     }
@@ -612,6 +613,13 @@ function paintEnergy(payload) {
     button.addEventListener("click", () => {
       energyView = button.dataset.energyView;
       writePref("stats.energyView", energyView);
+      // La vue mois déplace energyDay dans le temps (année incluse) : en
+      // revenant aux vues jour / semaine, on repart sur l'année courante.
+      const date = parseDate(energyDay);
+      if (date && date.getFullYear() !== new Date().getFullYear()) {
+        energyDay = defaultEnergyDay(energyMonth);
+        writePref("stats.energyDay", energyDay);
+      }
       loadEnergy();
     });
   });
@@ -634,10 +642,11 @@ function paintEnergy(payload) {
 
   const barWrap = host.querySelector(".chart-wrap");
   if (barWrap) {
-    attachBarTooltip(barWrap, { unit: "kWh" });
-    // En vue jour / semaine, un glisser horizontal sur la courbe change de
-    // période — même geste qu'un défilement en restant appuyé.
-    if (isPeriod) attachEnergyDrag(barWrap);
+    // Clic sur une barre : tableau des années pour la période cliquée.
+    attachBarTooltip(barWrap, { unit: "kWh", table: payload?.tooltip });
+    // En vue jour / semaine / mois, un glisser horizontal sur la courbe
+    // change de bloc — même geste qu'un défilement en restant appuyé.
+    if (isNav) attachEnergyDrag(barWrap);
   }
 }
 
@@ -652,12 +661,15 @@ function defaultEnergyDay(month) {
 
 function shiftEnergy(direction) {
   if (energyView === "week") shiftEnergyWeek(direction);
+  else if (energyView === "month") shiftEnergyMonth(direction);
   else if (energyView === "day") shiftEnergyDay(direction * energyDays);
 }
 
 function shiftEnergyWeek(direction) {
+  // On change de semaine de référence (±1 semaine) : le bloc de 7
+  // semaines affiché la suit.
   const window_ = energyPayload?.window;
-  const base = parseDate(window_?.start_iso);
+  const base = parseDate(window_?.ref_iso || window_?.start_iso);
   if (!base || !window_) return;
 
   let target = addDays(base, direction * 7);
@@ -667,11 +679,32 @@ function shiftEnergyWeek(direction) {
   if (limit && target > limit) target = limit;
 
   const iso = isoDay(target);
-  if (iso === window_.start_iso) return;
+  if (iso === window_.ref_iso) return;
   energyDay = iso;
   energyMonth = target.getMonth() + 1;
   writePref("stats.energyDay", energyDay);
   writePref("stats.energyMonth", energyMonth);
+  loadEnergy();
+}
+
+function shiftEnergyMonth(direction) {
+  // On change de mois de référence (±1 mois) : le bloc de 7 mois la suit.
+  // energyDay porte l'année (la navigation peut franchir le 1er janvier).
+  const window_ = energyPayload?.window;
+  const current = parseDate(energyDay) || new Date();
+  const target = new Date(
+    current.getFullYear(),
+    current.getMonth() + direction,
+    1
+  );
+  const key = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}`;
+  // Bornes de navigation calculées par le serveur (YYYY-MM).
+  if (window_?.first && key < window_.first) return;
+  if (window_?.limit && key > window_.limit) return;
+  energyMonth = target.getMonth() + 1;
+  energyDay = isoDay(target);
+  writePref("stats.energyMonth", energyMonth);
+  writePref("stats.energyDay", energyDay);
   loadEnergy();
 }
 
@@ -691,11 +724,9 @@ function shiftEnergyDay(delta) {
 function navDisabled(payload, direction) {
   const window_ = payload?.window;
   if (!window_) return true;
-  if (payload.view === "week") {
-    if (!window_.start_iso) return true;
-    return direction < 0
-      ? window_.start_iso <= window_.first_iso
-      : window_.start_iso >= window_.limit_iso;
+  if (payload.view === "week" || payload.view === "month") {
+    // Le serveur sait si le bloc voisin contient des données.
+    return direction < 0 ? !window_.can_prev : !window_.can_next;
   }
   if (payload.view === "day") {
     return direction < 0 ? window_.start <= 1 : window_.end >= window_.limit;
@@ -707,6 +738,7 @@ function periodNavLabel(payload) {
   const window_ = payload?.window;
   if (!window_) return "";
   if (payload.view === "week") return window_.label || "";
+  if (payload.view === "month") return window_.label || "";
   if (payload.view === "day") return dayWindowLabel(window_, energyDay);
   return "";
 }
@@ -793,9 +825,18 @@ function energyTable(payload) {
 
   const view = payload.view;
   const window_ = payload.window || null;
-  const firstHeader = view === "week" ? "Semaine" : view === "day" ? "Jour" : "Année";
+  const firstHeader = {
+    week: "Semaines",
+    day: "Jour",
+    month: "Mois",
+    year: "Année",
+  }[view] || "Période";
   const valueHeader =
-    view === "week" ? "Conso semaine" : view === "day" ? "Conso jour" : "Consommation";
+    view === "week" || view === "month"
+      ? "Total période"
+      : view === "day"
+        ? "Conso jour"
+        : "Consommation";
   const partial = summary.partial
     ? `<p class="hint mt-2">Totaux à date : l’année en cours n’est pas terminée, la comparaison porte sur la même période.</p>`
     : "";
@@ -825,6 +866,9 @@ function energyTable(payload) {
 function periodRowLabel(view, year, window_) {
   if (view === "week" && window_) {
     return `<span class="period-name">${escapeHtml(window_.label || `Semaine ${window_.iso_week || ""}`)}</span><span class="period-year">${year}</span>`;
+  }
+  if (view === "month" && window_) {
+    return `<span class="period-name">${escapeHtml(window_.range_label || window_.label || "")}</span><span class="period-year">${year}</span>`;
   }
   if (view === "day" && window_) {
     return `<span class="period-name">${escapeHtml(dayWindowLabel(window_, energyDay, year))}</span><span class="period-year">${year}</span>`;
@@ -883,6 +927,6 @@ function energySubtitle(payload) {
     const label = payload.window?.label || view;
     return `${label} · comparaison par année`;
   }
-  if (payload.view === "year") return `${view} · total annuel`;
+  if (payload.view === "year") return `${view} · total à date · comparaison par année`;
   return `${view} · comparaison par année`;
 }
