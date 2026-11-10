@@ -58,6 +58,7 @@ let energyView = readPref("stats.energyView", "month");
 let energyMonth = Number(readPref("stats.energyMonth", new Date().getMonth() + 1));
 let energyDay = readPref("stats.energyDay", todayIso());
 let energyDays = Number(readPref("stats.energyDays", 7));
+let energyInitial = true;
 let energyRequestId = 0;
 let energyPayload = null;
 let temperatureTooltipAbort = null;
@@ -488,7 +489,7 @@ async function loadEnergy(refresh = false) {
         // glisser (en vue mois, seuls le mois et l'année de la date
         // comptent ; en vue semaine, le mois et le jour du mois).
         month: isNav ? energyMonth : undefined,
-        day: isNav ? energyDay : undefined,
+        day: isNav && !energyInitial ? energyDay : undefined,
         days: energyView === "day" ? energyDays : undefined,
         // Synchro manuelle : force l'appel à Enedis au lieu du cache de 3 h.
         refresh: refresh ? 1 : undefined,
@@ -496,6 +497,7 @@ async function loadEnergy(refresh = false) {
     );
     if (id !== energyRequestId) return;
     energyPayload = payload;
+    energyInitial = false;
     paintEnergy(payload);
   } catch (err) {
     if (id !== energyRequestId) return;
@@ -612,6 +614,7 @@ function paintEnergy(payload) {
   host.querySelectorAll("[data-energy-view]").forEach((button) => {
     button.addEventListener("click", () => {
       energyView = button.dataset.energyView;
+      energyInitial = true;
       writePref("stats.energyView", energyView);
       // La vue mois déplace energyDay dans le temps (année incluse) : en
       // revenant aux vues jour / semaine, on repart sur l'année courante.
@@ -626,6 +629,7 @@ function paintEnergy(payload) {
 
   host.querySelector("#energyMonth")?.addEventListener("change", (event) => {
     energyMonth = Number(event.target.value) || new Date().getMonth() + 1;
+    energyInitial = true;
     // Ouvre la fin du mois choisi (les 7 derniers jours disponibles), plutôt
     // que le 1er qui ne montrait qu'une journée.
     energyDay = defaultEnergyDay(energyMonth);

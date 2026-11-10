@@ -269,22 +269,14 @@ function addThemeButton() {
 async function refreshWeather() {
   try {
     const data = await fetch("/api/weather").then((r) => r.json());
-    const pill = $("#weatherPill");
-    if (!pill) return;
     if (data?.ok && data.temp !== null && data.temp !== undefined) {
-      const temp = Math.round(data.temp);
-      pill.innerHTML = `${icon(weatherIconName(data.code), 15)} ${temp} °C`;
-      pill.title = `Température extérieure · ${data.source || ""}`;
-      pill.hidden = false;
       window.mecasaWeather = data;
     } else {
-      pill.hidden = true;
       window.mecasaWeather = null;
     }
   } catch (err) {
     console.warn("[mecasa] weather", err);
-    const pill = $("#weatherPill");
-    if (pill) pill.innerHTML = `${icon("cloud", 15)} —`;
+    window.mecasaWeather = null;
   }
 }
 

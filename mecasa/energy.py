@@ -425,19 +425,19 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
     limit = max_day
     if today.month == month:
         limit = min(limit, today.day)
-        if selected:
-            # Mois en cours : on s'arrête à la dernière donnée de cette
-            # année. Une donnée ancienne (ex. le 30 novembre de l'an dernier)
-            # ne doit pas laisser apparaître un jour encore sans relevé
-            # (ex. le 10 novembre alors que la consommation du 10 n'est pas
-            # encore disponible).
+    # Chargement initial (pas de jour de référence fourni) : on borne la
+    # fenêtre au dernier jour avec donnée, pour ne pas afficher une fenêtre
+    # entièrement vide. Navigation (jour de référence fourni) : on laisse
+    # la fenêtre aller jusqu'à la fin du mois (ou aujourd'hui pour le mois
+    # en cours), afin de pouvoir se déplacer jour par jour même au-delà de
+    # la dernière donnée.
+    if ref_day is None and selected:
+        if today.month == month:
             current = [day.day for day in selected if day.year == today.year]
             if current:
                 limit = min(limit, max(current))
-    elif selected:
-        # Mois passé : la comparaison porte sur le dernier jour disponible,
-        # toutes années confondues.
-        limit = min(limit, max(day.day for day in selected))
+        else:
+            limit = min(limit, max(day.day for day in selected))
     limit = max(1, limit)
     end = min(max(ref_day or limit, 1), limit)
     start = max(1, end - size + 1)
