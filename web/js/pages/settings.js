@@ -392,7 +392,7 @@ function devicesSection() {
     "thermometer",
     `<p class="hint">Les appareils sont découverts depuis Atlantic (Cozytouch) ou le Hub Wiser. Tu peux les renommer, les affecter à une pièce et couper leur pilotage. Chaque système garde ses propres réglages et sa liste d'appareils.</p>
 
-    <details class="stack" style="gap:14px" open>
+    <details class="stack" style="gap:14px">
       <summary class="card-title" style="cursor:pointer">${icon("thermometer", 16)} Cozytouch / Atlantic</summary>
       <div id="sec-atlantic" class="stack" style="gap:14px;margin-top:8px">
         <h3 class="card-title" style="margin-top:6px;display:none">Cozytouch / Atlantic</h3>
@@ -827,7 +827,8 @@ function bind() {
   // Laisse la place au bandeau supérieur pour que le titre de la section
   // reste visible après le défilement.
   const topbar = document.querySelector(".topbar, header, .app-bar, .navbar");
-  const offset = (topbar?.offsetHeight || 64) + 12;
+  const settingsNav = document.querySelector(".settings-nav");
+  const offset = (topbar?.offsetHeight || 64) + (settingsNav?.offsetHeight || 40) + 16;
   const top = target.getBoundingClientRect().top + window.scrollY - offset;
   window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
 }
