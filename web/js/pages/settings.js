@@ -388,6 +388,7 @@ function roomsSection() {
 
 function devicesSection() {
   const cfg_ = cfg();
+  const atlanticConfigured = Boolean(cfg_.email || cfg_.password_set);
   return section(
     "devices",
     "Appareils",
