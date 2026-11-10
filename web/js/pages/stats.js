@@ -732,22 +732,16 @@ function navDisabled(payload, direction) {
   const window_ = payload?.window;
   if (!window_) return true;
   if (payload.view === "week" || payload.view === "month") {
-    // Le serveur sait si le bloc voisin contient des données.
-    return direction < 0 ? !window_.can_prev : !window_.can_next;
+    // Navigation libre : on peut toujours se déplacer ; le serveur borne
+    // la cible via first/limit si elle dépasse la plage disponible.
+    return false;
   }
   if (payload.view === "day") {
-    const now = new Date();
-    const cur = parseDate(energyDay) || now;
-    const isCurrentMonth =
-      cur.getFullYear() === now.getFullYear() &&
-      cur.getMonth() === now.getMonth();
-    if (direction < 0) {
-      // On peut reculer tant qu'on n'est pas au 1er janvier de la première
-      // année disponible (approximation : janvier).
-      return energyMonth === 1 && window_.start <= 1;
-    }
-    // On peut avancer tant qu'on n'est pas au mois courant ET à la fin.
-    return isCurrentMonth && window_.end >= window_.limit;
+    // Navigation libre : on peut toujours se déplacer, y compris au-delà
+    // des frontières de mois (le changement de mois se fait dans
+    // shiftEnergyDay). Le serveur renvoie une erreur si le mois cible n'a
+    // aucune donnée, mais la navigation reste possible.
+    return false;
   }
   return false;
 }
