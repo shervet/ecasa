@@ -861,7 +861,7 @@ function paintRooms() {
       }
       deviceSelect += "</select>";
     } else {
-      deviceSelect = '<span class="tiny muted">' + escapeHtml(t.device?.name || "") + '</span>';
+      deviceSelect = '<span class="tiny muted">' + escapeHtml(t.device?.name || "") + ' · Semaine ' + escapeHtml(week) + '</span>';
     }
 
     // model select
