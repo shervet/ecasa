@@ -501,6 +501,17 @@ async function loadEnergy(refresh = false) {
     if (id !== energyRequestId) return;
     energyPayload = payload;
     energyInitial = false;
+    // Synchronise energyDay/energyMonth avec la fenêtre réellement affichée
+    // pour éviter toute désynchronisation lors de la navigation.
+    if (payload?.ok && payload.view === "day" && payload.window?.end) {
+      const now = new Date();
+      let year = now.getFullYear();
+      if (payload.month > now.getMonth() + 1) year -= 1;
+      energyDay = isoDay(new Date(year, payload.month - 1, payload.window.end));
+      energyMonth = payload.month;
+      writePref("stats.energyDay", energyDay);
+      writePref("stats.energyMonth", energyMonth);
+    }
     paintEnergy(payload);
   } catch (err) {
     if (id !== energyRequestId) return;
@@ -717,14 +728,16 @@ function shiftEnergyMonth(direction) {
 
 function shiftEnergyDay(delta) {
   // Le serveur raisonne en numéro de jour dans le mois sélectionné, mais la
-  // navigation doit pouvoir traverser la frontière du mois : quand le calcul
-  // dépasse la fin (ou le début) du mois courant, on change de mois (et
-  // d'année si besoin) au lieu de bloquer sur le dernier (ou le premier) jour.
+  // navigation doit pouvoir traverser la frontière du mois. On ancre sur la
+  // fin de la fenêtre affichée (et non sur energyDay qui peut être désynchronisé)
+  // pour garantir un défilement jour par jour sans saut.
+  const window_ = energyPayload?.window;
   const current = parseDate(energyDay) || new Date();
+  const anchorDay = window_?.end || current.getDate();
   const target = new Date(
     current.getFullYear(),
     current.getMonth(),
-    current.getDate() + delta
+    anchorDay + delta
   );
   energyMonth = target.getMonth() + 1;
   const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
