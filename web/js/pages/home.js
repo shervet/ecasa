@@ -137,11 +137,11 @@ function paintHero() {
       <div class="row wrap" style="gap:6px">
         ${state.status?.mock ? '<span class="pill pill-warn">Simulation</span>' : '<span class="pill pill-ok">Réel</span>'}
         <span class="pill pill-ghost">${state.status?.running ? "Moteur actif" : "Moteur arrêté"}</span>
-        ${weather ? `<span class="pill pill-ghost">${icon("cloud", 13)} Extérieur ${fmtTemp(weather.temp)} °C</span>` : ""}
+        ${weather ? `<button class="pill pill-ghost" type="button" id="weatherToggle">${icon("cloud", 13)} Extérieur ${fmtTemp(weather.temp)} °C</button>` : ""}
       </div>
     </div>
     ${weather ? `
-      <div class="weather-card">
+      <div id="weatherBox" class="weather-card" style="display:none">
         <div class="weather-head">
           <div>
             <div class="card-title">${icon("cloud-sun", 17)} Météo de la semaine</div>
@@ -172,6 +172,14 @@ function paintHero() {
       <div class="hero-stat"><div class="v">${state.status?.last_poll ? fmtTime(state.status.last_poll) : "—"}</div><div class="l">Dernière lecture</div></div>
     </div>
   `;
+  const toggle = document.getElementById("weatherToggle");
+  const box = document.getElementById("weatherBox");
+  if (toggle && box) {
+    toggle.addEventListener("click", () => {
+      const open = box.style.display !== "none";
+      box.style.display = open ? "none" : "";
+    });
+  }
 }
 
 function paintStrip() {

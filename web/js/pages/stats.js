@@ -709,14 +709,21 @@ function shiftEnergyMonth(direction) {
 }
 
 function shiftEnergyDay(delta) {
-  // Le serveur raisonne en numéro de jour dans le mois sélectionné :
-  // on borne donc le jour au mois courant avant de demander la fenêtre.
+  // Le serveur raisonne en numéro de jour dans le mois sélectionné, mais la
+  // navigation doit pouvoir traverser la frontière du mois : quand le calcul
+  // dépasse la fin (ou le début) du mois courant, on change de mois (et
+  // d'année si besoin) au lieu de bloquer sur le dernier (ou le premier) jour.
   const current = parseDate(energyDay) || new Date();
-  const year = current.getFullYear();
-  const month = (energyMonth || 1) - 1;
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const day = Math.min(Math.max(current.getDate() + delta, 1), lastDay);
-  energyDay = isoDay(new Date(year, month, day));
+  const target = new Date(
+    current.getFullYear(),
+    current.getMonth(),
+    current.getDate() + delta
+  );
+  energyMonth = target.getMonth() + 1;
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  const day = Math.min(Math.max(target.getDate(), 1), lastDay);
+  energyDay = isoDay(new Date(target.getFullYear(), target.getMonth(), day));
+  writePref("stats.energyMonth", energyMonth);
   writePref("stats.energyDay", energyDay);
   loadEnergy();
 }
@@ -729,7 +736,18 @@ function navDisabled(payload, direction) {
     return direction < 0 ? !window_.can_prev : !window_.can_next;
   }
   if (payload.view === "day") {
-    return direction < 0 ? window_.start <= 1 : window_.end >= window_.limit;
+    const now = new Date();
+    const cur = parseDate(energyDay) || now;
+    const isCurrentMonth =
+      cur.getFullYear() === now.getFullYear() &&
+      cur.getMonth() === now.getMonth();
+    if (direction < 0) {
+      // On peut reculer tant qu'on n'est pas au 1er janvier de la première
+      // année disponible (approximation : janvier).
+      return energyMonth === 1 && window_.start <= 1;
+    }
+    // On peut avancer tant qu'on n'est pas au mois courant ET à la fin.
+    return isCurrentMonth && window_.end >= window_.limit;
   }
   return false;
 }

@@ -148,7 +148,7 @@ export default {
       ["rooms", "Pièces"],
       ["weather", "Météo"],
       ["devices", "Appareils"],
-      ...(atlanticConfigured ? [["climate", "Clim"]] : []),
+      /* Clim fusionné dans Appareils : plus de section séparée. */
       ["pronote", "Pronote"],
       ["server", "Serveur"],
       ["tailscale", "Tailscale"],
@@ -192,7 +192,7 @@ export default {
           ${roomsSection()}
           ${weatherSection()}
           ${devicesSection()}
-          ${atlanticConfigured ? climateSection() : ""}
+          /* Clim intégré dans devicesSection() */
           ${pronoteSection()}
           ${serverSection()}
           ${tailscaleSection()}
@@ -410,7 +410,50 @@ function devicesSection() {
         toggle("mock", Boolean(cfg_.mock))
       )}
       <div class="hint" id="atlanticTestResult"></div>
-      <div class="stack" id="atlanticDevicesList"></div>
+
+      ${atlanticConfigured ? `
+      <details class="card card-pad" style="margin-top:8px" open>
+        <summary class="card-title" style="cursor:pointer">${icon("fan", 16)} Réglages climatisation (soufflerie / orientation)</summary>
+        <div class="stack mt-2" style="gap:10px">
+          ${selectRow(
+            "Soufflerie par défaut",
+            "atlantic_fan_default",
+            String((store.state?.settings || {}).atlantic_fan_default ?? ""),
+            [
+              ["", "Inchangée (télécommande)"],
+              ["auto", "Automatique"],
+              ["low", "Basse"],
+              ["med", "Moyenne"],
+              ["high", "Haute"],
+            ],
+            { sub: "Vitesse appliquée quand MeCasa pilote la clim." }
+          )}
+          ${selectRow(
+            "Orientation du flux d'air",
+            "atlantic_airflow_default",
+            String((store.state?.settings || {}).atlantic_airflow_default ?? ""),
+            [
+              ["", "Inchangée (télécommande)"],
+              ["swing", "Balayage automatique"],
+              ["pos1", "Position 1 (vers le haut)"],
+              ["pos2", "Position 2"],
+              ["pos3", "Position 3"],
+              ["pos4", "Position 4"],
+              ["pos5", "Position 5"],
+              ["pos6", "Position 6 (vers le bas)"],
+            ],
+            { sub: "Position fixe des volets ou balayage." }
+          )}
+          <div class="row wrap" style="gap:8px">
+            <button class="btn btn-primary" type="button" data-save="climate">${icon("save", 16)} Enregistrer</button>
+          </div>
+        </div>
+      </details>` : ""}
+
+      <details class="stack" style="margin-top:8px" open>
+        <summary class="card-title" style="cursor:pointer">${icon("thermometer", 16)} Appareils Atlantic</summary>
+        <div class="stack" id="atlanticDevicesList" style="margin-top:8px"></div>
+      </details>
       <div class="row wrap" style="gap:8px;margin-top:4px">
         <button class="btn" type="button" data-test="atlantic">${icon("shield", 16)} Tester</button>
         <button class="btn btn-primary" type="button" data-save="atlantic">${icon("save", 16)} Enregistrer</button>
@@ -434,7 +477,10 @@ function devicesSection() {
       )}
       ${row("Effacer le secret", "Nécessaire si le Hub a été réinitialisé.", toggle("wiser_secret_clear", false))}
       <div class="stack" id="wiserResults"></div>
-      <div class="stack" id="wiserDevicesList"></div>
+      <details class="stack" style="margin-top:8px" open>
+        <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} Appareils Wiser</summary>
+        <div class="stack" id="wiserDevicesList" style="margin-top:8px"></div>
+      </details>
       <div class="row wrap" style="gap:8px;margin-top:4px">
         <button class="btn" type="button" id="wiserImportPrograms">${icon("download", 16)} Import programmes</button>
         <button class="btn btn-primary" type="button" data-save="wiser">${icon("save", 16)} Enregistrer</button>
@@ -765,6 +811,7 @@ function tailscaleSection() {
         <button class="btn btn-sm" type="button" id="tsUp">${icon("wifi", 14)} Connecter</button>
         <button class="btn btn-sm" type="button" id="tsServeOn">${icon("external", 14)} Publier</button>
         <button class="btn btn-sm" type="button" id="tsServeOff">${icon("x", 14)} Dépublier</button>
+        <button class="btn btn-sm" type="button" id="tsInstall">${icon("download", 14)} Installer / désinstaller</button>
       </div>
       <p class="hint mt-2">« Dépublier » coupe l'accès via l'URL HTTPS : pour republier depuis un autre appareil, ouvre MeCasa sur le réseau local (port 8780).</p>
     </div>`,
@@ -779,7 +826,14 @@ function bind() {
     link.addEventListener("click", (event) => {
       event.preventDefault();
       const target = root.querySelector(`#sec-${link.dataset.jump}`);
-      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (target) {
+  // Laisse la place au bandeau supérieur pour que le titre de la section
+  // reste visible après le défilement.
+  const topbar = document.querySelector(".topbar, header, .app-bar, .navbar");
+  const offset = (topbar?.offsetHeight || 64) + 12;
+  const top = target.getBoundingClientRect().top + window.scrollY - offset;
+  window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+}
       root.querySelectorAll("[data-jump]").forEach((item) => item.classList.toggle("is-active", item === link));
     });
   });
@@ -929,6 +983,10 @@ function bind() {
   root.querySelector("#tsUp")?.addEventListener("click", () => tailscaleAction("up"));
   root.querySelector("#tsServeOn")?.addEventListener("click", () => tailscaleAction("serve/enable"));
   root.querySelector("#tsServeOff")?.addEventListener("click", () => tailscaleAction("serve/disable"));
+root.querySelector("#tsInstall")?.addEventListener("click", () => {
+  const installed = Boolean(tailscale?.installed);
+  tailscaleAction(installed ? "uninstall" : "install");
+});
 
   root.querySelector("#hostPicker")?.querySelectorAll("[data-host]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2113,6 +2171,10 @@ function renderTailscale() {
   const hostWarning = wrongHost
     ? `<p class="hint is-bad mt-1">Cette page est ouverte via <strong>${escapeHtml(pageHost)}</strong>, alors que le nœud Tailscale est <strong>${escapeHtml(nodeDns)}</strong>. Les actions risquent d'échouer (erreur 501) : utilise ${url ? `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>` : "l'URL du nœud"}.</p>`
     : "";
+  const installBtn = root?.querySelector("#tsInstall");
+  if (installBtn) {
+    installBtn.innerHTML = `${icon("download", 14)} ${data?.installed ? "Désinstaller Tailscale" : "Installer Tailscale"}`;
+  }
   host.innerHTML = `
     <div class="row-between">
       <span class="tiny muted">État</span>
@@ -2145,7 +2207,13 @@ function renderTailscale() {
 }
 
 async function tailscaleAction(path) {
-  const button = root?.querySelector(path === "up" ? "#tsUp" : path === "serve/enable" ? "#tsServeOn" : "#tsServeOff");
+  const button = root?.querySelector(
+  path === "up" ? "#tsUp"
+    : path === "serve/enable" ? "#tsServeOn"
+    : path === "serve/disable" ? "#tsServeOff"
+    : path === "install" || path === "uninstall" ? "#tsInstall"
+    : "#tsServeOff"
+);
   if (button) button.disabled = true;
   let failure = null;
   try {
@@ -2157,6 +2225,12 @@ async function tailscaleAction(path) {
         type: "info",
         timeout: 7000,
       });
+    } else if (path === "install" || path === "uninstall") {
+      const message = payload.detail || payload.output || "Terminé.";
+      toast(message, { type: payload.ok ? "info" : "error", timeout: 10000 });
+      if (payload.command && !payload.ok) {
+        toast(`Commande : ${payload.command}`, { type: "info", timeout: 12000 });
+      }
     } else {
       const message = payload.url
         ? `Publié : ${payload.url}`

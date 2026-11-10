@@ -241,6 +241,10 @@ const tooltipOwners = new WeakMap();
 /** Supprime les bulles dont le graphique a été remplacé par un rendu. */
 function purgeTooltips() {
   document.querySelectorAll(".chart-tooltip").forEach((tip) => {
+    // Seules les bulles créées par attachBarTooltip sont suivies dans la
+    // WeakMap : les autres (tooltip température, etc.) ne doivent pas être
+    // supprimées.
+    if (!tooltipOwners.has(tip)) return;
     const owner = tooltipOwners.get(tip);
     if (owner && owner.isConnected) return;
     tooltipOwners.delete(tip);

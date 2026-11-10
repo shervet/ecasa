@@ -1375,6 +1375,42 @@ def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
     return result
 
 
+def tailscale_install() -> dict:
+    import platform as _platform
+    system = _platform.system().lower()
+    if system == "linux":
+        code, detail = _run(
+            ["sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
+            timeout=300,
+        )
+        if code != 0:
+            return {"ok": False, "detail": detail or ("code %d" % code), "command": "curl -fsSL https://tailscale.com/install.sh | sh"}
+        return {"ok": True, "detail": detail or "Tailscale installe"}
+    if system == "darwin":
+        return {"ok": False, "detail": "Installation manuelle requise sur macOS.", "command": "brew install --cask tailscale"}
+    if system == "windows":
+        return {"ok": False, "detail": "Installation manuelle requise sur Windows.", "command": "winget install -e --id Tailscale.Tailscale"}
+    return {"ok": False, "detail": "Systeme non pris en charge.", "command": ""}
+
+
+def tailscale_uninstall() -> dict:
+    import platform as _platform
+    system = _platform.system().lower()
+    if system == "linux":
+        code, detail = _run(
+            ["sh", "-c", "apt-get remove -y tailscale || dnf remove -y tailscale"],
+            timeout=300,
+        )
+        if code != 0:
+            return {"ok": False, "detail": detail or ("code %d" % code), "command": "sudo apt-get remove -y tailscale"}
+        return {"ok": True, "detail": detail or "Tailscale desinstalle"}
+    if system == "darwin":
+        return {"ok": False, "detail": "Desinstallation manuelle requise sur macOS.", "command": "brew uninstall --cask tailscale"}
+    if system == "windows":
+        return {"ok": False, "detail": "Desinstallation manuelle requise sur Windows.", "command": "winget uninstall -e --id Tailscale.Tailscale"}
+    return {"ok": False, "detail": "Systeme non pris en charge.", "command": ""}
+
+
 def apply_tailscale_startup(config: dict) -> dict:
     """Au démarrage : connecte le nœud et publie MeCasa si demandé.
 
@@ -2138,6 +2174,22 @@ class Handler(BaseHTTPRequestHandler):
                     })
                     return
                 self._json(200, tailscale_up(authkey, hostname=hostname))
+            except Exception as err:  # noqa: BLE001
+                self._json(500, {"error": str(err)})
+            return
+
+        if method == "POST" and path == "/api/tailscale/install":
+            try:
+                result = tailscale_install()
+                self._json(200, result)
+            except Exception as err:  # noqa: BLE001
+                self._json(500, {"error": str(err)})
+            return
+
+        if method == "POST" and path == "/api/tailscale/uninstall":
+            try:
+                result = tailscale_uninstall()
+                self._json(200, result)
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
             return
