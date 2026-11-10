@@ -43,6 +43,9 @@ sudo journalctl -u mecasa -f
 
 Le service redémarre tout seul et survit aux coupures de courant.
 
+Arrêt manuel : ./stop.sh (Linux/macOS) ou stop.bat (Windows) arrête MeCasa,
+pm2, les unités systemd Node et le conteneur MyElectricalData local.
+
 ## Configuration
 
 Au premier lancement, `config.json` est créé depuis les valeurs par défaut.
