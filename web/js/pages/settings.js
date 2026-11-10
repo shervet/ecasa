@@ -411,7 +411,7 @@ function devicesSection() {
       <div class="hint" id="atlanticTestResult"></div>
 
       ${Boolean(cfg_.email || cfg_.password_set) ? `
-      <details class="card card-pad" style="margin-top:8px" open>
+      <details class="card card-pad" style="margin-top:8px">
         <summary class="card-title" style="cursor:pointer">${icon("fan", 16)} Réglages climatisation (soufflerie / orientation)</summary>
         <div class="stack mt-2" style="gap:10px">
           ${selectRow(
@@ -449,10 +449,7 @@ function devicesSection() {
         </div>
       </details>` : ""}
 
-      <details class="stack" style="margin-top:8px" open>
-        <summary class="card-title" style="cursor:pointer">${icon("thermometer", 16)} Appareils Atlantic</summary>
-        <div class="stack" id="atlanticDevicesList" style="margin-top:8px"></div>
-      </details>
+      <!-- Liste des appareils Atlantic retirée : gérée ailleurs. -->
       <div class="row wrap" style="gap:8px;margin-top:4px">
         <button class="btn" type="button" data-test="atlantic">${icon("shield", 16)} Tester</button>
         <button class="btn btn-primary" type="button" data-save="atlantic">${icon("save", 16)} Enregistrer</button>
@@ -461,11 +458,12 @@ function devicesSection() {
       </div>
     </div>
 
-    <div id="sec-wiser" class="stack" style="gap:14px;margin-top:18px">
-      <div class="row-between" style="align-items:center;gap:8px">
-        <h3 class="card-title">${icon("hub", 16)} Schneider Wiser</h3>
-        <button class="btn btn-sm" type="button" id="wiserFind">${icon("wifi", 16)} Chercher le Hub</button>
-      </div>
+    <details class="stack" style="margin-top:18px">
+      <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} Schneider Wiser</summary>
+      <div id="sec-wiser" class="stack" style="gap:14px;margin-top:8px">
+        <div class="row-between" style="align-items:center;gap:8px">
+          <button class="btn btn-sm" type="button" id="wiserFind">${icon("wifi", 16)} Chercher le Hub</button>
+        </div>
       ${row("Activer Wiser", "Pilote aussi les zones du Hub Wiser.", toggle("wiser_enabled", Boolean(cfg_.wiser_enabled)))}
       ${textRow("Adresse du Hub", "wiser_host", cfg_.wiser_host, { placeholder: "http://192.168.1.20", sub: "Adresse IP ou nom du Hub sur le réseau local." })}
       ${row(
@@ -476,7 +474,7 @@ function devicesSection() {
       )}
       ${row("Effacer le secret", "Nécessaire si le Hub a été réinitialisé.", toggle("wiser_secret_clear", false))}
       <div class="stack" id="wiserResults"></div>
-      <details class="stack" style="margin-top:8px" open>
+      <details class="stack" style="margin-top:8px">
         <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} Appareils Wiser</summary>
         <div class="stack" id="wiserDevicesList" style="margin-top:8px"></div>
       </details>
@@ -484,8 +482,7 @@ function devicesSection() {
         <button class="btn" type="button" id="wiserImportPrograms">${icon("download", 16)} Import programmes</button>
         <button class="btn btn-primary" type="button" data-save="wiser">${icon("save", 16)} Enregistrer</button>
       </div>
-    </div>`,
-    ``
+    </details>` ,
   );
 }
 
@@ -1680,7 +1677,7 @@ function openRoomEditor(room) {
 function renderDevices() {
   const atlanticHost = root?.querySelector("#atlanticDevicesList");
   const wiserHost = root?.querySelector("#wiserDevicesList");
-  if (!atlanticHost || !wiserHost) return;
+  if (!wiserHost) return;
   const state = store.state;
   if (!state) {
     atlanticHost.innerHTML = `<div class="skeleton" style="height:60px"></div>`;
@@ -1752,10 +1749,12 @@ function renderDevices() {
     });
   };
 
-  const atlanticDevices = devices.filter((d) => d.device_type !== "wiser");
   const wiserDevices = devices.filter((d) => d.device_type === "wiser");
 
-  renderOne(atlanticHost, atlanticDevices, "Synchronise le compte Atlantic pour découvrir les appareils.");
+  if (atlanticHost) {
+    const atlanticDevices = devices.filter((d) => d.device_type !== "wiser");
+    renderOne(atlanticHost, atlanticDevices, "Synchronise le compte Atlantic pour découvrir les appareils.");
+  }
   renderOne(wiserHost, wiserDevices, "Configure le Hub Wiser puis synchronise pour découvrir les zones.");
 }
 
