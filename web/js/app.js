@@ -79,6 +79,16 @@ function renderNav() {
         ${item.id === "settings" ? '<span class="nav-badge" id="navLogBadge" hidden>0</span>' : ""}
       </a>`
     ).join("");
+    // Clic sur l'entree deja active : on remonte la page (utile pour revenir
+    // a la liste des modeles pendant l'edition d'un modele).
+    sidebar.querySelectorAll("[data-nav]").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (link.dataset.nav !== activeId) return;
+        event.preventDefault();
+        activeId = null;
+        mountRoute();
+      });
+    });
   }
 
   if (tabbar) {
@@ -87,6 +97,14 @@ function renderNav() {
         ${icon(item.icon, 22)}<span>${item.label}</span>
       </a>`
     ).join("")}</nav>`;
+    tabbar.querySelectorAll("[data-nav]").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (link.dataset.nav !== activeId) return;
+        event.preventDefault();
+        activeId = null;
+        mountRoute();
+      });
+    });
   }
 }
 

@@ -257,7 +257,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(payload["window"]["end"], 20)
         self.assertEqual(payload["window"]["start"], 14)
         self.assertEqual(payload["labels"], [
-            "14/01", "15/01", "16/01", "17/01", "18/01", "19/01", "20/01",
+            "14/01|Mar", "15/01|Mer", "16/01|Jeu", "17/01|Ven", "18/01|Sam", "19/01|Dim", "20/01|Lun",
         ])
         first = payload["series"][0]   # 2024
         self.assertEqual(first["values"][-1], 5.0)   # 20 janvier 2024
@@ -268,7 +268,7 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["window"]["end"], 5)
         self.assertEqual(payload["window"]["start"], 3)
-        self.assertEqual(payload["labels"], ["03/01", "04/01", "05/01"])
+        self.assertEqual(payload["labels"], ["03/01|Ven", "04/01|Sam", "05/01|Dim"])
         series = {item["label"]: item for item in payload["series"]}
         self.assertEqual(series["2024"]["values"], [None, None, 10.0])
 
@@ -277,7 +277,7 @@ class BuildTests(unittest.TestCase):
         payload = self.build("day", month=1, day="2025-01-02", days=7)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["labels"], [
-            "27/12", "28/12", "29/12", "30/12", "31/12", "01/01", "02/01",
+            "27/12|Ven", "28/12|Sam", "29/12|Dim", "30/12|Lun", "31/12|Mar", "01/01|Mer", "02/01|Jeu",
         ])
         series = {item["label"]: item for item in payload["series"]}
         self.assertEqual(series["2025"]["values"], [None, None, None, None, None, None, 3.0])
@@ -287,7 +287,7 @@ class BuildTests(unittest.TestCase):
         payload = self.build("day", month=3)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["window"]["end"], 10)
-        self.assertEqual(payload["labels"][-1], "10/03")
+        self.assertEqual(payload["labels"][-1], "10/03|Lun")
         series = {item["label"]: item for item in payload["series"]}
         self.assertEqual(series["2025"]["values"][-1], 6.0)
 

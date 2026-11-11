@@ -886,9 +886,18 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         }
         years = sorted({day.year for day in selected})
         payload["years"] = years
+        _FRENCH_DAY_ABBR = ("Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim")
+        # La fenêtre peut chevaucher deux années : on calcule le jour de la
+        # semaine à partir de la date réelle de chaque case (ancre + index),
+        # pas de l'année courante, pour rester cohérent avec les données.
+        try:
+            _anchor = datetime.fromisoformat(str(window.get("start_iso"))).date()
+        except (TypeError, ValueError):
+            _anchor = date(today.year, day_pairs[0][0], day_pairs[0][1])
         payload["labels"] = [
-            f"{day_number:02d}/{month_number:02d}"
-            for month_number, day_number in day_pairs
+            f"{day_number:02d}/{month_number:02d}|"
+            f"{_FRENCH_DAY_ABBR[(_anchor + timedelta(days=index)).weekday()]}"
+            for index, (month_number, day_number) in enumerate(day_pairs)
         ]
         payload["window"] = {
             key: window[key]

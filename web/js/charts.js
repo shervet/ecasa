@@ -70,7 +70,12 @@ export function lineChart({
   for (let i = 0; i < count; i += step) {
     const label = labels[i];
     if (label === undefined) continue;
-    xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(label)}</text>`;
+    const parts = String(label).split("|");
+    if (parts.length > 1) {
+      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 20}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x(i).toFixed(1)}" dy="12" font-size="9.5">${escapeHtml(parts[1])}</tspan></text>`;
+    } else {
+      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(label)}</text>`;
+    }
   }
 
   let paths = "";
@@ -227,7 +232,12 @@ export function barChart({
     const label = labels[i];
     if (label === undefined) continue;
     const x = M.left + groupW * i + groupW / 2;
-    xLabels += `<text x="${x.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(label)}</text>`;
+    const parts = String(label).split("|");
+    if (parts.length > 1) {
+      xLabels += `<text x="${x.toFixed(1)}" y="${H - 20}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x.toFixed(1)}" dy="12" font-size="9.5">${escapeHtml(parts[1])}</tspan></text>`;
+    } else {
+      xLabels += `<text x="${x.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(label)}</text>`;
+    }
   }
 
   const scroll = svgWidth > W ? " is-scroll" : "";
@@ -384,7 +394,7 @@ export function attachBarTooltip(wrap, { unit = "", table = null } = {}) {
 
   function show(rect, withTable = false) {
     activeRect = rect;
-    const label = rect.dataset.label ?? "";
+    const label = (rect.dataset.label ?? "").split("|")[0];
     const series = rect.dataset.series ?? "";
     const raw = rect.dataset.value;
     const valueText =

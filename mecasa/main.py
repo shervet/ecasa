@@ -1446,7 +1446,15 @@ def tailscale_install() -> dict:
     if system == "darwin":
         return {"ok": False, "detail": "Installation manuelle requise sur macOS.", "command": "brew install --cask tailscale"}
     if system == "windows":
-        return {"ok": False, "detail": "Installation manuelle requise sur Windows.", "command": "winget install -e --id Tailscale.Tailscale"}
+        code, detail = _run(
+            ["winget", "install", "-e", "--id", "Tailscale.Tailscale",
+             "--silent", "--accept-package-agreements", "--accept-source-agreements"],
+            timeout=300,
+        )
+        if code != 0:
+            return {"ok": False, "detail": detail or ("code %d" % code),
+                    "command": "winget install -e --id Tailscale.Tailscale"}
+        return {"ok": True, "detail": detail or "Tailscale installe"}
     return {"ok": False, "detail": "Systeme non pris en charge.", "command": ""}
 
 
@@ -1464,7 +1472,14 @@ def tailscale_uninstall() -> dict:
     if system == "darwin":
         return {"ok": False, "detail": "Desinstallation manuelle requise sur macOS.", "command": "brew uninstall --cask tailscale"}
     if system == "windows":
-        return {"ok": False, "detail": "Desinstallation manuelle requise sur Windows.", "command": "winget uninstall -e --id Tailscale.Tailscale"}
+        code, detail = _run(
+            ["winget", "uninstall", "-e", "--id", "Tailscale.Tailscale", "--silent"],
+            timeout=300,
+        )
+        if code != 0:
+            return {"ok": False, "detail": detail or ("code %d" % code),
+                    "command": "winget uninstall -e --id Tailscale.Tailscale"}
+        return {"ok": True, "detail": detail or "Tailscale desinstalle"}
     return {"ok": False, "detail": "Systeme non pris en charge.", "command": ""}
 
 
