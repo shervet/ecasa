@@ -1008,47 +1008,36 @@ function openImportSheet() {
 }
 
 function openPronoteSheet() {
-  const linkedRooms = Array.isArray(store.config?.pronote_room_ids)
+  let linkedRooms = Array.isArray(store.config?.pronote_room_ids)
     ? store.config.pronote_room_ids.map(Number)
     : (Number(store.config?.pronote_room_id || 0) ? [Number(store.config.pronote_room_id)] : []);
-  let selectedTarget = target;
-  if (linkedRooms.length) {
-    const found = targets.find((t) => t.kind === "room" && linkedRooms.includes(Number(t.targetId)));
-    if (found) selectedTarget = found;
+  const rooms = targets.filter((item) => item.kind === "room");
+  if (!rooms.length) {
+    toast("Aucune pièce équipée à importer.", { type: "warn" });
+    return;
   }
-  if (!selectedTarget) {
-    selectedTarget = targets[0] || null;
-  }
-  let device = selectedTarget?.device;
-  if (!device) { toast("Aucun appareil pour cette zone.", { type: "warn" }); return; }
-
+  const defaults = linkedRooms.filter((id) => rooms.some((room) => Number(room.targetId) === id));
+  const currentRoom = target?.kind === "room" ? Number(target.targetId) : 0;
+  const selectedRooms = new Set(
+    defaults.length ? defaults : currentRoom ? [currentRoom] : [Number(rooms[0].targetId)]
+  );
   let plan = null;
+  let planStart = null;
   const monday = mondayOf(new Date());
-  let savedPronoteTarget = null;
-  try {
-    savedPronoteTarget = localStorage.getItem("mecasa.pronoteTargetId");
-  } catch {}
-
-  if (!linkedRooms.length && savedPronoteTarget) {
-    const found = targets.find((t) => t.id === savedPronoteTarget);
-    if (found) {
-      selectedTarget = found;
-      device = selectedTarget.device;
-    }
-  }
-
   const body = document.createElement("div");
   body.className = "stack";
   const parity = (store.state?.settings?.week_mode || "parity") === "parity";
   let chosenWeeks = new Set(week === "B" ? ["B"] : ["A"]);
-  const isLinked = (t) => t && t.kind === "room" && linkedRooms.includes(Number(t.targetId));
+  const roomsHtml = rooms.map((room) => `
+    <label class="check">
+      <input type="checkbox" data-pronote-room="${Number(room.targetId)}"${selectedRooms.has(Number(room.targetId)) ? " checked" : ""}>
+      ${escapeHtml(room.label)}
+    </label>`).join("");
   body.innerHTML = `
-    <label class="field">
-      <span class="label">Importer dans</span>
-      <select class="select" data-pronote-target>
-        ${targets.map((t) => `<option value="${t.id}"${t.id === selectedTarget?.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
-      </select>
-    </label>
+    <div class="field">
+      <span class="label">Pièces à mettre à jour</span>
+      <div class="stack" style="gap:6px">${roomsHtml}</div>
+    </div>
     ${
       parity
         ? `<div class="field">
@@ -1063,8 +1052,8 @@ function openPronoteSheet() {
     }
     <label class="field">
       <span class="label">Rafraîchissement automatique</span>
-      <label class="check"><input type="checkbox" data-pronote-auto${isLinked(selectedTarget) ? " checked" : ""}> Récupérer l'emploi du temps Pronote chaque nuit et l'appliquer à cette pièce</label>
-      <span class="hint">Si coché, cette pièce devient la pièce liée à Pronote (les autres sont déliées).</span>
+      <label class="check"><input type="checkbox" data-pronote-auto${selectedRooms.size && [...selectedRooms].every((id) => linkedRooms.includes(id)) ? " checked" : ""}> Récupérer chaque nuit et appliquer aux pièces sélectionnées</label>
+      <span class="hint">Cette option met à jour les liaisons automatiques des pièces sélectionnées.</span>
     </label>
     <label class="field">
       <span class="label">Semaine à analyser</span>
@@ -1077,35 +1066,34 @@ function openPronoteSheet() {
 
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:8px;width:100%";
-  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer</button>`;
+  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import${selectedRooms.size ? "" : " disabled"}>${icon("download", 17)} Importer</button>`;
 
   const sheet = openSheet({
     title: "Import Pronote",
-    sub: `Emploi du temps → ${selectedTarget.label}`,
+    sub: "Emploi du temps → plusieurs pièces",
     body,
     footer,
   });
 
   const previewZone = body.querySelector("[data-preview-zone]");
   const importButton = footer.querySelector("[data-do-import]");
-  const targetSelect = body.querySelector("[data-pronote-target]");
-
-  targetSelect?.addEventListener("change", () => {
-    const tid = targetSelect.value;
-    const t = targets.find((x) => x.id === tid);
-    if (t) {
-      selectedTarget = t;
-      device = selectedTarget.device;
-      try { localStorage.setItem("mecasa.pronoteTargetId", t.id); } catch {}
-      sheet.querySelector(".sheet-sub").textContent = `Emploi du temps → ${t.label}`;
-      const autoBox = body.querySelector("[data-pronote-auto]");
-      if (autoBox) {
-        const linked = Array.isArray(store.config?.pronote_room_ids)
-          ? store.config.pronote_room_ids.map(Number)
-          : (Number(store.config?.pronote_room_id || 0) ? [Number(store.config.pronote_room_id)] : []);
-        autoBox.checked = t.kind === "room" && linked.includes(Number(t.targetId));
-      }
+  const updateSelectionState = () => {
+    importButton.disabled = selectedRooms.size === 0;
+    const autoBox = body.querySelector("[data-pronote-auto]");
+    if (autoBox) {
+      autoBox.checked = selectedRooms.size > 0 && [...selectedRooms].every((id) => linkedRooms.includes(id));
     }
+    sheet.querySelector(".sheet-sub").textContent = selectedRooms.size
+      ? `${selectedRooms.size} pièce${selectedRooms.size > 1 ? "s" : ""} sélectionnée${selectedRooms.size > 1 ? "s" : ""}`
+      : "Aucune pièce sélectionnée";
+  };
+  body.querySelectorAll("[data-pronote-room]").forEach((box) => {
+    box.addEventListener("change", () => {
+      const id = Number(box.dataset.pronoteRoom);
+      if (box.checked) selectedRooms.add(id);
+      else selectedRooms.delete(id);
+      updateSelectionState();
+    });
   });
 
   body.querySelectorAll("[data-pronote-week]").forEach((box) => {
@@ -1122,23 +1110,22 @@ function openPronoteSheet() {
 
   body.querySelector("[data-pronote-auto]")?.addEventListener("change", async (event) => {
     const box = event.currentTarget;
-    const roomPayload =
-      selectedTarget?.kind === "room"
-        ? (box.checked
-            ? { pronote_room_ids: [...new Set([...linkedRooms, Number(selectedTarget.targetId)])] }
-            : { pronote_room_ids: linkedRooms.filter((id) => id !== Number(selectedTarget.targetId)) })
-        : {};
+    if (!selectedRooms.size) {
+      box.checked = false;
+      toast("Sélectionne d'abord une pièce.", { type: "warn" });
+      return;
+    }
     try {
-      if (Object.keys(roomPayload).length) {
-        const cfg = await put("/api/config", roomPayload);
-        const newIds = box.checked
-          ? [...new Set([...linkedRooms, Number(selectedTarget.targetId)])]
-          : linkedRooms.filter((id) => id !== Number(selectedTarget.targetId));
-        if (cfg?.config) store.config = cfg.config;
-        else store.config = { ...(store.config || {}), pronote_room_ids: newIds, pronote_room_id: newIds[0] || 0 };
-        await refreshState({ silent: true });
-        reloadFromState();
-      }
+      const newIds = box.checked
+        ? [...new Set([...linkedRooms, ...selectedRooms])]
+        : linkedRooms.filter((id) => !selectedRooms.has(id));
+      const cfg = await put("/api/config", { pronote_room_ids: newIds });
+      linkedRooms = newIds;
+      if (cfg?.config) store.config = cfg.config;
+      else store.config = { ...(store.config || {}), pronote_room_ids: newIds, pronote_room_id: newIds[0] || 0 };
+      await refreshState({ silent: true });
+      reloadFromState();
+      updateSelectionState();
       toast(box.checked ? "Rafraîchissement automatique activé." : "Rafraîchissement automatique désactivé.");
     } catch (err) {
       toastError(err);
@@ -1153,47 +1140,52 @@ function openPronoteSheet() {
     try {
       const start = body.querySelector("[data-week-start]")?.value || monday;
       plan = await post("/api/pronote/preview", { week: start });
+      planStart = start;
       previewZone.innerHTML = renderPronotePreview(plan);
-      importButton.disabled = false;
     } catch (err) {
       previewZone.innerHTML = `<div class="hint is-bad">${escapeHtml(err.message)}</div>`;
-      importButton.disabled = true;
     } finally {
       button.disabled = false;
     }
   });
 
   importButton.addEventListener("click", async () => {
-    if (!plan || !device) return;
+    if (!selectedRooms.size) return;
     importButton.disabled = true;
     try {
       const start = body.querySelector("[data-week-start]")?.value || monday;
-      try { localStorage.setItem("mecasa.pronoteTargetId", selectedTarget.id); } catch {}
-      // La synchro automatique écrit sur la pièce : l'import manuel doit
-      // viser la même cible, sinon les deux imports se contredisent.
-      const targetPayload =
-        selectedTarget.kind === "room"
-          ? { room_id: Number(selectedTarget.targetId) }
-          : { device_id: Number(device.device_id) };
+      // L'aperçu est optionnel : si l'utilisateur n'en a pas chargé, on lit
+      // Pronote discrètement au moment d'importer, sans afficher son aperçu.
+      if (!plan || planStart !== start) {
+        importButton.innerHTML = `${icon("download", 17)} Lecture de Pronote…`;
+        plan = await post("/api/pronote/preview", { week: start });
+        planStart = start;
+      }
       const weeksToWrite = [...chosenWeeks];
       if (!weeksToWrite.length) weeksToWrite.push("A");
-      for (const w of weeksToWrite) {
-        await post("/api/pronote/import", {
-          ...targetPayload,
-          week: w,
-          week_start: start,
-          days: plan.days,
-          preview_week_type: plan.week_type,
-        });
+      const targetLabels = [];
+      for (const roomId of selectedRooms) {
+        const room = rooms.find((item) => Number(item.targetId) === roomId);
+        for (const w of weeksToWrite) {
+          await post("/api/pronote/import", {
+            room_id: roomId,
+            week: w,
+            week_start: start,
+            days: plan.days,
+            preview_week_type: plan.week_type,
+          });
+        }
+        if (room) targetLabels.push(room.label);
       }
-      toast(`Planning Pronote importé dans ${selectedTarget.label} · semaine${weeksToWrite.length > 1 ? "s" : ""} ${weeksToWrite.join(", ")}.`);
+      toast(`Planning Pronote importé dans ${targetLabels.join(", ")} · semaine${weeksToWrite.length > 1 ? "s" : ""} ${weeksToWrite.join(", ")}.`);
       closeSheet();
       await refreshState({ silent: true });
       dirty = false;
       reloadFromState();
     } catch (err) {
       toastError(err);
-      importButton.disabled = false;
+      importButton.disabled = selectedRooms.size === 0;
+      importButton.innerHTML = `${icon("download", 17)} Importer`;
     }
   });
 
