@@ -723,6 +723,31 @@ function paintLive() {
 
 /* --------------------------------------------------------------- éditeur */
 
+function targetTempRange(target) {
+  const devices = Array.isArray(target?.devices) && target.devices.length
+    ? target.devices
+    : (target?.device ? [target.device] : []);
+  const hasAtlantic = devices.some((d) => (d?.device_type || "atlantic") === "atlantic");
+  if (hasAtlantic) {
+    let min = 16;
+    let max = 30;
+    for (const d of devices.filter((x) => (x?.device_type || "atlantic") === "atlantic")) {
+      const r = deviceTempRange(d);
+      if (Number.isFinite(r.min)) min = Math.max(min, r.min);
+      if (Number.isFinite(r.max)) max = Math.min(max, r.max);
+    }
+    return min <= max ? { min, max } : { min: 16, max: 30 };
+  }
+  let min = 5;
+  let max = 30;
+  for (const d of devices) {
+    const r = deviceTempRange(d);
+    if (Number.isFinite(r.min)) min = Math.min(min, r.min);
+    if (Number.isFinite(r.max)) max = Math.max(max, r.max);
+  }
+  return min <= max ? { min, max } : { min: 5, max: 30 };
+}
+
 function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
   if (!target) return;
   const model = models[target.id];
@@ -731,7 +756,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
   const existing = slotIndex !== null ? slots[slotIndex] : null;
   let time = existing?.time || minutesToTime(minutes);
   let mode = existing?.mode || "heat";
-  const { min: tempMin, max: tempMax } = deviceTempRange(target.device);
+  const { min: tempMin, max: tempMax } = targetTempRange(target);
   let temp = clamp(Number(existing?.temp ?? 20), tempMin, tempMax);
 
   const body = document.createElement("div");
