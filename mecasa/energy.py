@@ -416,38 +416,57 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
     le mois en cours, toutes années pour un mois passé), et elle commence au
     1er si moins de ``size`` jours sont écoulés.
     """
-    selected = [day for day in points if day.month == month]
-    years = {day.year for day in selected}
-    if years:
-        max_day = max(calendar.monthrange(year, month)[1] for year in years)
-    else:
-        max_day = calendar.monthrange(today.year, month)[1]
-    limit = max_day
-    if today.month == month:
-        limit = min(limit, today.day)
-    # Chargement initial (pas de jour de référence fourni) : on borne la
-    # fenêtre au dernier jour avec donnée, pour ne pas afficher une fenêtre
-    # entièrement vide. Navigation (jour de référence fourni) : on laisse
-    # la fenêtre aller jusqu'à la fin du mois (ou aujourd'hui pour le mois
-    # en cours), afin de pouvoir se déplacer jour par jour même au-delà de
-    # la dernière donnée.
-    if ref_day is None and selected:
+    # Référence : jour du mois sélectionné, ou dernier jour avec donnée.
+    if ref_day is None:
+        selected = [day for day in points if day.month == month]
         if today.month == month:
-            current = [day.day for day in selected if day.year == today.year]
-            if current:
-                limit = min(limit, max(current))
+            ref_day = min(today.day, calendar.monthrange(today.year, month)[1])
+            if selected:
+                current = [day.day for day in selected if day.year == today.year]
+                if current:
+                    ref_day = min(ref_day, max(current))
         else:
-            limit = min(limit, max(day.day for day in selected))
-    limit = max(1, limit)
-    end = min(max(ref_day or limit, 1), limit)
-    start = max(1, end - size + 1)
+            if selected:
+                ref_day = max(day.day for day in selected)
+            else:
+                ref_day = calendar.monthrange(today.year, month)[1]
+    ref_day = max(1, min(ref_day, calendar.monthrange(today.year, month)[1]))
+
+    try:
+        ref_date = date(today.year, month, ref_day)
+    except ValueError:
+        ref_date = date(today.year, month, calendar.monthrange(today.year, month)[1])
+    if ref_date > today:
+        ref_date = today
+    # Ne pas reculer avant la plus ancienne donnée disponible : la
+    # navigation s'arrête au début de l'historique.
+    if points:
+        earliest = min(points)
+        if ref_date < earliest:
+            ref_date = earliest
+
+    # size jours consécutifs, pouvant traverser les mois.
+    pairs = []
+    for offset in range(size - 1, -1, -1):
+        d = ref_date - timedelta(days=offset)
+        pairs.append((d.month, d.day))
+
+    start_month, start_day = pairs[0]
+    end_month, end_day = pairs[-1]
+
     return {
         "month": month,
-        "start": start,
-        "end": end,
-        "limit": limit,
+        "start": start_day,
+        "end": end_day,
+        "limit": end_day,
         "size": size,
-        "days": list(range(start, end + 1)),
+        "days": pairs,
+        "start_month": start_month,
+        "end_month": end_month,
+        "start_iso": (ref_date - timedelta(days=size - 1)).isoformat(),
+        "end_iso": ref_date.isoformat(),
+        "first_iso": min(points).isoformat() if points else None,
+        "limit_iso": today.isoformat(),
     }
 
 
@@ -835,34 +854,40 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
 
     if view == "day":
         window = window or _day_window(points, month, None, 7, today)
-        day_numbers = set(window["days"])
+        day_pairs = window["days"]  # list of (month, day) tuples
+        day_keys = set(day_pairs)
         selected = {
             day: value
             for day, value in points.items()
-            if day.month == month
+            if (day.month, day.day) in day_keys
         }
         years = sorted({day.year for day in selected})
         payload["years"] = years
         payload["labels"] = [
-            f"{day_number:02d}/{month:02d}" for day_number in window["days"]
+            f"{day_number:02d}/{month_number:02d}"
+            for month_number, day_number in day_pairs
         ]
         payload["window"] = {
             key: window[key]
-            for key in ("month", "start", "end", "limit", "size")
+            for key in (
+                "month", "start", "end", "limit", "size",
+                "start_month", "end_month", "start_iso", "end_iso",
+                "first_iso", "limit_iso",
+            )
         }
         grouped = {}
         for day, value in selected.items():
-            if day.day not in day_numbers:
-                continue
-            grouped[(day.year, day.day)] = grouped.get((day.year, day.day), 0.0) + value
+            grouped[(day.year, day.month, day.day)] = grouped.get(
+                (day.year, day.month, day.day), 0.0
+            ) + value
         payload["series"] = [
             {
                 "key": str(year),
                 "label": str(year),
                 "values": [
-                    _round(grouped[(year, day_number)])
-                    if (year, day_number) in grouped else None
-                    for day_number in window["days"]
+                    _round(grouped[(year, month_number, day_number)])
+                    if (year, month_number, day_number) in grouped else None
+                    for month_number, day_number in day_pairs
                 ],
                 "color": _year_color(year, today),
             }
@@ -943,7 +968,7 @@ def _period_totals(points: dict[date, float], view: str, month: int,
     - ``year``  : l'année à date (l'année en cours reste partielle).
     """
     if view == "day":
-        day_numbers = set(window["days"]) if window else None
+        day_keys = set(window["days"]) if window else None  # set of (month, day) tuples
 
         def total(year: int) -> tuple[float, int]:
             kwh = 0.0
@@ -951,8 +976,7 @@ def _period_totals(points: dict[date, float], view: str, month: int,
             for day, value in points.items():
                 if (
                     day.year == year
-                    and day.month == month
-                    and (day_numbers is None or day.day in day_numbers)
+                    and (day_keys is None or (day.month, day.day) in day_keys)
                 ):
                     kwh += value
                     count += 1
@@ -961,8 +985,7 @@ def _period_totals(points: dict[date, float], view: str, month: int,
         years = {
             day.year
             for day in points
-            if day.month == month
-            and (day_numbers is None or day.day in day_numbers)
+            if day_keys is None or (day.month, day.day) in day_keys
         }
         return years, total
 
@@ -1102,14 +1125,26 @@ def _summary(points: dict[date, float], view: str, month: int,
             else (month_years[-1] if month_years else today.year)
         )
         if window:
-            label = (
-                f"{window['start']:02d}–{window['end']:02d} "
-                f"{MONTH_LONG[month - 1].capitalize()} {ref}"
-            )
-            previous_label = (
-                f"{window['start']:02d}–{window['end']:02d} "
-                f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"
-            )
+            start_month = window.get("start_month", month)
+            end_month = window.get("end_month", month)
+            if start_month == end_month:
+                label = (
+                    f"{window['start']:02d}–{window['end']:02d} "
+                    f"{MONTH_LONG[end_month - 1].capitalize()} {ref}"
+                )
+                previous_label = (
+                    f"{window['start']:02d}–{window['end']:02d} "
+                    f"{MONTH_LONG[end_month - 1].capitalize()} {ref - 1}"
+                )
+            else:
+                label = (
+                    f"{window['start']:02d}/{start_month:02d}–"
+                    f"{window['end']:02d}/{end_month:02d} {ref}"
+                )
+                previous_label = (
+                    f"{window['start']:02d}/{start_month:02d}–"
+                    f"{window['end']:02d}/{end_month:02d} {ref - 1}"
+                )
         else:
             label = f"{MONTH_LONG[month - 1].capitalize()} {ref}"
             previous_label = f"{MONTH_LONG[month - 1].capitalize()} {ref - 1}"

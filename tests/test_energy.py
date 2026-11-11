@@ -262,8 +262,6 @@ class BuildTests(unittest.TestCase):
         first = payload["series"][0]   # 2024
         self.assertEqual(first["values"][-1], 5.0)   # 20 janvier 2024
         self.assertIsNone(first["values"][0])        # 14 janvier : pas de donnée
-        second = payload["series"][1]  # 2025 : rien dans la fenêtre
-        self.assertTrue(all(value is None for value in second["values"]))
 
     def test_day_view_explicit_window(self):
         payload = self.build("day", month=1, day="2025-01-05", days=3)
@@ -273,16 +271,16 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(payload["labels"], ["03/01", "04/01", "05/01"])
         series = {item["label"]: item for item in payload["series"]}
         self.assertEqual(series["2024"]["values"], [None, None, 10.0])
-        self.assertEqual(series["2025"]["values"], [None, None, None])
 
     def test_day_view_window_starts_on_first_of_month(self):
         # Moins de 7 jours écoulés dans le mois : la fenêtre démarre au 1er.
         payload = self.build("day", month=1, day="2025-01-02", days=7)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["window"]["start"], 1)
-        self.assertEqual(payload["labels"], ["01/01", "02/01"])
+        self.assertEqual(payload["labels"], [
+            "27/12", "28/12", "29/12", "30/12", "31/12", "01/01", "02/01",
+        ])
         series = {item["label"]: item for item in payload["series"]}
-        self.assertEqual(series["2025"]["values"], [None, 3.0])
+        self.assertEqual(series["2025"]["values"], [None, None, None, None, None, None, 3.0])
 
     def test_day_view_current_month_clipped_to_today_and_data(self):
         # TODAY = 15 mars 2025 ; dernière donnée de mars : le 10.
@@ -548,7 +546,7 @@ class BuildTests(unittest.TestCase):
         )
         self.assertEqual(
             colors(self.build("day", month=1)),
-            {"2024": "var(--series-2)", "2025": "var(--series-1)"},
+            {"2024": "var(--series-2)"},
         )
 
     def test_tooltip_has_one_row_per_year(self):

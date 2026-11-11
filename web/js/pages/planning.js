@@ -1623,6 +1623,8 @@ function openPronoteSheet() {
 
   const body = document.createElement("div");
   body.className = "stack";
+  const parity = (store.state?.settings?.week_mode || "parity") === "parity";
+  let chosenWeek = week === "B" ? "B" : "A";
   body.innerHTML = `
     <label class="field">
       <span class="label">Importer dans</span>
@@ -1630,6 +1632,18 @@ function openPronoteSheet() {
         ${targets.map((t) => `<option value="${t.id}"${t.id === selectedTarget?.id ? " selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
       </select>
     </label>
+    ${
+      parity
+        ? `<label class="field">
+      <span class="label">Écrire dans la semaine</span>
+      <select class="select" data-pronote-week>
+        <option value="A"${chosenWeek === "A" ? " selected" : ""}>Semaine A</option>
+        <option value="B"${chosenWeek === "B" ? " selected" : ""}>Semaine B</option>
+      </select>
+      <span class="hint">Seule la journée (7 h → 20 h) est remplacée : le réveil et la nuit du soir sont conservés.</span>
+    </label>`
+        : ""
+    }
     <label class="field">
       <span class="label">Semaine à analyser</span>
       <input class="input" type="date" value="${monday}" data-week-start>
@@ -1641,7 +1655,7 @@ function openPronoteSheet() {
 
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:8px;width:100%";
-  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer dans la semaine ${week}</button>`;
+  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer dans la semaine ${chosenWeek}</button>`;
 
   const sheet = openSheet({
     title: "Import Pronote",
@@ -1663,6 +1677,11 @@ function openPronoteSheet() {
       try { localStorage.setItem("mecasa.pronoteTargetId", t.id); } catch {}
       sheet.querySelector(".sheet-sub").textContent = `Emploi du temps → ${t.label}`;
     }
+  });
+
+  body.querySelector("[data-pronote-week]")?.addEventListener("change", (event) => {
+    chosenWeek = event.currentTarget.value === "B" ? "B" : "A";
+    importButton.innerHTML = `${icon("download", 17)} Importer dans la semaine ${chosenWeek}`;
   });
 
   body.querySelector("[data-preview]")?.addEventListener("click", async (event) => {
@@ -1696,12 +1715,12 @@ function openPronoteSheet() {
           : { device_id: Number(device.device_id) };
       await post("/api/pronote/import", {
         ...targetPayload,
-        week,
+        week: chosenWeek,
         week_start: start,
         days: plan.days,
         preview_week_type: plan.week_type,
       });
-      toast(`Planning Pronote importé dans ${selectedTarget.label}.`);
+      toast(`Planning Pronote importé dans ${selectedTarget.label} · semaine ${chosenWeek}.`);
       closeSheet();
       await refreshState({ silent: true });
       dirty = false;

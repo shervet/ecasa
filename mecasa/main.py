@@ -645,11 +645,31 @@ def aligned_week_start(store: MemoryStore, base_monday, target: str,
 # --------------------------------------------- import et synchro Pronote
 
 
-def _merge_weekend_slots(days: list, existing: list[dict]) -> list[list[dict]]:
-    """Conserve les créneaux samedi/dimanche déjà présents dans la pièce.
+DAY_START_MIN = 7 * 60
+DAY_END_MIN = 20 * 60
 
-    L'import Pronote ne concerne que les jours de classe ; les week-ends
-    personnalisés à la main ne doivent pas être écrasés.
+
+def _slot_minutes(slot: dict) -> int:
+    if "minutes" in slot:
+        try:
+            return int(slot["minutes"])
+        except (TypeError, ValueError):
+            pass
+    time = str(slot.get("time") or "00:00")
+    parts = time.split(":")
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _merge_weekend_slots(days: list, existing: list[dict]) -> list[list[dict]]:
+    """Conserve les créneaux non gérés par Pronote.
+
+    L'import Pronote ne concerne que les jours de classe et les plages
+    diurnes (7 h - 20 h). Les week-ends personnalisés à la main et les
+    créneaux hors plage (réveil matinal avant 7 h, soirée/nuit après
+    20 h) ne doivent pas être écrasés.
     """
     result = [list(day or []) for day in days]
     if not existing:
@@ -673,6 +693,38 @@ def _merge_weekend_slots(days: list, existing: list[dict]) -> list[list[dict]]:
                     by_day[weekday], key=lambda item: int(item["minutes"])
                 )
             ]
+
+    # Jours de classe : on conserve les créneaux hors plage diurne
+    # (avant 7 h et après 20 h) et on les fusionne avec ceux de Pronote.
+    for weekday in range(5):
+        kept = [
+            slot for slot in by_day[weekday]
+            if _slot_minutes(slot) < DAY_START_MIN
+            or _slot_minutes(slot) >= DAY_END_MIN
+        ]
+        if not kept:
+            continue
+        converted = [
+            {
+                "time": (
+                    f"{int(slot['minutes']) // 60:02d}:"
+                    f"{int(slot['minutes']) % 60:02d}"
+                ),
+                "mode": slot.get("mode", "off"),
+                "temp": slot.get("temp", 20),
+                "fan": slot.get("fan"),
+            }
+            for slot in sorted(kept, key=lambda item: int(item["minutes"]))
+        ]
+        existing_times = {s.get("time") for s in result[weekday]}
+        for slot in converted:
+            if slot["time"] not in existing_times:
+                result[weekday].append(slot)
+                existing_times.add(slot["time"])
+        result[weekday].sort(
+            key=lambda s: int(s["time"].split(":")[0]) * 60
+            + int(s["time"].split(":")[1])
+        )
     return result
 
 
@@ -695,7 +747,12 @@ def import_pronote_weeks(
     """
     week_starts: dict[str, str] = {}
     for target in weeks:
-        if preview_days is not None and target == preview_type:
+        # L'aperçu affiché est écrit tel quel dans la semaine cible, même
+        # si le type de la semaine analysée diffère : l'utilisateur choisit
+        # la destination (A/B), pas une semaine alignée automatiquement.
+        if preview_days is not None and (
+            target == preview_type or len(weeks) == 1
+        ):
             days = preview_days
             source_start = base_monday
         else:

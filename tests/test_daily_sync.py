@@ -234,6 +234,51 @@ class ImportRoomTests(unittest.TestCase):
         for slot in slots:
             self.assertIn(slot.get("device_id"), (None, ""))
 
+    def test_import_keeps_off_hours_slots(self):
+        # Réveil (avant 7 h) et soirée/nuit (après 20 h) : conservés.
+        room_id = self.room["id"]
+        existing = [[
+            {"time": "06:00", "mode": "heat", "temp": 20.0},
+            {"time": "08:00", "mode": "heat", "temp": 20.0},
+            {"time": "21:00", "mode": "off", "temp": 16.0},
+        ]] + [[] for _ in range(6)]
+        self.store.set_slots(room_id=room_id, week="A", days=existing)
+
+        plan_days = [
+            [
+                {"time": "07:30", "mode": "heat", "temp": 20.0},
+                {"time": "16:30", "mode": "off", "temp": 17.0},
+            ]
+        ] + [[] for _ in range(6)]
+        main.import_pronote_weeks(
+            self.store, CONFIG, room_id, date(2026, 11, 9), ["A"],
+            room=True, preview_days=plan_days, preview_type="A",
+        )
+        slots = self.store.slots(room_id=room_id, week="A")
+        monday = sorted(
+            slot["minutes"] for slot in slots if slot["weekday"] == 0
+        )
+        # 06:00 et 21:00 conservés, 08:00 remplacé par la journée Pronote.
+        self.assertEqual(monday, [360, 450, 990, 1260])
+
+    def test_import_preview_into_chosen_week(self):
+        # L'aperçu d'une semaine A peut être écrit dans la semaine B.
+        room_id = self.room["id"]
+        plan_days = [
+            [{"time": "07:00", "mode": "heat", "temp": 20.0}]
+            for _ in range(7)
+        ]
+        starts = main.import_pronote_weeks(
+            self.store, CONFIG, room_id, date(2026, 11, 9), ["B"],
+            room=True, preview_days=plan_days, preview_type="A",
+        )
+        self.assertEqual(starts, {"B": "2026-11-09"})
+        slots = self.store.slots(room_id=room_id, week="B")
+        self.assertEqual(
+            sorted({slot["minutes"] for slot in slots}), [420]
+        )
+        self.assertFalse(self.store.slots(room_id=room_id, week="A"))
+
     def test_import_device_target(self):
         self.store.upsert_device(42, "Test Device")
         device = next(d for d in self.store.devices() if d["device_id"] == 42)

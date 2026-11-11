@@ -502,13 +502,17 @@ async function loadEnergy(refresh = false) {
     energyPayload = payload;
     energyInitial = false;
     // Synchronise energyDay/energyMonth avec la fenêtre réellement affichée
-    // pour éviter toute désynchronisation lors de la navigation.
+    // pour éviter toute désynchronisation lors de la navigation (la fenêtre
+    // peut finir dans un autre mois que celui demandé).
     if (payload?.ok && payload.view === "day" && payload.window?.end) {
+      const endMonth = payload.window.end_month || payload.month;
       const now = new Date();
       let year = now.getFullYear();
-      if (payload.month > now.getMonth() + 1) year -= 1;
-      energyDay = isoDay(new Date(year, payload.month - 1, payload.window.end));
-      energyMonth = payload.month;
+      if (endMonth > now.getMonth() + 1) year -= 1;
+      energyDay = payload.window.end_iso
+        ? payload.window.end_iso
+        : isoDay(new Date(year, endMonth - 1, payload.window.end));
+      energyMonth = endMonth;
       writePref("stats.energyDay", energyDay);
       writePref("stats.energyMonth", energyMonth);
     }
@@ -680,7 +684,7 @@ function defaultEnergyDay(month) {
 function shiftEnergy(direction) {
   if (energyView === "week") shiftEnergyWeek(direction);
   else if (energyView === "month") shiftEnergyMonth(direction);
-  else if (energyView === "day") shiftEnergyDay(direction);
+  else if (energyView === "day") shiftEnergyDay(direction * 7);
 }
 
 function shiftEnergyWeek(direction) {
@@ -727,17 +731,16 @@ function shiftEnergyMonth(direction) {
 }
 
 function shiftEnergyDay(delta) {
-  // Le serveur raisonne en numéro de jour dans le mois sélectionné, mais la
-  // navigation doit pouvoir traverser la frontière du mois. On ancre sur la
-  // fin de la fenêtre affichée (et non sur energyDay qui peut être désynchronisé)
-  // pour garantir un défilement jour par jour sans saut.
+  // Fenêtre glissante de 7 jours : chaque cran décale la fin de fenêtre de
+  // 7 jours. On ancre sur la date ISO renvoyée par le serveur, ce qui
+  // permet de traverser les mois et les années sans saut.
   const window_ = energyPayload?.window;
-  const current = parseDate(energyDay) || new Date();
-  const anchorDay = window_?.end || current.getDate();
+  const anchor =
+    parseDate(window_?.end_iso) || parseDate(energyDay) || new Date();
   const target = new Date(
-    current.getFullYear(),
-    current.getMonth(),
-    anchorDay + delta
+    anchor.getFullYear(),
+    anchor.getMonth(),
+    anchor.getDate() + delta
   );
   energyMonth = target.getMonth() + 1;
   const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
@@ -757,11 +760,12 @@ function navDisabled(payload, direction) {
     return false;
   }
   if (payload.view === "day") {
-    // Navigation libre : on peut toujours se déplacer, y compris au-delà
-    // des frontières de mois (le changement de mois se fait dans
-    // shiftEnergyDay). Le serveur renvoie une erreur si le mois cible n'a
-    // aucune donnée, mais la navigation reste possible.
-    return false;
+    // Fenêtre glissante de 7 jours : on s'arrête au début de l'historique
+    // et à aujourd'hui (aucun jour futur).
+    if (direction < 0) {
+      return !window_.first_iso || window_.end_iso <= window_.first_iso;
+    }
+    return !window_.limit_iso || window_.end_iso >= window_.limit_iso;
   }
   return false;
 }
@@ -938,11 +942,28 @@ function energyKpiGrid(summary) {
 
 function dayWindowLabel(window_, energyDayIso, year = null) {
   if (!window_) return "";
+  // Hors comparaison par année, on affiche les dates réelles renvoyées par
+  // le serveur (la fenêtre peut traverser un mois ou une année).
+  if (!year) {
+    const startIso = parseDate(window_.start_iso);
+    const endIso = parseDate(window_.end_iso);
+    if (startIso && endIso) {
+      if (startIso.getTime() === endIso.getTime()) {
+        return fmtDate(endIso, { day: "numeric", month: "long" });
+      }
+      const opts =
+        startIso.getFullYear() === endIso.getFullYear()
+          ? { day: "numeric", month: "short" }
+          : { day: "numeric", month: "short", year: "numeric" };
+      return `${fmtDate(startIso, opts)} → ${fmtDate(endIso, opts)}`;
+    }
+  }
   const date = parseDate(energyDayIso) || new Date();
   const displayYear = year ?? date.getFullYear();
-  const month = (window_.month || energyMonth || 1) - 1;
-  const start = new Date(displayYear, month, window_.start);
-  const end = new Date(displayYear, month, window_.end);
+  const startMonth = (window_.start_month || window_.month || energyMonth || 1) - 1;
+  const endMonth = (window_.end_month || window_.month || energyMonth || 1) - 1;
+  const start = new Date(displayYear, startMonth, window_.start);
+  const end = new Date(displayYear, endMonth, window_.end);
   if (window_.start === window_.end) {
     return fmtDate(start, { day: "numeric", month: "long" });
   }
