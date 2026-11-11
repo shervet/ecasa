@@ -415,7 +415,7 @@ class WiserClient:
         self._request(
             "PATCH",
             f"/data/domain/Room/{int(room_id)}",
-            {"CurrentSetPoint": temp_wiser},
+            {"Mode": "Manual", "ManualSetPoint": temp_wiser},
         )
         return True
 
