@@ -1,6 +1,6 @@
-/* Service worker MeCasa : coquille en cache, API toujours en réseau. */
+﻿/* Service worker MeCasa : coquille en cache, API toujours en rÃ©seau. */
 
-const VERSION = "mecasa-v74";
+const VERSION = "mecasa-v75";
 const SHELL = [
   "/",
   "/index.html",
@@ -52,7 +52,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // L'API ne doit jamais être servie depuis le cache.
+  // L'API ne doit jamais Ãªtre servie depuis le cache.
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(request).catch(
@@ -66,7 +66,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation : réseau d'abord, coquille en secours.
+  // Navigation : rÃ©seau d'abord, coquille en secours.
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request)
@@ -80,7 +80,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Statique : réseau d'abord, cache en secours (évite de servir du JS périmé).
+  // Statique : rÃ©seau d'abord, cache en secours (Ã©vite de servir du JS pÃ©rimÃ©).
   event.respondWith(
     fetch(request)
       .then((response) => {
@@ -93,3 +93,4 @@ self.addEventListener("fetch", (event) => {
       .catch(() => caches.match(request).then((cached) => cached || caches.match("/index.html")))
   );
 });
+
