@@ -172,6 +172,11 @@ def load_config(force: bool = False) -> dict:
 
         merged = dict(DEFAULT_CONFIG)
         merged.update(config if isinstance(config, dict) else {})
+        # Migration : pronote_room_id (unique) -> pronote_room_ids (liste).
+        if not merged.get("pronote_room_ids"):
+            single = int(merged.get("pronote_room_id") or 0)
+            if single:
+                merged["pronote_room_ids"] = [single]
         _config_cache = merged
         return dict(merged)
 

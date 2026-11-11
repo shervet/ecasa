@@ -469,6 +469,9 @@ function paintSub() {
 function paintRooms() {
   const host = root?.querySelector("#planRooms");
   if (!host) return;
+  const linkedRooms = Array.isArray(store.state?.settings?.pronote_room_ids)
+    ? store.state.settings.pronote_room_ids.map(Number)
+    : (Number(store.state?.settings?.pronote_room_id || 0) ? [Number(store.state.settings.pronote_room_id)] : []);
   if (!targets.length) {
     host.innerHTML = '<div class="empty"><span class="empty-icon">' + icon("calendar", 24) + '</span><strong>Aucune pièce équipée</strong><p>Ajoute un appareil dans Réglages.</p></div>';
     return;
@@ -519,6 +522,7 @@ function paintRooms() {
     if (isLinked) {
       html += '<span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>';
     }
+    html += '<button class="btn btn-sm" type="button" data-toggle-pronote-auto="' + t.id + '">' + icon("school", 14) + ' ' + (isLinked ? 'Désactiver l\'auto Pronote' : 'Activer l\'auto Pronote') + '</button>';
     html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '"' + (isLinked ? " disabled" : "") + '>' + icon("trash", 14) + ' Vider cette pièce</button>';
     html += '</div>';
     html += '<div class="room-plan-model-row">';
@@ -633,6 +637,33 @@ function paintRooms() {
       paintRooms();
       paintDirty();
       toast(`Modèle « ${m.name} » appliqué.`);
+    });
+  });
+
+  // Activer / désactiver l'auto-update Pronote pour une pièce
+  host.querySelectorAll("[data-toggle-pronote-auto]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tid = btn.dataset.togglePronoteAuto;
+      const t = targets.find((x) => x.id === tid);
+      if (!t || t.kind !== "room") return;
+      const currentlyLinked = !!t.pronoteLinked;
+      const msg = currentlyLinked
+        ? `Désactiver la mise à jour automatique Pronote pour « ${t.label} » ?`
+        : `Activer la mise à jour automatique Pronote pour « ${t.label} » ?`;
+      if (!confirm(msg)) return;
+      btn.disabled = true;
+      try {
+        const newIds = currentlyLinked
+          ? linkedRooms.filter((id) => id !== Number(t.targetId))
+          : [...new Set([...linkedRooms, Number(t.targetId)])];
+        await put("/api/config", { pronote_room_ids: newIds });
+        await refreshState({ silent: true });
+        reloadFromState();
+        toast(currentlyLinked ? `Auto Pronote désactivé pour « ${t.label} ».` : `Auto Pronote activé pour « ${t.label} ».`);
+      } catch (err) {
+        toastError(err);
+        btn.disabled = false;
+      }
     });
   });
 
@@ -1027,7 +1058,7 @@ function openPronoteSheet() {
     savedPronoteTarget = localStorage.getItem("mecasa.pronoteTargetId");
   } catch {}
 
-  if (!linkedRoomId && savedPronoteTarget) {
+  if (!linkedRooms.length && savedPronoteTarget) {
     const found = targets.find((t) => t.id === savedPronoteTarget);
     if (found) {
       selectedTarget = found;

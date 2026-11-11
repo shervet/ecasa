@@ -1085,6 +1085,7 @@ async function saveSection(name, button) {
       toast("Réglages enregistrés.");
       if (name === "weather") window.refreshWeather?.();
       if (name === "tailscale") await loadTailscale();
+      if (name === "pronote") await refreshState({ silent: true });
       if (payload.restart_required) showRestartBanner();
     }
   } catch (err) {
