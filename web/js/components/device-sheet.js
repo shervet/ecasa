@@ -8,6 +8,7 @@ import { toast, toastError } from "../toast.js";
 import {
   clamp,
   describeSlot,
+  deviceTempRange,
   escapeHtml,
   fmtTemp,
   fmtTime,
@@ -59,9 +60,7 @@ export function openDeviceSheet(deviceId) {
   const current = device.current || {};
   const desired = device.desired || {};
   const isWiser = device.device_type === "wiser";
-  const min = 16;
-  const max = 30;
-
+  const { min, max } = deviceTempRange(device);
   let temp = clamp(desired.temp ?? current.temp ?? 20, min, max);
   let mode = desired.mode || current.mode || (isWiser ? "heat" : "cool");
   let minutes = 60;

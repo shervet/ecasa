@@ -293,3 +293,17 @@ export function isMock(state) {
 export function deviceName(state, deviceId) {
   return state?.devices?.find((d) => Number(d.device_id) === Number(deviceId))?.name || `Appareil ${deviceId}`;
 }
+
+
+export function deviceTempRange(device) {
+  const isWiser = device?.device_type === 'wiser';
+  const fallbackMin = isWiser ? 0 : 16;
+  const fallbackMax = 30;
+  const min = Number(device?.temp_min);
+  const max = Number(device?.temp_max);
+  const resolvedMin = Number.isFinite(min) ? min : fallbackMin;
+  const resolvedMax = Number.isFinite(max) ? max : fallbackMax;
+  return resolvedMin <= resolvedMax
+    ? { min: resolvedMin, max: resolvedMax }
+    : { min: resolvedMax, max: resolvedMin };
+}

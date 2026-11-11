@@ -7,17 +7,20 @@ import { toast } from "./toast.js";
 
 import home from "./pages/home.js";
 import planning from "./pages/planning.js";
+import models from "./pages/models.js";
 import stats from "./pages/stats.js";
 import settings from "./pages/settings.js";
 import logs from "./pages/logs.js";
 
-const PAGES = { home, planning, stats, settings, logs };
+// Le journal n'est plus dans le menu principal : il s'ouvre depuis
+// Réglages → Journal (route #/logs conservée).
+const PAGES = { home, planning, models, stats, settings, logs };
 
 const NAV = [
   { id: "home", label: "Accueil", icon: "home" },
   { id: "planning", label: "Planning", icon: "calendar" },
+  { id: "models", label: "Modèles", icon: "sliders" },
   { id: "stats", label: "Stats", icon: "chart" },
-  { id: "logs", label: "Journal", icon: "list" },
   { id: "settings", label: "Réglages", icon: "settings" },
 ];
 
@@ -73,7 +76,7 @@ function renderNav() {
     sidebar.innerHTML = NAV.map(
       (item) => `<a href="#/${item.id}" data-nav="${item.id}">
         ${icon(item.icon, 20)}<span>${item.label}</span>
-        ${item.id === "logs" ? '<span class="nav-badge" id="navLogBadge" hidden>0</span>' : ""}
+        ${item.id === "settings" ? '<span class="nav-badge" id="navLogBadge" hidden>0</span>' : ""}
       </a>`
     ).join("");
   }
@@ -191,8 +194,13 @@ function updateChrome() {
   const badge = $("#navLogBadge");
   if (badge) {
     const errors = (state?.logs || []).filter((entry) => entry.level === "erreur").length;
-    badge.hidden = errors === 0;
-    badge.textContent = String(errors);
+    // La pastille ne s'affiche que pour les erreurs *nouvelles* depuis la
+    // dernière consultation du journal (vu → disparition jusqu'au prochain).
+    const seen = Number(localStorage.getItem("mecasa.seenErrorCount") || 0);
+    const unseen = Math.max(0, errors - (Number.isFinite(seen) ? seen : 0));
+    badge.hidden = unseen === 0;
+    badge.textContent = String(unseen);
+    badge.title = unseen ? `${unseen} nouvelle(s) erreur(s) dans le journal` : "Aucune nouvelle erreur";
   }
 
   const sidebarStatus = $("#sidebarStatus");
@@ -282,7 +290,11 @@ async function refreshWeather() {
 
 async function boot() {
   renderNav();
-  addThemeButton();
+  $("#navLogBadge")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    location.hash = "#/logs";
+  });
   setupInstall();
 
   mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");

@@ -167,9 +167,22 @@ export function barChart({
   const groupW = innerW / count;
   const groupPad = Math.min(8, groupW * 0.16);
   const barGap = Math.min(3, groupW * 0.06);
+  // Séries réellement présentes dans chaque groupe (une barre par série
+  // non nulle) : permet de centrer les barres quand un groupe n'a qu'une
+  // série (ex. vue Année : une barre par année), sans décaler les barres
+  // vers la droite comme le faisait l'ancien offset global par série.
+  const seriesByGroup = Array.from({ length: count }, () => []);
+  visible.forEach((item, seriesIndex) => {
+    item.values.forEach((value, index) => {
+      if (Number.isFinite(value) && index >= 0 && index < count) {
+        seriesByGroup[index].push(seriesIndex);
+      }
+    });
+  });
+  const maxBarsPerGroup = Math.max(1, ...seriesByGroup.map((group) => group.length));
   const barW = Math.max(
     1,
-    (groupW - groupPad * 2 - barGap * (visible.length - 1)) / visible.length
+    (groupW - groupPad * 2 - barGap * (maxBarsPerGroup - 1)) / maxBarsPerGroup
   );
   const y = (value) => M.top + innerH - (value / max) * innerH;
   // Palette dédiée aux séries : N, N-1 et N-2 restent nettement distinctes
@@ -198,7 +211,11 @@ export function barChart({
     item.values.forEach((value, index) => {
       if (!Number.isFinite(value)) return;
       const barH = Math.max(0, innerH - (y(value) - M.top));
-      const x = M.left + groupW * index + groupPad + seriesIndex * (barW + barGap);
+      const siblings = seriesByGroup[index] || [];
+      const position = Math.max(0, siblings.indexOf(seriesIndex));
+      const totalWidth = siblings.length * barW + (siblings.length - 1) * barGap;
+      const groupStart = M.left + groupW * index + (groupW - totalWidth) / 2;
+      const x = groupStart + position * (barW + barGap);
       const title = `${labels[index] ?? index} · ${item.label} : ${fmtNumber(value, 1)} ${unit}`;
       bars += `<rect class="chart-bar" x="${x.toFixed(1)}" y="${(M.top + innerH - barH).toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${item.color}" data-index="${index}" data-label="${escapeHtml(labels[index] ?? index)}" data-series="${escapeHtml(item.label)}" data-value="${Number(value)}" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title></rect>`;
     });
@@ -348,16 +365,19 @@ export function attachBarTooltip(wrap, { unit = "", table = null } = {}) {
           row.value === null || row.value === undefined
             ? "—"
             : `${fmtNumber(Number(row.value), 1)} ${unit}`.trim();
-        const days = row.days ? `${row.days} j` : "—";
+        const variation =
+          row.variation === null || row.variation === undefined
+            ? "—"
+            : `${Number(row.variation) > 0 ? "+" : ""}${fmtNumber(Number(row.variation), 1)} %`;
         return `<tr>
           <td><span class="chart-tooltip-dot" style="background:${row.color || "var(--primary)"}"></span>${escapeHtml(row.label)}</td>
           <td class="num">${escapeHtml(value)}</td>
-          <td class="num">${escapeHtml(days)}</td>
+          <td class="num">${escapeHtml(variation)}</td>
         </tr>`;
       })
       .join("");
     return `<table class="chart-tooltip-table">
-      <thead><tr><th>Année</th><th class="num">Conso</th><th class="num">Jours</th></tr></thead>
+      <thead><tr><th>Année</th><th class="num">Conso</th><th class="num">Variation</th></tr></thead>
       <tbody>${body}</tbody>
     </table>`;
   }

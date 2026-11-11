@@ -201,7 +201,12 @@ class MemoryStore:
                     device_id = int(item["device_id"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                self._devices[device_id] = dict(item)
+                device = dict(item)
+                if "temp_min" not in device or device.get("temp_min") is None:
+                    device["temp_min"] = 0.0 if device.get("device_type") == "wiser" else 16.0
+                if "temp_max" not in device or device.get("temp_max") is None:
+                    device["temp_max"] = 30.0
+                self._devices[device_id] = device
 
         slots = payload.get("slots")
         if isinstance(slots, list):
@@ -599,6 +604,8 @@ class MemoryStore:
                     "device_type": "atlantic",
                     "wiser_room_id": 0,
                     "temp_sensor_device_id": 0,
+                 "temp_min": 16.0,
+                 "temp_max": 30.0,
                 }
                 self._devices[int(device_id)] = device
             elif device.get("name") != name:
@@ -636,6 +643,7 @@ class MemoryStore:
             "cap_ambient", "cap_prog", "cap_fan", "cap_louver", "cap_swing",
             "position", "device_type",
             "wiser_room_id", "temp_sensor_device_id", "room_id",
+            "temp_min", "temp_max",
         )
         with self._lock:
             device = self._devices.get(int(device_id))
@@ -657,10 +665,29 @@ class MemoryStore:
                         device["room_id"] = room_id
                 elif key in ("name", "device_type"):
                     device[key] = str(value)
+                    # Plage par défaut selon le type, si non fournie explicitement.
+                    if key == "device_type" and "temp_min" not in changes and "temp_max" not in changes:
+                        if str(value) == "wiser":
+                            device["temp_min"] = 0.0
+                            device["temp_max"] = 30.0
+                        else:
+                            device["temp_min"] = 16.0
+                            device["temp_max"] = 30.0
                 elif key == "enabled":
                     device[key] = 1 if value in (1, "1", True, "true", "on") else 0
                 elif key == "position":
                     device[key] = int(value)
+                elif key in ("temp_min", "temp_max"):
+                    try:
+                        number = float(value)
+                    except (TypeError, ValueError) as err:
+                        raise ValueError("Plage de température invalide") from err
+                    if key == "temp_min":
+                        device[key] = round(max(-10.0, min(30.0, number)), 1)
+                    else:
+                        device[key] = round(max(0.0, min(40.0, number)), 1)
+                    if device.get("temp_min", 0) > device.get("temp_max", 30):
+                        device["temp_min"], device["temp_max"] = device["temp_max"], device["temp_min"]
                 else:
                     device[key] = int(value or 0)
             self.mark_structure()
@@ -749,13 +776,37 @@ class MemoryStore:
                     )
                 ]
 
+            # Plage de température selon l'appareil concerné (défaut 16-30).
+            _device = None
+            if device_id is not None:
+                _device = self._devices.get(int(device_id))
+            elif room_id is not None:
+                _room = next(
+                    (item for item in self._rooms if int(item["id"]) == int(room_id)),
+                    None,
+                )
+                if _room:
+                    for _key in ("actuator_device_id", "thermostat_device_id"):
+                        _value = _room.get(_key)
+                        if _value not in (None, "", 0, "0"):
+                            try:
+                                _device = self._devices.get(int(_value))
+                                if _device:
+                                    break
+                            except (TypeError, ValueError):
+                                pass
+            _tmin = float((_device or {}).get("temp_min", 16.0) or 16.0)
+            _tmax = float((_device or {}).get("temp_max", 30.0) or 30.0)
+            if _tmin > _tmax:
+                _tmin, _tmax = _tmax, _tmin
+
             for weekday, day in enumerate(days):
                 for slot in day or []:
                     mode = str(slot.get("mode", "off"))
                     if mode not in VALID_MODES:
                         raise ValueError(f"Mode inconnu : {mode}")
                     minutes = _to_minutes(slot.get("time", "00:00"))
-                    temp = max(16.0, min(30.0, float(slot.get("temp", 20))))
+                    temp = max(_tmin, min(_tmax, float(slot.get("temp", 20))))
                     self._slots.append(
                         {
                             "id": self._next_slot_id,
@@ -807,7 +858,12 @@ class MemoryStore:
     ) -> None:
         if mode not in VALID_MODES:
             raise ValueError("Mode inconnu")
-        temp = max(16.0, min(30.0, float(temp)))
+        device = self._devices.get(int(device_id))
+        _tmin = float((device or {}).get("temp_min", 16.0) or 16.0)
+        _tmax = float((device or {}).get("temp_max", 30.0) or 30.0)
+        if _tmin > _tmax:
+            _tmin, _tmax = _tmax, _tmin
+        temp = max(_tmin, min(_tmax, float(temp)))
         with self._lock:
             self._overrides[int(device_id)] = {
                 "device_id": int(device_id),

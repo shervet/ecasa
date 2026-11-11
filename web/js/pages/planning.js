@@ -8,6 +8,7 @@ import { toast, toastError } from "../toast.js";
 import {
   clamp,
   describeSlot,
+  deviceTempRange,
   escapeHtml,
   fmtDate,
   fmtTemp,
@@ -241,44 +242,10 @@ export default {
         <div class="card card-pad">
           <div class="row-between wrap" style="gap:10px">
             <div>
-              <div class="card-title">${icon("copy", 18)} Modèles personnalisés</div>
-              <p class="hint mt-1">Sauvegarde la semaine en cours d'une pièce, réapplique-la plus tard.</p>
+              <div class="card-title">${icon("sliders", 18)} Modèles</div>
+              <p class="hint mt-1">Crée, édite et applique un planning à plusieurs pièces depuis la page Modèles.</p>
             </div>
-            <div class="row wrap" style="gap:8px;align-items:center">
-              <select class="select" id="planModelRoom" style="width:auto">
-                ${targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
-              </select>
-              <input class="input" id="planModelName" placeholder="Nom du modèle" style="width:min(200px,50vw)">
-              <button class="btn btn-sm" type="button" id="planModelSave">${icon("save", 14)} Sauvegarder</button>
-            </div>
-          </div>
-          <div class="row wrap" style="gap:8px;align-items:center;margin-top:8px">
-            <select class="select" id="planModelList" style="width:auto;min-width:200px"><option value="">— choisir un modèle —</option></select>
-            <button class="btn btn-sm" type="button" id="planModelApply">${icon("check", 14)} Appliquer à la pièce sélectionnée</button>
-            <button class="btn btn-sm btn-danger" type="button" id="planModelDelete">${icon("trash", 14)} Supprimer</button>
-          </div>
-        </div>
-
-        <div class="card card-pad" id="modelInlineBox" style="display:none;margin-top:10px">
-          <div class="row-between wrap" style="gap:10px">
-            <div>
-              <div class="card-title">${icon("edit", 18)} Édition du modèle <span id="modelInlineName"></span></div>
-              <p class="hint mt-1">Renomme le modèle ou modifie ses créneaux, puis clique sur « Enregistrer le modèle ».</p>
-            </div>
-            <div class="week-switch" id="modelInlineWeekSwitch">
-              <button type="button" data-model-week="A">Semaine A</button>
-              <button type="button" data-model-week="B">Semaine B</button>
-            </div>
-          </div>
-          <label class="field" style="margin-top:10px;max-width:340px">
-            <span class="label">Nom du modèle</span>
-            <input class="input" id="modelInlineRename" maxlength="60" placeholder="Nom du modèle" autocomplete="off">
-          </label>
-          <div class="week-grid" id="modelInlineGrid"></div>
-          <div class="row wrap" style="gap:8px;margin-top:10px">
-            <button class="btn btn-sm btn-primary" type="button" data-model-save>${icon("save", 14)} Enregistrer le modèle</button>
-            <button class="btn btn-sm btn-danger" type="button" data-model-delete>${icon("trash", 14)} Supprimer le modèle</button>
-            <button class="btn btn-sm" type="button" data-model-close>${icon("x", 14)} Fermer</button>
+            <a class="btn" href="#/models">${icon("chevron-right", 15)} Ouvrir les modèles</a>
           </div>
         </div>
       </div>
@@ -309,10 +276,8 @@ export default {
     paintSub();
 
     const presetRoomSelect = view.querySelector("#planPresetRoom");
-    const modelRoomSelect = view.querySelector("#planModelRoom");
     const roomOptions = targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("");
     if (presetRoomSelect) presetRoomSelect.innerHTML = roomOptions;
-    if (modelRoomSelect) modelRoomSelect.innerHTML = roomOptions;
 
     view.querySelectorAll("[data-week]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -349,93 +314,12 @@ export default {
       applyWeekPreset(presetKey);
     });
 
-    root?.querySelector("#planModelSave")?.addEventListener("click", () => {
-      const name = root.querySelector("#planModelName")?.value?.trim();
-      const roomId = root.querySelector("#planModelRoom")?.value;
-      const t = targets.find((x) => x.id === roomId);
-      if (!name) { toast("Donne un nom au modèle.", { type: "warn" }); return; }
-      if (!t) { toast("Choisis une pièce.", { type: "warn" }); return; }
-      rebuildModels();
-      const model = models[t.id];
-      if (!model) { toast("Aucun planning à sauvegarder.", { type: "warn" }); return; }
-      let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-      saved.push({ name, room: t.label, days: { A: model.A, B: model.B } });
-      localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
-      toast(`Modèle « ${name} » sauvegardé.`);
-      loadModels();
-    });
-
-    root?.querySelector("#planModelList")?.addEventListener("change", () => {
-      const select = root.querySelector("#planModelList");
-      const idx = Number(select?.value);
-      if (!Number.isInteger(idx) || idx < 0) { hideModelInline(); return; }
-      let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-      const m = saved[idx];
-      if (!m) { hideModelInline(); return; }
-      showModelInline(idx, m);
-    });
-
-    root?.querySelector("#planModelApply")?.addEventListener("click", () => {
-      const select = root.querySelector("#planModelList");
-      const idx = Number(select?.value);
-      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-      const m = saved[idx];
-      if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
-      const roomId = root.querySelector("#planModelRoom")?.value;
-      const t = targets.find((x) => x.id === roomId);
-      if (!t) { toast("Choisis une pièce.", { type: "warn" }); return; }
-      if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;
-      t.device.programs = t.device.programs || {};
-      t.device.programs.A = cloneDays(m.days?.A);
-      t.device.programs.B = cloneDays(m.days?.B);
-      rebuildModels();
-      dirty = true;
-      paintRooms();
-      paintDirty();
-      toast(`Modèle « ${m.name} » appliqué.`);
-    });
-
-    root?.querySelector("#planModelDelete")?.addEventListener("click", () => {
-      const select = root.querySelector("#planModelList");
-      const idx = Number(select?.value);
-      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-      const name = saved[idx]?.name;
-      if (!confirm(`Supprimer le modèle${name ? ` « ${name} »` : ""} ?`)) return;
-      saved.splice(idx, 1);
-      localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
-      toast("Modèle supprimé.");
-      loadModels();
-      hideModelInline();
-    });
-
-    // Boutons du panneau d'édition inline d'un modèle
-    view.querySelectorAll("[data-model-week]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (!inlineModel) return;
-        inlineModel.week = btn.dataset.modelWeek === "B" ? "B" : "A";
-        paintInlineWeekSwitch();
-        renderModelInlineGrid();
-      });
-    });
-    view.querySelector("[data-model-save]")?.addEventListener("click", saveInlineModel);
-    view.querySelector("[data-model-delete]")?.addEventListener("click", deleteInlineModel);
-    view.querySelector("[data-model-close]")?.addEventListener("click", hideModelInline);
-
-    loadModels();
-
     window.addEventListener("beforeunload", warnUnload);
   },
 
   unmount() {
     closeSheet();
     window.removeEventListener("beforeunload", warnUnload);
-    inlineModel = null;
     root = null;
   },
 
@@ -444,266 +328,6 @@ export default {
     paintLive();
   },
 };
-
-function modelOptions() {
-  let saved = [];
-  try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-  return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
-}
-
-function loadModels() {
-  const select = root?.querySelector("#planModelList");
-  if (!select) return;
-  let savedModels = [];
-  try { savedModels = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { savedModels = []; }
-  select.innerHTML = '<option value="">— choisir un modèle —</option>' + savedModels.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
-}
-
-/* --------------------------------------------------- édition inline d'un modèle */
-
-// État de l'édition inline d'un modèle.
-let inlineModel = null; // { index, name, days: { A, B }, week: "A"|"B" }
-
-function showModelInline(modelIndex, model) {
-  const inlineBox = root?.querySelector("#modelInlineBox");
-  if (!inlineBox) return;
-  inlineModel = {
-    index: modelIndex,
-    name: model.name || "",
-    days: {
-      A: cloneDays(model.days?.A),
-      B: cloneDays(model.days?.B),
-    },
-    week: week === "B" ? "B" : "A",
-  };
-  const nameNode = root.querySelector("#modelInlineName");
-  if (nameNode) nameNode.textContent = `« ${inlineModel.name} »`;
-  const renameInput = root.querySelector("#modelInlineRename");
-  if (renameInput) renameInput.value = inlineModel.name;
-  inlineBox.style.display = "block";
-  paintInlineWeekSwitch();
-  renderModelInlineGrid();
-  inlineBox.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-function paintInlineWeekSwitch() {
-  root?.querySelectorAll("[data-model-week]").forEach((btn) => {
-    btn.classList.toggle("is-active", btn.dataset.modelWeek === inlineModel?.week);
-  });
-}
-
-function renderModelInlineGrid() {
-  const grid = root?.querySelector("#modelInlineGrid");
-  if (!grid || !inlineModel) return;
-  const dates = weekDates(mondayOf(new Date()));
-  const weekKey = inlineModel.week;
-  const days = inlineModel.days[weekKey] || Array.from({ length: 7 }, () => []);
-
-  let html = "";
-  for (let index = 0; index < 7; index++) {
-    const d = parseDate(dates[index]) || new Date();
-    const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
-    const slots = (days[index] || []).slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
-    let rows = "";
-    if (slots.length) {
-      for (const slot of slots) {
-        const end = slotEnd(days[index] || [], slot);
-        const slotIndex = (days[index] || []).indexOf(slot);
-        rows += `<button type="button" class="week-slot" data-mday="${index}" data-mslot="${slotIndex}" style="--slot-color:${modeColor(slot.mode)}">`;
-        rows += `<span class="week-slot-time">${escapeHtml(slot.time)}${end ? "–" + escapeHtml(end) : ""}</span>`;
-        rows += `<span class="week-slot-temp">${fmtTemp(slot.temp)} °C</span>`;
-        rows += `<span class="week-slot-mode">${escapeHtml(modeLabel(slot.mode, store.meta))}</span>`;
-        rows += "</button>";
-      }
-    } else {
-      rows = '<div class="week-slot week-slot-empty">—</div>';
-    }
-    html += '<div class="week-col">';
-    html += '<div class="week-col-head">';
-    html += `<span class="week-col-dow">${weekdayShort(index)}</span>`;
-    html += `<span class="week-col-dom">${dom}</span>`;
-    html += "</div>";
-    html += '<div class="week-col-body">';
-    html += rows;
-    html += `<button type="button" class="week-add" data-madd="${index}" title="Ajouter un créneau">+</button>`;
-    html += "</div></div>";
-  }
-  grid.innerHTML = html;
-
-  grid.querySelectorAll(".week-slot[data-mday]").forEach((el) => {
-    el.addEventListener("click", () => {
-      openModelSlotEditorInline(Number(el.dataset.mday), Number(el.dataset.mslot));
-    });
-  });
-  grid.querySelectorAll(".week-add").forEach((el) => {
-    el.addEventListener("click", () => {
-      openModelSlotEditorInline(Number(el.dataset.madd), null);
-    });
-  });
-}
-
-function openModelSlotEditorInline(dayIndex, slotIndex) {
-  if (!inlineModel) return;
-  const days = inlineModel.days[inlineModel.week] ||
-    (inlineModel.days[inlineModel.week] = Array.from({ length: 7 }, () => []));
-  const slots = days[dayIndex] || (days[dayIndex] = []);
-  const existing = slotIndex !== null && slotIndex >= 0 ? slots[slotIndex] : null;
-  let time = existing?.time || "09:00";
-  let mode = existing?.mode || "heat";
-  let temp = Number(existing?.temp ?? 20);
-
-  const body = document.createElement("div");
-  body.className = "stack";
-  body.innerHTML = `
-    <p class="hint" style="margin:0 0 8px">Semaine ${escapeHtml(week)}</p>
-    <div class="form-grid">
-      <label class="field">
-        <span class="label">Heure</span>
-        <input class="input" type="time" step="900" value="${escapeHtml(time)}" data-time>
-      </label>
-      <label class="field">
-        <span class="label">Consigne</span>
-        <div class="input-row">
-          <button class="btn btn-sm" type="button" data-temp="-1">−</button>
-          <input class="input" type="number" min="16" max="30" step="0.5" value="${temp}" data-temp-input style="text-align:center">
-          <button class="btn btn-sm" type="button" data-temp="1">+</button>
-        </div>
-      </label>
-    </div>
-    <div class="field">
-      <span class="label">Mode</span>
-      <div class="mode-grid" data-mode-grid>
-        ${modesList(store.meta)
-          .map(
-            ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
-              ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
-            </button>`
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
-
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:8px;width:100%";
-  footer.innerHTML = `
-    ${existing ? `<button class="btn btn-danger" type="button" data-delete>${icon("trash", 17)} Supprimer</button>` : ""}
-    <button class="btn btn-primary" type="button" data-validate>${icon("check", 17)} ${existing ? "Mettre à jour" : "Ajouter"}</button>
-  `;
-
-  const sheet = openSheet({
-    title: existing ? "Modifier le créneau" : "Nouveau créneau",
-    sub: `${weekdayLong(dayIndex)} · modèle ${inlineModel.name}`,
-    body,
-    footer,
-  });
-
-  const timeInput = body.querySelector("[data-time]");
-  const tempInput = body.querySelector("[data-temp-input]");
-  const paint = () => {
-    body.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("is-active", b.dataset.mode === mode));
-    tempInput.value = String(temp);
-  };
-  timeInput.addEventListener("input", () => { time = timeInput.value || time; });
-  body.querySelectorAll("[data-temp]").forEach((b) => {
-    b.addEventListener("click", () => { temp = clamp(temp + Number(b.dataset.temp) * 0.5, 16, 30); paint(); });
-  });
-  tempInput.addEventListener("input", () => { temp = clamp(tempInput.value, 16, 30); });
-  body.querySelectorAll("[data-mode]").forEach((b) => {
-    b.addEventListener("click", () => { mode = b.dataset.mode; paint(); });
-  });
-  paint();
-
-  footer.querySelector("[data-validate]")?.addEventListener("click", () => {
-    const slot = { time: timeInput.value || "00:00", mode, temp: Number(clamp(temp, 16, 30)) };
-    if (existing) {
-      const idx = slots.indexOf(existing);
-      if (idx >= 0) slots[idx] = slot;
-      else slots.push(slot);
-    } else {
-      slots.push(slot);
-    }
-    slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
-    closeSheet();
-    renderModelInlineGrid();
-  });
-
-  footer.querySelector("[data-delete]")?.addEventListener("click", () => {
-    if (existing) {
-      const idx = slots.indexOf(existing);
-      if (idx >= 0) slots.splice(idx, 1);
-    }
-    closeSheet();
-    renderModelInlineGrid();
-  });
-
-  return sheet;
-}
-
-function saveInlineModel() {
-  if (!inlineModel) return;
-  const renameInput = root?.querySelector("#modelInlineRename");
-  const newName = String(renameInput?.value ?? inlineModel.name).trim();
-  if (!newName) { toast("Donne un nom au modèle.", { type: "warn" }); renameInput?.focus(); return; }
-
-  let saved = [];
-  try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-  // Re-résout l'index par nom : l'ordre a pu changer (import Wiser, suppression).
-  const wanted = String(inlineModel.name || "").trim().toLowerCase();
-  let index = saved.findIndex(
-    (m) => m && String(m.name || "").trim().toLowerCase() === wanted
-  );
-  if (index < 0) index = inlineModel.index;
-  if (!saved[index]) { toast("Modèle introuvable.", { type: "warn" }); return; }
-
-  const duplicate = saved.some(
-    (m, i) => i !== index && m && String(m.name || "").trim().toLowerCase() === newName.toLowerCase()
-  );
-  if (duplicate) { toast("Un modèle porte déjà ce nom.", { type: "warn" }); renameInput?.focus(); return; }
-
-  saved[index] = {
-    ...saved[index],
-    name: newName,
-    days: {
-      A: cloneDays(inlineModel.days.A),
-      B: cloneDays(inlineModel.days.B),
-    },
-  };
-  inlineModel.index = index;
-  inlineModel.name = newName;
-  localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
-  const nameNode = root?.querySelector("#modelInlineName");
-  if (nameNode) nameNode.textContent = `« ${newName} »`;
-  toast(`Modèle « ${newName} » mis à jour.`);
-  loadModels();
-  const select = root?.querySelector("#planModelList");
-  if (select) select.value = String(index);
-}
-
-function deleteInlineModel() {
-  if (!inlineModel) return;
-  let saved = [];
-  try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-  const wanted = String(inlineModel.name || "").trim().toLowerCase();
-  let index = saved.findIndex(
-    (m) => m && String(m.name || "").trim().toLowerCase() === wanted
-  );
-  if (index < 0) index = inlineModel.index;
-  const name = saved[index]?.name || inlineModel.name;
-  if (!saved[index]) { toast("Modèle introuvable.", { type: "warn" }); return; }
-  if (!confirm(`Supprimer le modèle « ${name} » ?`)) return;
-  saved.splice(index, 1);
-  localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
-  hideModelInline();
-  loadModels();
-  toast("Modèle supprimé.");
-}
-
-function hideModelInline() {
-  const inlineBox = root?.querySelector("#modelInlineBox");
-  if (inlineBox) inlineBox.style.display = "none";
-  inlineModel = null;
-}
 
 /* --------------------------------------------------------------- cibles */
 
@@ -1035,238 +659,6 @@ function slotEnd(slots, slot) {
   return next ? next.time : null;
 }
 
-function openModelEditor(modelIndex, model) {
-  const monday = mondayOf(new Date());
-  const dates = weekDates(monday);
-  const modelCopy = {
-    A: cloneDays(model.days?.A),
-    B: cloneDays(model.days?.B),
-  };
-  let currentWeek = week === "B" ? "B" : "A";
-
-  const body = document.createElement("div");
-  body.className = "stack";
-  body.innerHTML = `
-    <div class="row-between wrap" style="gap:10px;align-items:center">
-      <div>
-        <div class="card-title">Édition du modèle « ${escapeHtml(model.name)} »</div>
-        <p class="hint mt-1">Édite les créneaux comme dans le planning. Les modifications sont sauvegardées dans le modèle.</p>
-      </div>
-      <div class="week-switch">
-        <button type="button" data-mweek="A"${currentWeek === "A" ? ' class="is-active"' : ""}>Semaine A</button>
-        <button type="button" data-mweek="B"${currentWeek === "B" ? ' class="is-active"' : ""}>Semaine B</button>
-      </div>
-    </div>
-    <div class="week-grid" id="modelWeekGrid"></div>
-  `;
-
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:8px;width:100%";
-  footer.innerHTML = `
-    <button class="btn" type="button" data-cancel>Annuler</button>
-    <button class="btn btn-primary" type="button" data-save-model>${icon("save", 17)} Enregistrer le modèle</button>
-  `;
-
-  const sheet = openSheet({
-    title: "Éditeur de modèle",
-    sub: model.name,
-    body,
-    footer,
-  });
-
-  function renderGrid() {
-    const grid = body.querySelector("#modelWeekGrid");
-    if (!grid) return;
-    const days = modelCopy[currentWeek] || Array.from({ length: 7 }, () => []);
-    let html = "";
-    for (let index = 0; index < days.length; index++) {
-      const date = dates[index];
-      const d = parseDate(date) || new Date();
-      const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
-      const slots = days[index] || [];
-      const items = slots.slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
-      let rows = "";
-      if (items.length) {
-        for (const slot of items) {
-          const end = slotEnd(slots, slot);
-          const slotIndex = slots.indexOf(slot);
-          rows += '<button type="button" class="week-slot" data-mday="' + index + '" data-mslot="' + slotIndex + '" style="--slot-color:' + modeColor(slot.mode) + '">';
-          rows += '<span class="week-slot-time">' + escapeHtml(slot.time) + (end ? "\u2013" + escapeHtml(end) : "") + '</span>';
-          rows += '<span class="week-slot-temp">' + fmtTemp(slot.temp) + ' °C</span>';
-          rows += '<span class="week-slot-mode">' + escapeHtml(modeLabel(slot.mode, store.meta)) + '</span>';
-          rows += '</button>';
-        }
-      } else {
-        rows = '<div class="week-slot week-slot-empty">—</div>';
-      }
-      html += '<div class="week-col">';
-      html += '<div class="week-col-head">';
-      html += '<span class="week-col-dow">' + weekdayShort(index) + '</span>';
-      html += '<span class="week-col-dom">' + dom + '</span>';
-      html += '</div>';
-      html += '<div class="week-col-body">';
-      html += rows;
-      html += '<button type="button" class="week-add" data-madd="' + index + '" title="Ajouter un créneau">+</button>';
-      html += '</div></div>';
-    }
-    grid.innerHTML = html;
-
-    grid.querySelectorAll(".week-slot[data-mday]").forEach((el) => {
-      el.addEventListener("click", () => {
-        openModelSlotEditor(modelCopy, currentWeek, Number(el.dataset.mday), Number(el.dataset.mslot), () => renderGrid());
-      });
-    });
-    grid.querySelectorAll(".week-add").forEach((el) => {
-      el.addEventListener("click", () => {
-        openModelSlotEditor(modelCopy, currentWeek, Number(el.dataset.madd), null, () => renderGrid());
-      });
-    });
-  }
-
-  body.querySelectorAll("[data-mweek]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      body.querySelectorAll("[data-mweek]").forEach((b) => b.classList.toggle("is-active", b === btn));
-      currentWeek = btn.dataset.mweek === "B" ? "B" : "A";
-      renderGrid();
-    });
-  });
-
-  footer.querySelector("[data-cancel]")?.addEventListener("click", () => closeSheet());
-  footer.querySelector("[data-save-model]")?.addEventListener("click", () => {
-    let saved = [];
-    try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
-    if (saved[modelIndex]) {
-      saved[modelIndex] = {
-        ...saved[modelIndex],
-        days: {
-          A: cloneDays(modelCopy.A),
-          B: cloneDays(modelCopy.B),
-        },
-      };
-      localStorage.setItem("mecasa.weekModels", JSON.stringify(saved));
-      toast("Modèle mis à jour.");
-      loadModels();
-      closeSheet();
-    }
-  });
-
-  renderGrid();
-  return sheet;
-}
-
-function openModelSlotEditor(modelCopy, weekKey, dayIndex, slotIndex, onChange) {
-  const days = modelCopy[weekKey];
-  const slots = days[dayIndex] || [];
-  const existing = slotIndex !== null ? slots[slotIndex] : null;
-  let time = existing?.time || "09:00";
-  let mode = existing?.mode || "heat";
-  let temp = Number(existing?.temp ?? 20);
-
-  const body = document.createElement("div");
-  body.className = "stack";
-  body.innerHTML = `
-    <p class="hint" style="margin:0 0 8px">Semaine ${escapeHtml(week)}</p>
-    <div class="form-grid">
-      <label class="field">
-        <span class="label">Heure</span>
-        <input class="input" type="time" step="900" value="${escapeHtml(time)}" data-time>
-      </label>
-      <label class="field">
-        <span class="label">Consigne</span>
-        <div class="input-row">
-          <button class="btn btn-sm" type="button" data-temp="-1">−</button>
-          <input class="input" type="number" min="16" max="30" step="0.5" value="${temp}" data-temp-input style="text-align:center">
-          <button class="btn btn-sm" type="button" data-temp="1">+</button>
-        </div>
-      </label>
-    </div>
-    <div class="field">
-      <span class="label">Mode</span>
-      <div class="mode-grid" data-mode-grid>
-        ${modesList(store.meta)
-          .map(
-            ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
-              ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
-            </button>`
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
-
-  const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:8px;width:100%";
-  footer.innerHTML = `
-    ${existing ? `<button class="btn btn-danger" type="button" data-delete>${icon("trash", 17)} Supprimer</button>` : ""}
-    <button class="btn btn-primary" type="button" data-validate>${icon("check", 17)} ${existing ? "Mettre à jour" : "Ajouter"}</button>
-  `;
-
-  const sheet = openSheet({
-    title: existing ? "Modifier le créneau" : "Nouveau créneau",
-    sub: `${weekdayLong(dayIndex)} · semaine ${weekKey}`,
-    body,
-    footer,
-  });
-
-  const timeInput = body.querySelector("[data-time]");
-  const tempInput = body.querySelector("[data-temp-input]");
-
-  const paint = () => {
-    body.querySelectorAll("[data-mode]").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.mode === mode);
-    });
-    tempInput.value = String(temp);
-  };
-
-  timeInput.addEventListener("input", () => { time = timeInput.value || time; });
-  body.querySelectorAll("[data-temp]").forEach((button) => {
-    button.addEventListener("click", () => {
-      temp = clamp(temp + Number(button.dataset.temp) * 0.5, 16, 30);
-      paint();
-    });
-  });
-  tempInput.addEventListener("input", () => { temp = clamp(tempInput.value, 16, 30); });
-  body.querySelectorAll("[data-mode]").forEach((button) => {
-    button.addEventListener("click", () => {
-      mode = button.dataset.mode;
-      paint();
-    });
-  });
-
-  paint();
-
-  footer.querySelector("[data-validate]")?.addEventListener("click", () => {
-    const slot = {
-      time: timeInput.value || "00:00",
-      mode,
-      temp: Number(clamp(temp, 16, 30)),
-    };
-    if (existing) {
-      const idx = slots.indexOf(existing);
-      if (idx >= 0) slots[idx] = slot;
-      else slots.push(slot);
-    } else {
-      slots.push(slot);
-    }
-    slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
-    days[dayIndex] = slots;
-    closeSheet();
-    if (onChange) onChange();
-  });
-
-  footer.querySelector("[data-delete]")?.addEventListener("click", () => {
-    if (existing) {
-      const idx = slots.indexOf(existing);
-      if (idx >= 0 && idx < slots.length) slots.splice(idx, 1);
-    }
-    days[dayIndex] = slots;
-    closeSheet();
-    if (onChange) onChange();
-  });
-
-  return sheet;
-}
-
 function paintDirty() {
   const node = root?.querySelector("#planDirty");
   const button = root?.querySelector("#planSave");
@@ -1296,7 +688,8 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
   const existing = slotIndex !== null ? slots[slotIndex] : null;
   let time = existing?.time || minutesToTime(minutes);
   let mode = existing?.mode || "heat";
-  let temp = Number(existing?.temp ?? 20);
+  const { min: tempMin, max: tempMax } = deviceTempRange(target.device);
+  let temp = clamp(Number(existing?.temp ?? 20), tempMin, tempMax);
 
   const body = document.createElement("div");
   body.className = "stack";
@@ -1311,7 +704,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
         <span class="label">Consigne</span>
         <div class="input-row">
           <button class="btn btn-sm" type="button" data-temp="-1">−</button>
-          <input class="input" type="number" min="16" max="30" step="0.5" value="${temp}" data-temp-input style="text-align:center">
+          <input class="input" type="number" min="${tempMin}" max="${tempMax}" step="0.5" value="${temp}" data-temp-input style="text-align:center">
           <button class="btn btn-sm" type="button" data-temp="1">+</button>
         </div>
       </label>
@@ -1372,13 +765,13 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
 
   body.querySelectorAll("[data-temp]").forEach((button) => {
     button.addEventListener("click", () => {
-      temp = clamp(temp + Number(button.dataset.temp) * 0.5, 16, 30);
+      temp = clamp(temp + Number(button.dataset.temp) * 0.5, tempMin, tempMax);
       paint();
     });
   });
 
   tempInput.addEventListener("input", () => {
-    temp = clamp(tempInput.value, 16, 30);
+    temp = clamp(tempInput.value, tempMin, tempMax);
   });
 
   body.querySelectorAll("[data-mode]").forEach((button) => {
@@ -1397,7 +790,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
     const slot = {
       time: timeInput.value || "00:00",
       mode,
-      temp: Number(clamp(temp, 16, 30)),
+      temp: Number(clamp(temp, tempMin, tempMax)),
     };
 
     if (existing) {

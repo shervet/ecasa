@@ -759,6 +759,15 @@ function serverSection() {
       </div>
       <div id="systemInfo" class="stack"></div>
     </div>
+    <div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
+      <div class="row-between wrap" style="gap:10px">
+        <div>
+          <strong style="font-size:13px">Journal du serveur</strong>
+          <p class="hint mt-1">Événements, actions et erreurs du moteur.</p>
+        </div>
+        <button class="btn" type="button" data-open-logs>${icon("list", 16)} Ouvrir le journal</button>
+      </div>
+    </div>
     <div class="row wrap" style="gap:8px">
       <button class="btn" type="button" id="exportBtn">${icon("download", 15)} Exporter les données</button>
       <button class="btn" type="button" id="importBtn">${icon("upload", 15)} Importer</button>
@@ -843,6 +852,11 @@ function bind() {
       window.dispatchEvent(new CustomEvent("mecasa:theme", { detail: theme }));
       root.querySelectorAll("[data-theme]").forEach((item) => item.classList.toggle("is-active", item === button));
     });
+  });
+
+  // Journal déplacé ici : le menu principal est réservé aux usages quotidiens.
+  root.querySelector("[data-open-logs]")?.addEventListener("click", () => {
+    location.hash = "#/logs";
   });
 
   root.querySelector("#installHelp")?.addEventListener("click", () => {
@@ -1632,6 +1646,20 @@ function openRoomEditor(room) {
 
   const value = (selector) => body.querySelector(selector)?.value ?? "";
 
+  val("[data-device-type]")?.addEventListener("change", () => {
+    const t = val("[data-device-type]").value;
+    const minInput = val("[data-temp-min]");
+    const maxInput = val("[data-temp-max]");
+    if (!minInput || !maxInput) return;
+    if (t === "wiser") {
+      minInput.value = 0;
+      maxInput.value = 30;
+    } else {
+      minInput.value = 16;
+      maxInput.value = 30;
+    }
+  });
+
   footer.querySelector("[data-validate]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
@@ -1712,6 +1740,7 @@ function renderDevices() {
             <div class="sr-title">${escapeHtml(device.name)} <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}" style="margin-left:6px">${isWiser ? "Wiser" : "Atlantic"}</span></div>
             <div class="sr-sub">
               ${escapeHtml(room || "Sans pièce")} · ${fmtTemp(ambient)} °C
+              · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
               ${Number(device.enabled) === 0 ? " · pilotage désactivé" : ""}
               ${device.current?.available === false ? " · hors ligne" : ""}
             </div>
@@ -1805,6 +1834,14 @@ function openDeviceEditor(device) {
         <span class="label">Zone Wiser <span class="opt">0 si non Wiser</span></span>
         <input class="input" data-wiser-room type="number" min="0" value="${escapeHtml(device.wiser_room_id ?? 0)}">
       </label>
+      <label class="field">
+        <span class="label">Temp. min (°C)</span>
+        <input class="input" data-temp-min type="number" min="-10" max="30" step="0.5" value="${escapeHtml(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}">
+      </label>
+      <label class="field">
+        <span class="label">Temp. max (°C)</span>
+        <input class="input" data-temp-max type="number" min="0" max="40" step="0.5" value="${escapeHtml(device.temp_max ?? 30)}">
+      </label>
     </div>
     ${row("Pilotage autorisé", "Désactive pour ignorer cet appareil sans le retirer.", `<label class="switch"><input type="checkbox" data-enabled${Number(device.enabled) !== 0 ? " checked" : ""}><span class="track"></span></label>`)}
     <label class="field">
@@ -1848,6 +1885,8 @@ function openDeviceEditor(device) {
         room_id: val("[data-room]").value || null,
         position: number("[data-position]"),
         wiser_room_id: number("[data-wiser-room]"),
+        temp_min: Number(val("[data-temp-min]")?.value || 0),
+        temp_max: Number(val("[data-temp-max]")?.value || 0),
         enabled: val("[data-enabled]").checked ? 1 : 0,
         temp_sensor_device_id: number("[data-temp-sensor]"),
         cap_mode: number("[data-cap-mode]"),

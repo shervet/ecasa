@@ -3158,3 +3158,69 @@ svg {
 @media (max-width: 720px) {
   .week-grid { grid-template-columns: repeat(7, minmax(68px, 1fr)); overflow-x: auto; }
 }
+
+/* --------------------------------------------------------------- modèles */
+
+/* Lignes cliquables (liste des modèles, choix des pièces) : la sélection se
+   fait au tap, sans menu déroulant. Le bouton occupe toute la ligne, donc pas
+   de zone morte ni de <div> cliquable. */
+.model-pick {
+  cursor: pointer;
+}
+.model-pick:hover,
+.model-pick:focus-within {
+  background: var(--surface-2);
+}
+.model-pick.is-on {
+  background: var(--primary-soft);
+}
+.model-pick .li-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.model-pick .li-main:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+.model-pick .li-main .li-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-pick .li-main .li-sub {
+  display: block;
+}
+.model-pick .model-room {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.model-pick .li-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: transparent;
+}
+.model-pick.is-on .li-check {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}

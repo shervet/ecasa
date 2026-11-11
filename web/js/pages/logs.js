@@ -32,6 +32,7 @@ export default {
       <div class="page">
         <div class="page-head">
           <div>
+            <button class="btn btn-sm btn-ghost" type="button" id="logsBack">${icon("chevron-left", 16)} Réglages</button>
             <h1 class="page-title">Journal</h1>
             <p class="page-sub" id="logsSub">Les derniers événements du moteur.</p>
           </div>
@@ -91,6 +92,10 @@ export default {
       render();
     });
 
+    view.querySelector("#logsBack")?.addEventListener("click", () => {
+      location.hash = "#/settings";
+    });
+
     view.querySelector("#logsRefresh")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
       button.disabled = true;
@@ -116,6 +121,7 @@ export default {
       try {
         const payload = await del("/api/logs");
         await refreshState({ silent: false });
+        try { localStorage.setItem("mecasa.seenErrorCount", "0"); } catch {}
         render();
         const cleared = Number(payload?.cleared ?? count);
         const clearedLabel = `évènement${cleared > 1 ? "s" : ""}`;
@@ -128,6 +134,7 @@ export default {
     });
 
     render();
+    markErrorsSeen();
   },
 
   unmount() {
@@ -135,9 +142,19 @@ export default {
   },
 
   onState() {
+    markErrorsSeen();
     render();
   },
 };
+
+function markErrorsSeen() {
+  const errors = (store.state?.logs || []).filter((entry) => entry.level === "erreur").length;
+  try {
+    localStorage.setItem("mecasa.seenErrorCount", String(errors));
+  } catch {
+    /* ignore */
+  }
+}
 
 function entries() {
   return Array.isArray(store.state?.logs) ? store.state.logs : [];

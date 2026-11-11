@@ -721,13 +721,14 @@ def parse_med_start(value, today: date | None = None) -> date:
 
 
 def _tooltip_row(year: int, total: float | None, count: int,
-                 today: date) -> dict:
+                 today: date, variation: float | None = None) -> dict:
     """Une ligne du tableau flottant (clic sur une barre) pour une année."""
     return {
         "label": str(year),
         "year": year,
         "value": _round(total) if count else None,
         "days": count,
+        "variation": _round(variation),
         "color": _year_color(year, today),
     }
 
@@ -773,12 +774,23 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
                 "color": _year_color(year, today),
             })
         payload["series"] = series
+        tooltip_rows = []
+        for i, year in enumerate(years):
+            if i > 0 and counts[year]:
+                prev_total = totals[years[i - 1]]
+                prev_count = counts[years[i - 1]]
+                if prev_count and prev_total:
+                    variation = (totals[year] - prev_total) / prev_total * 100
+                else:
+                    variation = None
+            else:
+                variation = None
+            tooltip_rows.append(
+                [_tooltip_row(year, totals[year], counts[year], today, variation)]
+            )
         payload["tooltip"] = {
             "labels": payload["labels"],
-            "rows": [
-                [_tooltip_row(year, totals[year], counts[year], today)]
-                for year in years
-            ],
+            "rows": tooltip_rows,
         }
         return
 
@@ -840,15 +852,26 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
             }
             for year in years
         ]
+        tooltip_rows = []
+        for stats in week_stats:
+            row_list = []
+            for i, year in enumerate(years):
+                total, count = stats[year]
+                if i > 0 and count:
+                    prev_total, prev_count = stats[years[i - 1]]
+                    if prev_count and prev_total:
+                        variation = (total - prev_total) / prev_total * 100
+                    else:
+                        variation = None
+                else:
+                    variation = None
+                row_list.append(
+                    _tooltip_row(year, total, count, today, variation)
+                )
+            tooltip_rows.append(row_list)
         payload["tooltip"] = {
             "labels": payload["labels"],
-            "rows": [
-                [
-                    _tooltip_row(year, stats[year][0], stats[year][1], today)
-                    for year in years
-                ]
-                for stats in week_stats
-            ],
+            "rows": tooltip_rows,
         }
         return
 
@@ -893,20 +916,31 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
             }
             for year in years
         ]
+        tooltip_rows = []
+        for day_pair in window["days"]:
+            month_number, day_number = day_pair
+            row_list = []
+            for i, year in enumerate(years):
+                key = (year, month_number, day_number)
+                total = grouped.get(key)
+                count = 1 if key in grouped else 0
+                if i > 0 and total is not None and count:
+                    prev_key = (years[i - 1], month_number, day_number)
+                    prev_total = grouped.get(prev_key)
+                    prev_count = 1 if prev_key in grouped else 0
+                    if prev_count and prev_total:
+                        variation = (total - prev_total) / prev_total * 100
+                    else:
+                        variation = None
+                else:
+                    variation = None
+                row_list.append(
+                    _tooltip_row(year, total, count, today, variation)
+                )
+            tooltip_rows.append(row_list)
         payload["tooltip"] = {
             "labels": payload["labels"],
-            "rows": [
-                [
-                    _tooltip_row(
-                        year,
-                        grouped.get((year, day_number)),
-                        1 if (year, day_number) in grouped else 0,
-                        today,
-                    )
-                    for year in years
-                ]
-                for day_number in window["days"]
-            ],
+            "rows": tooltip_rows,
         }
         return
 
@@ -943,15 +977,26 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         }
         for year in years
     ]
+    tooltip_rows = []
+    for stats in month_stats:
+        row_list = []
+        for i, year in enumerate(years):
+            total, count = stats[year]
+            if i > 0 and count:
+                prev_total, prev_count = stats[years[i - 1]]
+                if prev_count and prev_total:
+                    variation = (total - prev_total) / prev_total * 100
+                else:
+                    variation = None
+            else:
+                variation = None
+            row_list.append(
+                _tooltip_row(year, total, count, today, variation)
+            )
+        tooltip_rows.append(row_list)
     payload["tooltip"] = {
         "labels": payload["labels"],
-        "rows": [
-            [
-                _tooltip_row(year, stats[year][0], stats[year][1], today)
-                for year in years
-            ]
-            for stats in month_stats
-        ],
+        "rows": tooltip_rows,
     }
 
 
