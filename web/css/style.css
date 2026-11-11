@@ -3224,3 +3224,21 @@ svg {
   background: var(--primary);
   color: #fff;
 }
+
+/* --------------------------------------------------------------- planning */
+
+/* Pièce liée à Pronote : planning grisé et non modifiable. */
+.room-plan--readonly {
+  opacity: 0.55;
+  pointer-events: none;
+  filter: grayscale(0.4);
+}
+.room-plan--readonly .room-plan-head {
+  pointer-events: auto;
+}
+.room-plan--readonly .btn[data-unlink-pronote],
+.room-plan--readonly .btn[data-link-pronote] {
+  pointer-events: auto;
+  opacity: 1;
+  filter: none;
+}

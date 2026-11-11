@@ -342,6 +342,7 @@ function buildTargets() {
     if (!devices.length) continue;
     const actuator = devices.find((d) => Number(d.device_id) === Number(room.actuator_device_id));
     const device = actuator || devices[0];
+    const pronoteRoomId = Number(store.state?.settings?.pronote_room_id || 0);
     targets.push({
       id: `room:${room.id}`,
       kind: "room",
@@ -351,6 +352,7 @@ function buildTargets() {
       devices,
       label: room.name,
       sub: `${devices.length} appareil${devices.length > 1 ? "s" : ""}`,
+      pronoteLinked: pronoteRoomId !== 0 && Number(room.id) === pronoteRoomId,
     });
   }
 
@@ -367,6 +369,7 @@ function buildTargets() {
       devices: [device],
       label: device.name,
       sub: "Sans pièce",
+      pronoteLinked: false,
     });
   }
 }
@@ -501,15 +504,21 @@ function paintRooms() {
     const applyBtnClass = "btn btn-sm plan-apply-btn" + (isApplied ? " is-applied" : "");
     const applyBtnDisabled = isApplied ? " disabled" : "";
 
-    html += '<div class="room-plan" data-room-anchor="' + t.id + '">';
+    const isLinked = !!t.pronoteLinked;
+    html += '<div class="room-plan' + (isLinked ? " room-plan--readonly" : "") + '" data-room-anchor="' + t.id + '">';
     html += '<div class="room-plan-head">';
-    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span></div>';
+    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinked ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
     html += deviceSelect;
-    html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '">' + icon("trash", 14) + ' Vider cette pièce</button>';
+    if (isLinked) {
+      html += '<button class="btn btn-sm" type="button" data-unlink-pronote="' + t.id + '">' + icon("x", 14) + ' Désactiver la liaison</button>';
+    } else {
+      html += '<button class="btn btn-sm" type="button" data-link-pronote="' + t.id + '">' + icon("school", 14) + ' Lier à Pronote</button>';
+    }
+    html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '"' + (isLinked ? " disabled" : "") + '>' + icon("trash", 14) + ' Vider cette pièce</button>';
     html += '</div>';
     html += '<div class="room-plan-model-row">';
     html += modelSelect;
-    html += '<button class="btn btn-sm plan-apply-btn' + (isApplied ? " is-applied" : "") + '" type="button" data-apply-model="' + t.id + '"' + (isApplied ? " disabled" : "") + ' title="Appliquer le modèle">' + icon("check", 14) + '</button>';
+    html += '<button class="btn btn-sm plan-apply-btn' + (isApplied ? " is-applied" : "") + '" type="button" data-apply-model="' + t.id + '"' + (isApplied || isLinked ? " disabled" : "") + ' title="Appliquer le modèle">' + icon("check", 14) + '</button>';
     html += '</div>';
     let columns = "";
     for (let index = 0; index < days.length; index++) {
@@ -524,7 +533,7 @@ function paintRooms() {
         for (const slot of items) {
           const end = slotEnd(slots, slot);
           const slotIndex = slots.indexOf(slot);
-          rows += '<button type="button" class="week-slot" data-target="' + t.id + '" data-day="' + index + '" data-slotindex="' + slotIndex + '" style="--slot-color:' + modeColor(slot.mode) + '">';
+          rows += '<button type="button" class="week-slot" data-target="' + t.id + '" data-day="' + index + '" data-slotindex="' + slotIndex + '"' + (isLinked ? ' disabled' : '') + ' style="--slot-color:' + modeColor(slot.mode) + '">';
           rows += '<span class="week-slot-time">' + escapeHtml(slot.time) + (end ? "\u2013" + escapeHtml(end) : "") + '</span>';
           rows += '<span class="week-slot-temp">' + fmtTemp(slot.temp) + ' °C</span>';
           rows += '<span class="week-slot-mode">' + escapeHtml(modeLabel(slot.mode, store.meta)) + '</span>';
@@ -540,7 +549,7 @@ function paintRooms() {
       columns += '</div>';
       columns += '<div class="week-col-body">';
       columns += rows;
-      columns += '<button type="button" class="week-add" data-target="' + t.id + '" data-day="' + index + '" title="Ajouter un créneau">+</button>';
+      columns += '<button type="button" class="week-add" data-target="' + t.id + '" data-day="' + index + '" title="Ajouter un créneau"' + (isLinked ? ' disabled' : '') + '>+</button>';
       columns += '</div></div>';
     }
 
@@ -619,6 +628,44 @@ function paintRooms() {
       paintRooms();
       paintDirty();
       toast(`Modèle « ${m.name} » appliqué.`);
+    });
+  });
+
+  // Lier / délier une pièce à Pronote (auto)
+  host.querySelectorAll("[data-link-pronote]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tid = btn.dataset.linkPronote;
+      const t = targets.find((x) => x.id === tid);
+      if (!t || t.kind !== "room") return;
+      if (!confirm(`Lier « ${t.label} » à Pronote (récupération automatique chaque nuit) ?`)) return;
+      btn.disabled = true;
+      try {
+        await put("/api/config", { pronote_room_id: Number(t.targetId) });
+        await refreshState({ silent: true });
+        reloadFromState();
+        toast(`« ${t.label} » lié à Pronote.`);
+      } catch (err) {
+        toastError(err);
+        btn.disabled = false;
+      }
+    });
+  });
+  host.querySelectorAll("[data-unlink-pronote]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tid = btn.dataset.unlinkPronote;
+      const t = targets.find((x) => x.id === tid);
+      if (!t) return;
+      if (!confirm(`Désactiver la liaison Pronote pour « ${t.label} » ?`)) return;
+      btn.disabled = true;
+      try {
+        await put("/api/config", { pronote_room_id: 0 });
+        await refreshState({ silent: true });
+        reloadFromState();
+        toast(`Liaison Pronote désactivée pour « ${t.label} ».`);
+      } catch (err) {
+        toastError(err);
+        btn.disabled = false;
+      }
     });
   });
 
@@ -992,7 +1039,12 @@ function openImportSheet() {
 }
 
 function openPronoteSheet() {
+  const linkedRoomId = Number(store.state?.settings?.pronote_room_id || 0);
   let selectedTarget = target;
+  if (linkedRoomId) {
+    const found = targets.find((t) => t.kind === "room" && Number(t.targetId) === linkedRoomId);
+    if (found) selectedTarget = found;
+  }
   if (!selectedTarget) {
     selectedTarget = targets[0] || null;
   }
@@ -1006,7 +1058,7 @@ function openPronoteSheet() {
     savedPronoteTarget = localStorage.getItem("mecasa.pronoteTargetId");
   } catch {}
 
-  if (savedPronoteTarget) {
+  if (!linkedRoomId && savedPronoteTarget) {
     const found = targets.find((t) => t.id === savedPronoteTarget);
     if (found) {
       selectedTarget = found;
@@ -1017,7 +1069,8 @@ function openPronoteSheet() {
   const body = document.createElement("div");
   body.className = "stack";
   const parity = (store.state?.settings?.week_mode || "parity") === "parity";
-  let chosenWeek = week === "B" ? "B" : "A";
+  let chosenWeeks = new Set(week === "B" ? ["B"] : ["A"]);
+  const isLinked = (t) => t && t.kind === "room" && Number(t.targetId) === Number(store.state?.settings?.pronote_room_id || 0);
   body.innerHTML = `
     <label class="field">
       <span class="label">Importer dans</span>
@@ -1027,16 +1080,21 @@ function openPronoteSheet() {
     </label>
     ${
       parity
-        ? `<label class="field">
-      <span class="label">Écrire dans la semaine</span>
-      <select class="select" data-pronote-week>
-        <option value="A"${chosenWeek === "A" ? " selected" : ""}>Semaine A</option>
-        <option value="B"${chosenWeek === "B" ? " selected" : ""}>Semaine B</option>
-      </select>
+        ? `<div class="field">
+      <span class="label">Écrire dans les semaines</span>
+      <div class="row wrap" style="gap:10px">
+        <label class="check"><input type="checkbox" data-pronote-week="A"${chosenWeeks.has("A") ? " checked" : ""}> Semaine A</label>
+        <label class="check"><input type="checkbox" data-pronote-week="B"${chosenWeeks.has("B") ? " checked" : ""}> Semaine B</label>
+      </div>
       <span class="hint">Seule la journée (7 h → 20 h) est remplacée : le réveil et la nuit du soir sont conservés.</span>
-    </label>`
+    </div>`
         : ""
     }
+    <label class="field">
+      <span class="label">Rafraîchissement automatique</span>
+      <label class="check"><input type="checkbox" data-pronote-auto${isLinked(selectedTarget) ? " checked" : ""}> Récupérer l'emploi du temps Pronote chaque nuit et l'appliquer à cette pièce</label>
+      <span class="hint">Si coché, cette pièce devient la pièce liée à Pronote (les autres sont déliées).</span>
+    </label>
     <label class="field">
       <span class="label">Semaine à analyser</span>
       <input class="input" type="date" value="${monday}" data-week-start>
@@ -1048,7 +1106,7 @@ function openPronoteSheet() {
 
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:8px;width:100%";
-  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer dans la semaine ${chosenWeek}</button>`;
+  footer.innerHTML = `<button class="btn btn-primary" type="button" data-do-import disabled>${icon("download", 17)} Importer</button>`;
 
   const sheet = openSheet({
     title: "Import Pronote",
@@ -1069,12 +1127,44 @@ function openPronoteSheet() {
       device = selectedTarget.device;
       try { localStorage.setItem("mecasa.pronoteTargetId", t.id); } catch {}
       sheet.querySelector(".sheet-sub").textContent = `Emploi du temps → ${t.label}`;
+      const autoBox = body.querySelector("[data-pronote-auto]");
+      if (autoBox) {
+        const linked = Number(store.state?.settings?.pronote_room_id || 0);
+        autoBox.checked = t.kind === "room" && Number(t.targetId) === linked;
+      }
     }
   });
 
-  body.querySelector("[data-pronote-week]")?.addEventListener("change", (event) => {
-    chosenWeek = event.currentTarget.value === "B" ? "B" : "A";
-    importButton.innerHTML = `${icon("download", 17)} Importer dans la semaine ${chosenWeek}`;
+  body.querySelectorAll("[data-pronote-week]").forEach((box) => {
+    box.addEventListener("change", () => {
+      const key = box.dataset.pronoteWeek === "B" ? "B" : "A";
+      if (box.checked) chosenWeeks.add(key);
+      else chosenWeeks.delete(key);
+      if (!chosenWeeks.size) {
+        chosenWeeks.add(key);
+        box.checked = true;
+      }
+    });
+  });
+
+  body.querySelector("[data-pronote-auto]")?.addEventListener("change", async (event) => {
+    const box = event.currentTarget;
+    const roomPayload =
+      selectedTarget?.kind === "room"
+        ? { pronote_room_id: box.checked ? Number(selectedTarget.targetId) : 0 }
+        : {};
+    try {
+      if (Object.keys(roomPayload).length) {
+        const cfg = await put("/api/config", roomPayload);
+        if (cfg?.config) store.state = { ...store.state, settings: { ...(store.state?.settings || {}), pronote_room_id: box.checked ? Number(selectedTarget.targetId) : 0 } };
+        else store.state = { ...store.state, settings: { ...(store.state?.settings || {}), pronote_room_id: box.checked ? Number(selectedTarget.targetId) : 0 } };
+        await refreshState({ silent: true });
+      }
+      toast(box.checked ? "Rafraîchissement automatique activé." : "Rafraîchissement automatique désactivé.");
+    } catch (err) {
+      toastError(err);
+      box.checked = !box.checked;
+    }
   });
 
   body.querySelector("[data-preview]")?.addEventListener("click", async (event) => {
@@ -1106,14 +1196,18 @@ function openPronoteSheet() {
         selectedTarget.kind === "room"
           ? { room_id: Number(selectedTarget.targetId) }
           : { device_id: Number(device.device_id) };
-      await post("/api/pronote/import", {
-        ...targetPayload,
-        week: chosenWeek,
-        week_start: start,
-        days: plan.days,
-        preview_week_type: plan.week_type,
-      });
-      toast(`Planning Pronote importé dans ${selectedTarget.label} · semaine ${chosenWeek}.`);
+      const weeksToWrite = [...chosenWeeks];
+      if (!weeksToWrite.length) weeksToWrite.push("A");
+      for (const w of weeksToWrite) {
+        await post("/api/pronote/import", {
+          ...targetPayload,
+          week: w,
+          week_start: start,
+          days: plan.days,
+          preview_week_type: plan.week_type,
+        });
+      }
+      toast(`Planning Pronote importé dans ${selectedTarget.label} · semaine${weeksToWrite.length > 1 ? "s" : ""} ${weeksToWrite.join(", ")}.`);
       closeSheet();
       await refreshState({ silent: true });
       dirty = false;
