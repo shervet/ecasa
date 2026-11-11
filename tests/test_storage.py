@@ -147,6 +147,25 @@ class SlotsTests(StoreTestCase):
         store.set_slots(device_id=1, week="A", days=days)
         self.assertEqual(store.slots(device_id=1, week="A")[0]["temp"], 30.0)
 
+    def test_wiser_temp_min_zero_not_clamped_to_16(self):
+        # Régression : temp_min 0.0 (Wiser) est falsy en Python — l'ancien
+        # code replaçait à 16 °C même pour une pièce 100 % Wiser.
+        store = self.make_store()
+        store.upsert_device(501, "Chambre Hugo (Wiser)")
+        store.update_device(501, {"device_type": "wiser"})
+        self.assertEqual(store.device(501)["temp_min"], 0.0)
+        days = [[{"time": "07:00", "mode": "heat", "temp": 15}]] + [[]] * 6
+        store.set_slots(device_id=501, week="A", days=days)
+        self.assertEqual(store.slots(device_id=501, week="A")[0]["temp"], 15.0)
+
+    def test_atlantic_temp_min_still_clamped_to_16(self):
+        store = self.make_store()
+        store.upsert_device(502, "Clim salon")
+        store.update_device(502, {"device_type": "atlantic"})
+        days = [[{"time": "07:00", "mode": "heat", "temp": 15}]] + [[]] * 6
+        store.set_slots(device_id=502, week="A", days=days)
+        self.assertEqual(store.slots(device_id=502, week="A")[0]["temp"], 16.0)
+
     def test_replace_removes_previous_slots(self):
         store = self.make_store()
         store.set_slots(device_id=1, week="A", days=week_days())
@@ -198,6 +217,15 @@ class OverrideTests(StoreTestCase):
         self.assertEqual(store.override(7)["temp"], 30.0)
         store.set_override(7, "heat", 2, until)
         self.assertEqual(store.override(7)["temp"], 16.0)
+
+    def test_wiser_override_below_16_kept(self):
+        # Régression : même piège falsy pour temp_min = 0.0 (Wiser).
+        store = self.make_store()
+        store.upsert_device(503, "Chambre Hugo (Wiser)")
+        store.update_device(503, {"device_type": "wiser"})
+        until = datetime.now() + timedelta(minutes=30)
+        store.set_override(503, "heat", 14, until)
+        self.assertEqual(store.override(503)["temp"], 14.0)
 
     def test_unknown_mode_rejected(self):
         store = self.make_store()

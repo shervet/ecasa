@@ -795,8 +795,12 @@ class MemoryStore:
                                     break
                             except (TypeError, ValueError):
                                 pass
-            _tmin = float((_device or {}).get("temp_min", 16.0) or 16.0)
-            _tmax = float((_device or {}).get("temp_max", 30.0) or 30.0)
+            # Attention : temp_min peut valoir 0.0 (Wiser) — 0.0 est falsy en
+            # Python, il ne faut donc tester que None (sinon → repli 16 °C).
+            _raw_tmin = (_device or {}).get("temp_min")
+            _raw_tmax = (_device or {}).get("temp_max")
+            _tmin = 16.0 if _raw_tmin is None else float(_raw_tmin)
+            _tmax = 30.0 if _raw_tmax is None else float(_raw_tmax)
             if _tmin > _tmax:
                 _tmin, _tmax = _tmax, _tmin
 
@@ -859,8 +863,11 @@ class MemoryStore:
         if mode not in VALID_MODES:
             raise ValueError("Mode inconnu")
         device = self._devices.get(int(device_id))
-        _tmin = float((device or {}).get("temp_min", 16.0) or 16.0)
-        _tmax = float((device or {}).get("temp_max", 30.0) or 30.0)
+        # Même piège que set_slots : 0.0 (Wiser) est falsy → tester None seul.
+        _raw_tmin = (device or {}).get("temp_min")
+        _raw_tmax = (device or {}).get("temp_max")
+        _tmin = 16.0 if _raw_tmin is None else float(_raw_tmin)
+        _tmax = 30.0 if _raw_tmax is None else float(_raw_tmax)
         if _tmin > _tmax:
             _tmin, _tmax = _tmax, _tmin
         temp = max(_tmin, min(_tmax, float(temp)))
