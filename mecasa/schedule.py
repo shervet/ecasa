@@ -45,21 +45,15 @@ WEEKDAY_NAMES = [
 ]
 
 
-def week_type(moment: datetime, settings: dict, overrides: dict) -> str:
-    """Renvoie 'A' ou 'B' pour la semaine ISO qui contient `moment`.
-
-    Trois modes :
-      - parity   : semaine ISO impaire = A, paire = B (avec option d'inversion)
-      - explicit : tout en `default_week`, sauf les semaines listees
-      - none     : toujours A
-    """
-    mode = settings.get("week_mode", "parity")
-
-    monday = (moment.date() - timedelta(days=moment.weekday())).isoformat()
+def _monday_week_type(monday_date: date, settings: dict, overrides: dict) -> str:
+    """Type de semaine ('A'/'B') pour le lundi ISO donne."""
+    monday = monday_date.isoformat()
     if monday in overrides:
         value = overrides[monday]
         if value in ("A", "B"):
             return value
+
+    mode = settings.get("week_mode", "parity")
 
     if mode == "none":
         return "A"
@@ -71,11 +65,55 @@ def week_type(moment: datetime, settings: dict, overrides: dict) -> str:
             else settings.get("default_week", "A")
         )
 
-    iso_week = moment.isocalendar().week
+    iso_week = monday_date.isocalendar().week
     value = "A" if iso_week % 2 == 1 else "B"
     if str(settings.get("week_flip", "0")).lower() in ("1", "true", "on"):
         value = "B" if value == "A" else "A"
     return value
+
+
+def week_type(moment: datetime, settings: dict, overrides: dict) -> str:
+    """Renvoie 'A' ou 'B' pour la semaine qui contient `moment`.
+
+    Trois modes :
+      - parity   : semaine ISO impaire = A, paire = B (avec option d'inversion)
+      - explicit : tout en `default_week`, sauf les semaines listees
+      - none     : toujours A
+
+    En mode parity, le reglage ``week_switch_day`` permet de basculer le
+    vendredi (a ``friday_switch_minutes``) au lieu du lundi : le week-end
+    utilise alors la semaine suivante.
+    """
+    mode = settings.get("week_mode", "parity")
+
+    monday_date = moment.date() - timedelta(days=moment.weekday())
+
+    if mode == "parity" and str(
+        settings.get("week_switch_day", "monday")
+    ).lower() == "friday":
+        switched = False
+        if moment.weekday() in (5, 6):
+            # Samedi / dimanche : la bascule du vendredi a eu lieu.
+            switched = True
+        elif moment.weekday() == 4:
+            raw_switch = settings.get("friday_switch_minutes")
+            try:
+                switch_min = (
+                    460
+                    if raw_switch is None or str(raw_switch).strip() == ""
+                    else int(float(raw_switch))
+                )
+            except (TypeError, ValueError):
+                switch_min = 460
+            switch_min = max(0, min(1439, switch_min))
+            now_min = moment.hour * 60 + moment.minute
+            switched = now_min >= switch_min
+        if switched:
+            return _monday_week_type(
+                monday_date + timedelta(days=7), settings, overrides
+            )
+
+    return _monday_week_type(monday_date, settings, overrides)
 
 
 def _index(weekday: int, minutes: int) -> int:

@@ -27,28 +27,29 @@ def summary(day):
     return [(slot["time"], slot["mode"], slot["temp"]) for slot in day]
 
 
-class BuildDaysTests(unittest.TestCase):
-    def build(self, lessons, **kwargs):
-        options = {
-            "travel_minutes": 20,
-            "comfort_mode": "heat",
-            "comfort_temp": 20.0,
-            "reduced_mode": "off",
-            "reduced_temp": 16.0,
-            "wake_minutes": 7 * 60,
-            "bedtime_minutes": 22 * 60,
-        }
-        options.update(kwargs)
-        return pronote.build_days(lessons, **options)
+def build(lessons, **kwargs):
+    options = {
+        "travel_minutes": 20,
+        "comfort_mode": "heat",
+        "comfort_temp": 20.0,
+        "reduced_mode": "off",
+        "reduced_temp": 16.0,
+        "wake_minutes": 7 * 60,
+        "bedtime_minutes": 22 * 60,
+    }
+    options.update(kwargs)
+    return pronote.build_days(lessons, **options)
 
+
+class BuildDaysTests(unittest.TestCase):
     def test_day_without_lessons_is_empty(self):
-        days = self.build([])
+        days = build([])
         self.assertEqual(len(days), 7)
         self.assertTrue(all(day == [] for day in days))
 
     def test_school_day_frames_night_and_absences(self):
         # Lundi : cours 8 h-12 h et 14 h-16 h, trajet 20 min.
-        days = self.build(
+        days = build(
             [lesson(0, 8 * 60, 12 * 60), lesson(0, 14 * 60, 16 * 60)]
         )
         self.assertEqual(
@@ -69,7 +70,7 @@ class BuildDaysTests(unittest.TestCase):
     def test_wake_inside_absence_keeps_reduced(self):
         # Lever (8 h) apres le depart (7 h 40) : pas de confort au lever,
         # le reduit continue jusqu'au retour.
-        days = self.build(
+        days = build(
             [lesson(1, 8 * 60, 10 * 60)], wake_minutes=8 * 60
         )
         self.assertEqual(
@@ -82,7 +83,7 @@ class BuildDaysTests(unittest.TestCase):
         )
 
     def test_demi_pensionnaire_has_no_lunch_comfort(self):
-        days = self.build(
+        days = build(
             [lesson(2, 8 * 60, 10 * 60), lesson(2, 14 * 60, 16 * 60)],
             student_status="demi_pensionnaire",
         )
@@ -98,7 +99,7 @@ class BuildDaysTests(unittest.TestCase):
         )
 
     def test_custom_wake_and_bedtime(self):
-        days = self.build(
+        days = build(
             [lesson(3, 10 * 60, 12 * 60)],
             wake_minutes=8 * 60 + 30,
             bedtime_minutes=23 * 60 + 30,
@@ -112,6 +113,101 @@ class BuildDaysTests(unittest.TestCase):
                 ("12:20", "heat", 20.0),
                 ("23:30", "off", 16.0),
             ],
+        )
+
+
+class FridaySwitchTests(unittest.TestCase):
+    """Bascule de garde le vendredi : la journee s'arrete au depart."""
+
+    def test_friday_ends_on_departure_without_evening_return(self):
+        # Vendredi avec bascule : l'enfant ne rentre pas le soir (garde
+        # alternee), la journee s'arrete sur le depart en reduit. Ni retour
+        # du midi ni confort du soir.
+        days = build([lesson(4, 8 * 60, 12 * 60)], switch_day="friday")
+        self.assertEqual(
+            summary(days[4]),
+            [
+                ("00:00", "off", 16.0),   # nuit
+                ("07:00", "heat", 20.0),  # lever en confort
+                ("07:40", "off", 16.0),   # depart (cours - trajet)
+            ],
+        )
+
+    def test_friday_afternoon_classes_stop_on_departure(self):
+        days = build([lesson(4, 14 * 60, 16 * 60)], switch_day="friday")
+        self.assertEqual(
+            summary(days[4]),
+            [
+                ("00:00", "off", 16.0),
+                ("07:00", "heat", 20.0),
+                ("13:40", "off", 16.0),   # depart pour les cours de l'apres-midi
+            ],
+        )
+
+    def test_other_weekdays_keep_evening_return(self):
+        # Lundi..jeudi restent inchanges avec la bascule du vendredi.
+        days = build(
+            [lesson(3, 8 * 60, 12 * 60), lesson(3, 14 * 60, 16 * 60)],
+            switch_day="friday",
+        )
+        self.assertEqual(
+            summary(days[3]),
+            [
+                ("00:00", "off", 16.0),
+                ("07:00", "heat", 20.0),
+                ("07:40", "off", 16.0),
+                ("12:20", "heat", 20.0),
+                ("13:40", "off", 16.0),
+                ("16:20", "heat", 20.0),
+                ("22:00", "off", 16.0),
+            ],
+        )
+
+    def test_friday_without_switch_keeps_evening_return(self):
+        # Bascule du lundi par defaut : le vendredi se termine comme les
+        # autres jours (confort du soir jusqu'au coucher).
+        days = build([lesson(4, 8 * 60, 12 * 60)])
+        self.assertEqual(
+            summary(days[4]),
+            [
+                ("00:00", "off", 16.0),
+                ("07:00", "heat", 20.0),
+                ("07:40", "off", 16.0),
+                ("12:20", "heat", 20.0),
+                ("22:00", "off", 16.0),
+            ],
+        )
+
+
+class FridayDepartureMinutesTests(unittest.TestCase):
+    def test_returns_friday_departure_slot(self):
+        days = build([lesson(4, 8 * 60, 12 * 60)], switch_day="friday")
+        self.assertEqual(
+            pronote.friday_departure_minutes(days, 7 * 60, 20), 7 * 60 + 40
+        )
+
+    def test_returns_afternoon_departure_slot(self):
+        days = build([lesson(4, 14 * 60, 16 * 60)], switch_day="friday")
+        self.assertEqual(
+            pronote.friday_departure_minutes(days, 7 * 60, 20), 13 * 60 + 40
+        )
+
+    def test_empty_friday_falls_back_to_wake_plus_travel(self):
+        days = build([], switch_day="friday")
+        self.assertEqual(
+            pronote.friday_departure_minutes(days, 7 * 60, 20), 7 * 60 + 20
+        )
+
+    def test_ignores_morning_wake_slot(self):
+        # Seul le lever figure sur le vendredi : ce n'est pas un depart.
+        friday = [
+            {"time": "00:00", "mode": "off", "temp": 16.0},
+            {"time": "07:00", "mode": "heat", "temp": 20.0},
+        ]
+        days = [[] for _ in range(7)]
+        days[4] = friday
+        self.assertEqual(
+            pronote.friday_departure_minutes(days, 7 * 60, 20), 7 * 60 + 20
         )
 
 

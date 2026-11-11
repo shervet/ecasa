@@ -72,6 +72,54 @@ class WeekTypeTests(unittest.TestCase):
         self.assertEqual(week_type(MONDAY_EVEN, {"week_mode": "parity"}, overrides), "B")
 
 
+class WeekTypeFridaySwitchTests(unittest.TestCase):
+    """Bascule de semaine le vendredi (garde alternee).
+
+    Semaine ISO 2 (paire -> B) : du 5 au 11 janvier 2026. Semaine ISO 3
+    (impaire -> A) : du 12 au 18 janvier 2026.
+    """
+
+    def setUp(self):
+        self.settings = {
+            "week_mode": "parity",
+            "week_switch_day": "friday",
+            "friday_switch_minutes": "460",  # 07:40
+        }
+
+    def test_weekdays_stay_on_current_week(self):
+        # Lundi..jeudi : la semaine en cours n'a pas encore bascule.
+        self.assertEqual(week_type(datetime(2026, 1, 5, 10, 0), self.settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 7, 10, 0), self.settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 8, 18, 0), self.settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 12, 10, 0), self.settings, {}), "A")
+        self.assertEqual(week_type(datetime(2026, 1, 15, 18, 0), self.settings, {}), "A")
+
+    def test_friday_before_switch_time_stays_on_current_week(self):
+        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 30), self.settings, {}), "B")
+
+    def test_friday_from_switch_time_moves_to_next_week(self):
+        # 07:40 exactement : l'heure de bascule est incluse.
+        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 40), self.settings, {}), "A")
+        self.assertEqual(week_type(datetime(2026, 1, 9, 18, 0), self.settings, {}), "A")
+        # Semaine impaire -> la suivante est paire.
+        self.assertEqual(week_type(datetime(2026, 1, 16, 18, 0), self.settings, {}), "B")
+
+    def test_weekend_moves_to_next_week(self):
+        self.assertEqual(week_type(datetime(2026, 1, 10, 12, 0), self.settings, {}), "A")
+        self.assertEqual(week_type(datetime(2026, 1, 11, 12, 0), self.settings, {}), "A")
+
+    def test_monday_switch_keeps_weekend_on_current_week(self):
+        settings = {"week_mode": "parity", "week_switch_day": "monday"}
+        self.assertEqual(week_type(datetime(2026, 1, 9, 18, 0), settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 10, 12, 0), settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 11, 12, 0), settings, {}), "B")
+
+    def test_bad_switch_minutes_falls_back_to_0740(self):
+        settings = {**self.settings, "friday_switch_minutes": "oops"}
+        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 40), settings, {}), "A")
+        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 30), settings, {}), "B")
+
+
 class FindSlotTests(unittest.TestCase):
     def test_empty(self):
         self.assertIsNone(find_slot([], MONDAY_EVEN))

@@ -288,8 +288,9 @@ export default {
 
     paintPlanNav();
 
-    week = store.prefs.week === "A" || store.prefs.week === "B" ? store.prefs.week : store.state?.week || "A";
-    setPref("week", week);
+    week = defaultPlanningWeek();
+    // N'écrase la préférence utilisateur que si elle n'est pas encore définie.
+    if (!store.prefs.week) setPref("week", week);
 
     if (!targets.length) return;
     target = pickTarget();
@@ -454,6 +455,50 @@ function paintWeekSwitch() {
   });
 }
 
+/**
+ * Semaines gérées par Pronote (liste renvoyée par le backend via
+ * `config.pronote_weeks`). Par défaut les deux semaines restent gérées.
+ */
+function pronoteLinkedWeeks() {
+  const raw = store.config?.pronote_weeks;
+  if (Array.isArray(raw) && raw.length) {
+    const valid = raw.map((value) => String(value).toUpperCase()).filter((value) => value === "A" || value === "B");
+    if (valid.length) return valid;
+  }
+  // Pas de réglage explicite : on déduit les semaines ayant au moins un jour
+  // de cours sur une des pièces liées.
+  const schoolDaysMap = store.config?.pronote_school_days || {};
+  const found = new Set();
+  for (const perWeek of Object.values(schoolDaysMap)) {
+    for (const weekKey of ["A", "B"]) {
+      if (Array.isArray(perWeek?.[weekKey]) && perWeek[weekKey].some(Boolean)) found.add(weekKey);
+    }
+  }
+  return found.size ? [...found] : ["A", "B"];
+}
+
+/** Semaine affichée par défaut : préférence utilisateur, sinon semaine unique Pronote, sinon semaine courante. */
+function defaultPlanningWeek() {
+  if (store.prefs.week === "A" || store.prefs.week === "B") return store.prefs.week;
+  const weeks = store.config?.pronote_weeks;
+  if (Array.isArray(weeks) && weeks.length === 1) return weeks[0];
+  return store.state?.week || "A";
+}
+
+/** Jours verrouillés (cours Pronote) d'une semaine d'une pièce : aucun si la semaine n'est pas liée. */
+function lockedDaysFor(t, weekKey) {
+  const locked = [false, false, false, false, false, false, false];
+  if (!t?.pronoteLinked || !pronoteLinkedWeeks().includes(weekKey)) return locked;
+  const schoolDays = store.config?.pronote_school_days?.[String(t.targetId)]?.[weekKey] || [];
+  return locked.map((_, index) => !!schoolDays[index]);
+}
+
+/** Conserve les créneaux des jours verrouillés de `previous` dans `next`. */
+function keepLockedDays(t, weekKey, previous, next) {
+  const locked = lockedDaysFor(t, weekKey);
+  return next.map((slots, index) => (locked[index] ? cloneDays([previous?.[index] ?? []])[0] : slots));
+}
+
 function paintPlanNav() {
   const nav = root?.querySelector("#planNav");
   if (!nav) return;
@@ -537,19 +582,23 @@ function paintRooms() {
     const applyBtnClass = "btn btn-sm plan-apply-btn" + (isApplied ? " is-applied" : "");
 
     const isLinked = !!t.pronoteLinked;
+    // Le verrouillage Pronote est par SEMAINE : une semaine non liée reste
+    // entièrement modifiable, même si la pièce est liée sur l'autre semaine.
+    const linkedWeeks = pronoteLinkedWeeks();
+    const isLinkedWeek = isLinked && linkedWeeks.includes(week);
     const schoolDaysMap = store.config?.pronote_school_days || {};
-    const schoolDays = isLinked
+    const schoolDays = isLinkedWeek
       ? (schoolDaysMap[String(t.targetId)]?.[week] || [false, false, false, false, false, false, false])
       : [false, false, false, false, false, false, false];
-    html += '<div class="room-plan' + (isLinked ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '">';
+    html += '<div class="room-plan' + (isLinkedWeek ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '">';
     html += '<div class="room-plan-head">';
-    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinked ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
+    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
     html += deviceSelect;
-    html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '"' + (isLinked ? " disabled" : "") + '>' + icon("trash", 14) + ' Vider cette pièce</button>';
+    html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '">' + icon("trash", 14) + ' Vider cette pièce</button>';
     html += '</div>';
     html += '<div class="room-plan-model-row">';
     html += modelSelect;
-    html += '<button class="' + applyBtnClass + '" type="button" data-apply-model="' + t.id + '"' + (isApplied || isLinked ? " disabled" : "") + ' title="Appliquer le modèle">' + icon("check", 14) + '</button>';
+    html += '<button class="' + applyBtnClass + '" type="button" data-apply-model="' + t.id + '"' + (isApplied ? " disabled" : "") + ' title="Appliquer le modèle">' + icon("check", 14) + '</button>';
     html += '</div>';
     let columns = "";
     for (let index = 0; index < days.length; index++) {
@@ -557,7 +606,7 @@ function paintRooms() {
       const d = parseDate(date) || new Date();
       const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
       const isToday = index === nowIndex && week === nowWeek;
-      const dayLocked = isLinked && !!schoolDays[index];
+      const dayLocked = isLinkedWeek && !!schoolDays[index];
       const slots = days[index] || [];
       const items = slots.slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
       let rows = "";
@@ -653,15 +702,27 @@ function paintRooms() {
       if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
       if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;
       t.device.programs = t.device.programs || {};
-      t.device.programs.A = cloneDays(m.days?.A);
-      t.device.programs.B = cloneDays(m.days?.B);
+      const previous = { A: cloneDays(models[tid]?.A ?? t.device.programs.A), B: cloneDays(models[tid]?.B ?? t.device.programs.B) };
+      // Les jours de cours Pronote restent intacts dans les semaines liées.
+      t.device.programs.A = keepLockedDays(t, "A", previous.A, cloneDays(m.days?.A));
+      t.device.programs.B = keepLockedDays(t, "B", previous.B, cloneDays(m.days?.B));
+      models[tid] = { A: cloneDays(t.device.programs.A), B: cloneDays(t.device.programs.B) };
       selectedModelByTarget[tid] = idx;
       appliedModelByTarget[tid] = idx;
-      rebuildModels();
       dirty = true;
       paintRooms();
       paintDirty();
       toast(`Modèle « ${m.name} » appliqué.`);
+    });
+  });
+
+  // Wire clear room buttons
+  host.querySelectorAll("[data-clear-room]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const t = targets.find((x) => x.id === btn.dataset.clearRoom);
+      if (!t) return;
+      target = t;
+      clearRoom(t);
     });
   });
 
@@ -684,10 +745,15 @@ function paintRooms() {
 
 function clearRoom(t) {
   if (!t) return;
-  if (!confirm(`Vider tous les créneaux de la semaine ${week} pour ${t.label} ?`)) return;
   const model = models[t.id];
+  const locked = lockedDaysFor(t, week);
+  const hasLocked = locked.some(Boolean);
+  const message = hasLocked
+    ? `Vider les créneaux non Pronote de la semaine ${week} pour ${t.label} ? Les jours de cours Pronote sont conservés.`
+    : `Vider tous les créneaux de la semaine ${week} pour ${t.label} ?`;
+  if (!confirm(message)) return;
   if (model) {
-    model[week] = Array.from({ length: 7 }, () => []);
+    model[week] = Array.from({ length: 7 }, (_, index) => (locked[index] ? model[week][index] : []));
   }
   dirty = true;
   paintRooms();
@@ -933,12 +999,17 @@ function applyWeekPreset(key) {
   if (!preset || !target) return;
   const model = models[target.id];
   if (!model) return;
-  if (!confirm(`Remplacer toute la semaine ${week} de ${target.label} par le modèle « ${key} » ? (Tous les créneaux existants seront effacés)`)) {
+  const hasLocked = lockedDaysFor(target, week).some(Boolean);
+  const warning = hasLocked
+    ? "Les jours de cours Pronote sont conservés."
+    : "Tous les créneaux existants seront effacés.";
+  if (!confirm(`Remplacer la semaine ${week} de ${target.label} par le modèle « ${key} » ? (${warning})`)) {
     return;
   }
-  model[week] = preset.map((daySlots) => 
+  const next = preset.map((daySlots) =>
     Array.isArray(daySlots) ? daySlots.map((slot) => ({ ...slot })).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time)) : []
   );
+  model[week] = keepLockedDays(target, week, model[week], next);
   dirty = true;
   paintRooms();
   paintDirty();
@@ -968,7 +1039,10 @@ async function save() {
     for (const t of targets) {
       const model = models[t.id];
       if (!model) continue;
-      await put(`/api/programs/${t.targetId}/${week}`, { days: model[week] });
+      // Un modèle appliqué modifie les deux semaines : on enregistre A et B.
+      for (const w of ["A", "B"]) {
+        await put(`/api/programs/${t.targetId}/${w}`, { days: model[w] });
+      }
     }
     dirty = false;
     toast(`Planning ${week} enregistré.`);
@@ -1077,7 +1151,16 @@ function openPronoteSheet() {
   const body = document.createElement("div");
   body.className = "stack";
   const parity = (store.state?.settings?.week_mode || "parity") === "parity";
-  let chosenWeeks = new Set(week === "B" ? ["B"] : ["A"]);
+  // Par défaut, les semaines déjà liées à Pronote (réglage enregistré) ;
+  // sinon la semaine affichée.
+  const configuredWeeks = pronoteLinkedWeeks();
+  const configured = Array.isArray(store.config?.pronote_weeks) && store.config.pronote_weeks.length
+    ? configuredWeeks
+    : [week === "B" ? "B" : "A"];
+  let chosenWeeks = new Set(configured);
+  const initialSwitch = store.state?.settings?.week_switch_day || store.config?.pronote_switch_day || "monday";
+  let switchDay = initialSwitch === "friday" ? "friday" : "monday";
+  let planSwitch = null;
   const roomsHtml = rooms.map((room) => `<li>${escapeHtml(room.label)}</li>`).join("");
   body.innerHTML = `
     <div class="field">
@@ -1093,10 +1176,18 @@ function openPronoteSheet() {
         <label class="check"><input type="checkbox" data-pronote-week="A"${chosenWeeks.has("A") ? " checked" : ""}> Semaine A</label>
         <label class="check"><input type="checkbox" data-pronote-week="B"${chosenWeeks.has("B") ? " checked" : ""}> Semaine B</label>
       </div>
-      <span class="hint">Les jours avec cours sont remplacés et non modifiables ; les jours sans cours restent inchangés et modifiables.</span>
+      <span class="hint">Les jours avec cours sont remplacés et non modifiables ; les jours sans cours restent inchangés et modifiables. Les semaines cochées restent gérées par Pronote (et resynchronisées automatiquement) ; les autres restent modifiables.</span>
     </div>`
         : `<p class="hint">Les jours avec cours sont remplacés et non modifiables ; les jours sans cours restent inchangés et modifiables.</p>`
     }
+    <label class="field">
+      <span class="label">Jour d'alternance (garde)</span>
+      <select class="select" data-pronote-switch-day>
+        <option value="monday"${switchDay === "monday" ? " selected" : ""}>Lundi (semaine complète)</option>
+        <option value="friday"${switchDay === "friday" ? " selected" : ""}>Vendredi (départ le vendredi selon les cours, puis semaine suivante)</option>
+      </select>
+      <span class="hint">En garde alternée, le vendredi bascule la semaine à partir du départ de l'école.</span>
+    </label>
     <label class="field">
       <span class="label">Semaine à analyser</span>
       <input class="input" type="date" value="${monday}" data-week-start>
@@ -1132,14 +1223,27 @@ function openPronoteSheet() {
     });
   });
 
-  body.querySelector("[data-preview]")?.addEventListener("click", async (event) => {
+  const previewButton = body.querySelector("[data-preview]");
+  body.querySelector("[data-pronote-switch-day]")?.addEventListener("change", (event) => {
+    switchDay = event.currentTarget.value === "friday" ? "friday" : "monday";
+    // L'aperçu dépend du jour de bascule : on le recharge s'il était affiché.
+    const hadPlan = !!plan;
+    plan = null;
+    planStart = null;
+    planSwitch = null;
+    if (hadPlan) previewButton?.click();
+  });
+
+  previewButton?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
     previewZone.innerHTML = `<div class="boot" style="min-height:120px"><span class="spinner"></span><p>Lecture de Pronote…</p></div>`;
     try {
       const start = body.querySelector("[data-week-start]")?.value || monday;
-      plan = await post("/api/pronote/preview", { week: start });
+      const requestedSwitch = switchDay;
+      plan = await post("/api/pronote/preview", { week: start, switch_day: requestedSwitch });
       planStart = start;
+      planSwitch = requestedSwitch;
       previewZone.innerHTML = renderPronotePreview(plan);
     } catch (err) {
       previewZone.innerHTML = `<div class="hint is-bad">${escapeHtml(err.message)}</div>`;
@@ -1153,29 +1257,39 @@ function openPronoteSheet() {
     importButton.disabled = true;
     try {
       const start = body.querySelector("[data-week-start]")?.value || monday;
-      if (!plan || planStart !== start) {
+      if (!plan || planStart !== start || planSwitch !== switchDay) {
         importButton.innerHTML = `${icon("download", 17)} Lecture de Pronote…`;
-        plan = await post("/api/pronote/preview", { week: start });
+        const requestedSwitch = switchDay;
+        plan = await post("/api/pronote/preview", { week: start, switch_day: requestedSwitch });
         planStart = start;
+        planSwitch = requestedSwitch;
       }
       const weeksToWrite = [...chosenWeeks];
       if (!weeksToWrite.length) weeksToWrite.push("A");
       const targetLabels = [];
+      // Enregistre les semaines gérées par Pronote et le jour de bascule : les
+      // autres semaines redeviennent modifiables et ne sont plus resynchronisées.
+      await put("/api/config", { pronote_weeks: weeksToWrite, pronote_switch_day: switchDay });
+      // Un seul import par pièce : il écrit toutes les semaines cochées et
+      // lie la pièce à chacune d'elles (évite d'écraser la liaison de la 1re).
       for (const room of rooms) {
-        const roomId = Number(room.targetId);
-        for (const w of weeksToWrite) {
-          await post("/api/pronote/import", {
-            room_id: roomId,
-            week: w,
-            week_start: start,
-            days: plan.days,
-            preview_week_type: plan.week_type,
-          });
-        }
+        await post("/api/pronote/import", {
+          room_id: Number(room.targetId),
+          weeks: weeksToWrite,
+          linked_weeks: weeksToWrite,
+          week_start: start,
+          days: plan.days,
+          preview_week_type: plan.week_type,
+          switch_day: switchDay,
+        });
         targetLabels.push(room.label);
       }
       toast(`Planning Pronote importé dans ${targetLabels.join(", ")} — semaine${weeksToWrite.length > 1 ? "s" : ""} ${weeksToWrite.join(", ")}.`);
       closeSheet();
+      // Affiche la semaine importée : sinon l'utilisateur reste sur la
+      // semaine courante et ne voit pas le résultat de son import.
+      week = weeksToWrite[0];
+      setPref("week", week);
       await refreshConfig({ silent: true });
       await refreshState({ silent: true });
       dirty = false;
@@ -1292,6 +1406,7 @@ function openWiserSheet() {
 /* --------------------------------------------------------------- divers */
 
 function reloadFromState() {
+  if (store.prefs.week === "A" || store.prefs.week === "B") week = store.prefs.week;
   buildTargets();
   if (!targets.length) return;
   target = pickTarget();

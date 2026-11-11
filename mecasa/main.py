@@ -49,6 +49,7 @@ from .pronote import (
     STUDENT_STATUSES,
     PronoteError,
     build_plan as build_pronote_plan,
+    friday_departure_minutes,
     parse_week_start,
     search_schools,
     test_connection as test_pronote_connection,
@@ -97,6 +98,10 @@ DEFAULT_CONFIG = {
     # pronote_room_id conservé pour compatibilité (valeur unique).
     "pronote_room_id": 0,
     "pronote_room_ids": [],
+    # Semaines gérées par Pronote ("A" et/ou "B"). Vide = les deux (legacy).
+    "pronote_weeks": [],
+    # Jour de bascule de l'alternance : "monday" ou "friday".
+    "pronote_switch_day": "monday",
     # Heure de coucher (minutes après minuit) : passage en température réduite.
     "pronote_bedtime_minutes": 22 * 60,
     "weather_enabled": True,
@@ -325,7 +330,17 @@ def public_config(config: dict) -> dict:
             if str(x).isdigit() or isinstance(x, int)
         ],
         "pronote_school_days": config.get("pronote_school_days") or {},
+        "pronote_weeks": [
+            str(week).upper()
+            for week in (config.get("pronote_weeks") or [])
+            if str(week).upper() in ("A", "B")
+        ],
         "pronote_bedtime_minutes": int(config.get("pronote_bedtime_minutes") or (22 * 60)),
+        "pronote_switch_day": (
+            "friday"
+            if str(config.get("pronote_switch_day")).strip().lower() == "friday"
+            else "monday"
+        ),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
         "weather_latitude": float(config.get("weather_latitude", 48.8566) or 0),
@@ -533,6 +548,28 @@ def save_config(body: dict) -> tuple[dict, bool]:
         # Compat : on garde pronote_room_id = première pièce liée (ou 0).
         if "pronote_room_id" not in body:
             updated["pronote_room_id"] = ids[0] if ids else 0
+
+    if "pronote_weeks" in body:
+        raw = body.get("pronote_weeks")
+        if isinstance(raw, str):
+            raw = [part for part in raw.replace(",", " ").split() if part]
+        if not isinstance(raw, list):
+            raise ValueError("Semaines Pronote invalides")
+        weeks: list[str] = []
+        for value in raw:
+            week = str(value).strip().upper()
+            if week not in ("A", "B"):
+                raise ValueError("Semaines Pronote invalides (A ou B attendues)")
+            if week not in weeks:
+                weeks.append(week)
+        updated["pronote_weeks"] = weeks
+
+    if "pronote_switch_day" in body:
+        updated["pronote_switch_day"] = (
+            "friday"
+            if str(body.get("pronote_switch_day")).strip().lower() == "friday"
+            else "monday"
+        )
 
     if "pronote_bedtime_minutes" in body:
         value = body.get("pronote_bedtime_minutes")
@@ -753,6 +790,34 @@ def _merge_preserved_slots(days: list, existing: list[dict]) -> list[list[dict]]
     return result
 
 
+def pronote_linked_weeks(config: dict) -> list[str]:
+    """Semaines gérées par Pronote.
+
+    Par défaut les deux semaines (A et B) restent gérées, comme avant
+    l'introduction du réglage. Dès que l'utilisateur en choisit une seule,
+    l'autre semaine redevient librement modifiable.
+    """
+    weeks = []
+    for value in config.get("pronote_weeks") or []:
+        week = str(value).strip().upper()
+        if week in ("A", "B") and week not in weeks:
+            weeks.append(week)
+    return weeks or ["A", "B"]
+
+
+def _sync_pronote_links(config: dict, room_id: int, weeks: list[str]) -> None:
+    """Aligne les jours de cours enregistrés sur les semaines réellement liées.
+
+    Les semaines non liées ne doivent plus porter de jours « Pronote » : sinon
+    l'interface les verrouille alors qu'elles sont librement modifiables.
+    """
+    school_days = config.setdefault("pronote_school_days", {})
+    room_days = school_days.setdefault(str(room_id), {})
+    for week in ("A", "B"):
+        if week not in weeks:
+            room_days[week] = [False] * 7
+
+
 def import_pronote_weeks(
     store: MemoryStore,
     config: dict,
@@ -771,6 +836,12 @@ def import_pronote_weeks(
     ``PronoteError`` ou ``ValueError`` avec un message affichable.
     """
     week_starts: dict[str, str] = {}
+    switch_day = (
+        (body or {}).get("switch_day")
+        or store.settings().get("week_switch_day")
+        or config.get("pronote_switch_day")
+        or "monday"
+    )
     for target in weeks:
         # L'aperçu affiché est écrit tel quel dans la semaine cible, même
         # si le type de la semaine analysée diffère : l'utilisateur choisit
@@ -793,11 +864,25 @@ def import_pronote_weeks(
                     f"Aucune semaine {target} trouvée dans les 26 semaines "
                     "qui suivent la date choisie." + hint
                 )
-            plan = build_pronote_plan(config, source_start, body or {})
+            plan = build_pronote_plan(
+                config,
+                source_start,
+                {**(body or {}), "switch_day": switch_day},
+            )
             days = plan["days"]
 
         if not isinstance(days, list) or len(days) != 7:
             raise ValueError("Planning Pronote invalide : 7 jours attendus")
+
+        if str(switch_day).strip().lower() == "friday":
+            # Le vendredi s'arrete sur le depart : cette heure pilote la
+            # bascule de semaine du moteur.
+            friday_min = friday_departure_minutes(
+                days,
+                int(config.get("pronote_wake_minutes") or 420),
+                int(config.get("pronote_travel_minutes") or 20),
+            )
+            store.set_settings({"friday_switch_minutes": str(friday_min)})
 
         existing = (
             store.slots(room_id=target_id, week=target)
@@ -907,6 +992,9 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
 
     now = now or datetime.now()
     monday = now.date() - timedelta(days=now.weekday())
+    # Seules les semaines liées à Pronote sont rafraîchies : une semaine non
+    # liée reste librement modifiable dans l'interface.
+    weeks = pronote_linked_weeks(config)
     all_starts = {}
     for rid in valid_rooms:
         try:
@@ -915,9 +1003,10 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
                 config,
                 rid,
                 monday,
-                ["A", "B"],
+                weeks,
                 room=True,
             )
+            _sync_pronote_links(config, rid, weeks)
             all_starts[rid] = week_starts
         except Exception as err:  # noqa: BLE001
             app.store.log("warn", f"Synchronisation Pronote échouée pour la pièce {rid} : {err}")
@@ -2190,11 +2279,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if method == "PUT" and path == "/api/config":
+            body = self._body()
             try:
-                updated, restart = save_config(self._body())
+                updated, restart = save_config(body)
             except ValueError as err:
                 self._json(400, {"error": str(err)})
                 return
+            if "pronote_switch_day" in body:
+                app.store.set_settings({
+                    "week_switch_day": updated.get("pronote_switch_day") or "monday",
+                })
+                app.engine.tick(force=True)
             self._json(200, {
                 "ok": True,
                 "restart_required": restart,
@@ -2368,9 +2463,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "POST" and path == "/api/pronote/preview":
             body = self._body()
+            config = load_config()
+            options = dict(body)
+            options["switch_day"] = (
+                body.get("switch_day")
+                or app.store.settings().get("week_switch_day")
+                or config.get("pronote_switch_day")
+                or "monday"
+            )
             try:
                 monday = parse_week_start(body.get("week"))
-                plan = build_pronote_plan(load_config(), monday, body)
+                plan = build_pronote_plan(config, monday, options)
             except PronoteError as err:
                 self._json(400, {"error": str(err)})
                 return
@@ -2445,6 +2548,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if use_room:
+                if (
+                    body.get("save_linked_weeks") is True
+                    or body.get("linked_weeks") is not None
+                ):
+                    raw_linked = body.get("linked_weeks") or weeks
+                    if isinstance(raw_linked, str):
+                        raw_linked = [
+                            part
+                            for part in raw_linked.replace(",", " ").split()
+                            if part
+                        ]
+                    linked = []
+                    for value in raw_linked or []:
+                        week = str(value).strip().upper()
+                        if week in ("A", "B") and week not in linked:
+                            linked.append(week)
+                    if not linked:
+                        linked = list(weeks)
+                    config["pronote_weeks"] = linked
+                else:
+                    linked = pronote_linked_weeks(config)
+                # Les semaines non importées doivent redevenir modifiables :
+                # on efface leurs jours « Pronote » enregistrés.
+                _sync_pronote_links(config, target_id, linked)
                 CONFIG_PATH.write_text(
                     json.dumps(config, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8",
@@ -2627,7 +2754,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "PUT" and path == "/api/settings":
             body = self._body()
-            self._json(200, {"settings": app.store.set_settings(body)})
+            settings = app.store.set_settings(body)
+            if "week_switch_day" in body:
+                config = load_config()
+                config["pronote_switch_day"] = (
+                    "friday"
+                    if str(settings.get("week_switch_day")).strip().lower()
+                    == "friday"
+                    else "monday"
+                )
+                CONFIG_PATH.write_text(
+                    json.dumps(config, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                with _config_lock:
+                    _config_cache = dict(config)
+                app.engine.tick(force=True)
+            self._json(200, {"settings": settings})
             return
 
         match = re.fullmatch(r"/api/devices/(\d+)", path)

@@ -697,6 +697,14 @@ def _time_label(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
+def _parse_time_label(value: str) -> int:
+    parts = str(value or "00:00").split(":")
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return -1
+
+
 def build_days(
     lessons: list[dict],
     travel_minutes: int,
@@ -707,6 +715,7 @@ def build_days(
     wake_minutes: int = 7 * 60,
     student_status: str = STUDENT_STATUS_EXTERNE,
     bedtime_minutes: int = 22 * 60,
+    switch_day: str = "monday",
 ) -> list[list[dict]]:
     """Construit les 7 listes de creneaux a partir des cours normalises.
 
@@ -725,10 +734,15 @@ def build_days(
     Une journee sans cours renvoie une liste vide : l'import (manuel ou
     automatique) conserve alors les creneaux existants au lieu d'ecraser la
     journee.
+
+    ``switch_day == "friday"`` : le vendredi, l'enfant ne rentre pas le soir
+    (garde alternee). La journee s'arrete donc sur le depart en reduit, car
+    le week-end bascule sur la semaine suivante.
     """
     travel = max(0, min(180, int(travel_minutes)))
     wake = max(0, min(DAY_MINUTES, int(wake_minutes or 0)))
     bedtime = max(0, min(DAY_MINUTES, int(bedtime_minutes or (22 * 60))))
+    friday_switch = str(switch_day or "").strip().lower() == "friday"
     status = _clean_student_status(student_status)
     comfort = {"mode": comfort_mode, "temp": comfort_temp}
     reduced = {"mode": reduced_mode, "temp": reduced_temp}
@@ -803,7 +817,11 @@ def build_days(
             add(max(start, cursor), reduced)
             cursor = max(cursor, end)
 
-        if cursor < DAY_MINUTES and DAY_MINUTES - cursor >= MIN_HOME_MINUTES:
+        if (
+            not (weekday == 4 and friday_switch)
+            and cursor < DAY_MINUTES
+            and DAY_MINUTES - cursor >= MIN_HOME_MINUTES
+        ):
             add(cursor, comfort)
             if cursor < bedtime < DAY_MINUTES:
                 add(bedtime, reduced)
@@ -811,6 +829,40 @@ def build_days(
         days.append(slots)
 
     return days
+
+
+def friday_departure_minutes(
+    days: list[list[dict]],
+    wake_minutes: int = 7 * 60,
+    travel_minutes: int = 20,
+) -> int:
+    """Heure de depart du vendredi (minutes apres minuit).
+
+    Avec une bascule le vendredi, la journee du vendredi s'arrete sur le
+    creneau reduit du depart : c'est cette heure qui declenche le passage a la
+    semaine suivante. A defaut, on retombe sur lever + trajet.
+    """
+    try:
+        wake = int(wake_minutes)
+    except (TypeError, ValueError):
+        wake = 7 * 60
+    try:
+        travel = int(travel_minutes)
+    except (TypeError, ValueError):
+        travel = 20
+    fallback = max(0, min(1439, wake + travel))
+
+    friday = days[4] if len(days) > 4 else []
+    for index in range(len(friday) - 1, 0, -1):
+        slot = friday[index]
+        minutes = _parse_time_label(slot.get("time"))
+        if minutes <= 0:
+            continue
+        # Creneau du matin (lever en confort) : ce n'est pas un depart.
+        if minutes <= wake:
+            continue
+        return max(0, min(1439, minutes))
+    return fallback
 
 
 def build_plan(config: dict, week_start: date, options: dict | None = None) -> dict:
@@ -861,6 +913,12 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         0,
         24 * 60,
     )
+    switch_day = str(
+        options.get("switch_day")
+        or config.get("pronote_switch_day")
+        or "monday"
+    ).strip().lower()
+    switch_day = "friday" if switch_day == "friday" else "monday"
 
     days = build_days(
         lessons,
@@ -872,7 +930,9 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         wake_minutes,
         student_status,
         bedtime_minutes,
+        switch_day,
     )
+    friday_switch = friday_departure_minutes(days, wake_minutes, travel)
 
     dates = [
         (week_start + timedelta(days=offset)).isoformat() for offset in range(7)
@@ -884,6 +944,8 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         "travel_minutes": travel,
         "wake_minutes": wake_minutes,
         "bedtime_minutes": bedtime_minutes,
+        "switch_day": switch_day,
+        "friday_switch_minutes": friday_switch,
         "student_status": student_status,
         "comfort": {"mode": comfort_mode, "temp": comfort_temp},
         "reduced": {"mode": reduced_mode, "temp": reduced_temp},

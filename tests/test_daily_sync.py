@@ -332,6 +332,75 @@ class ImportRoomTests(unittest.TestCase):
         )
 
 
+class PronoteAutoImportWeeksTests(unittest.TestCase):
+    """Import automatique limite aux semaines liees a Pronote."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.store = MemoryStore(
+            str(base / "state.json"), str(base / "history")
+        )
+        self.addCleanup(self.store.close)
+        self.room_id = self.store.rooms()[0]["id"]
+        self.config_path = base / "config.json"
+        self.config = {
+            **CONFIG,
+            "pronote_weeks": ["A"],
+            "pronote_school_days": {
+                str(self.room_id): {"A": [True] * 7, "B": [True] * 7}
+            },
+        }
+
+    def run_auto_import(self):
+        app = FakeApp(self.store, FakeEnergy())
+        app.engine = mock.Mock()
+        imported = mock.Mock(return_value={"A": "2026-11-09"})
+        with mock.patch.object(
+            main, "load_config", lambda force=False: self.config
+        ), mock.patch.object(
+            main, "CONFIG_PATH", self.config_path
+        ), mock.patch.object(
+            main, "import_pronote_weeks", imported
+        ):
+            result = main.run_pronote_auto_import(
+                app, datetime(2026, 11, 9, 4, 0)
+            )
+        return result, imported, app
+
+    def test_only_linked_week_is_imported(self):
+        result, imported, _ = self.run_auto_import()
+        self.assertTrue(result["ok"])
+        imported.assert_called_once()
+        # (store, config, room_id, monday, weeks, room=True)
+        call_args = imported.call_args.args
+        self.assertEqual(call_args[2], self.room_id)
+        self.assertEqual(call_args[3], date(2026, 11, 9))
+        self.assertEqual(call_args[4], ["A"])
+        self.assertEqual(
+            result["rooms"], {self.room_id: {"A": "2026-11-09"}}
+        )
+
+    def test_unlinked_week_school_days_are_reset(self):
+        # La semaine B n'est plus liee a Pronote : ses jours de cours sont
+        # remis a zero pour que l'interface la laisse modifiable.
+        result, _, _ = self.run_auto_import()
+        self.assertTrue(result["ok"])
+        room_days = self.config["pronote_school_days"][str(self.room_id)]
+        self.assertEqual(room_days["A"], [True] * 7)
+        self.assertEqual(room_days["B"], [False] * 7)
+
+    def test_without_link_setting_both_weeks_are_imported(self):
+        self.config["pronote_weeks"] = []
+        result, imported, _ = self.run_auto_import()
+        self.assertTrue(result["ok"])
+        self.assertEqual(imported.call_args.args[4], ["A", "B"])
+        room_days = self.config["pronote_school_days"][str(self.room_id)]
+        self.assertEqual(room_days["A"], [True] * 7)
+        self.assertEqual(room_days["B"], [True] * 7)
+
+
 class ExternalServicesTests(unittest.TestCase):
     def test_node_exec_detection(self):
         self.assertTrue(external_services.decide_node_exec("node server.js"))

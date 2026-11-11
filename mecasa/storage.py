@@ -37,6 +37,11 @@ DEFAULT_SETTINGS = {
     "week_mode": "parity",   # parity | explicit | none
     "week_flip": "0",        # inverse A et B
     "default_week": "A",     # utilise si week_mode = explicit
+    # Jour de bascule A -> B : "monday" (semaine ISO) ou "friday" (garde alternee).
+    "week_switch_day": "monday",
+    # Minute (apres minuit) du vendredi ou la semaine bascule si
+    # week_switch_day == "friday".
+    "friday_switch_minutes": "460",
     "poll_interval": "60",   # secondes entre deux lectures du cloud
     "engine_enabled": "1",   # 0 = pause du moteur de planning
     # Valeurs appliquees a la clim Atlantic quand le moteur pilote l'appareil.

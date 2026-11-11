@@ -364,6 +364,23 @@ function weeksSection() {
         sub: "La parité ISO alterne A et B une semaine sur deux. En mode « Pas d'alternance », toutes les semaines sont traitées comme la semaine A.",
       }
     )}
+    ${selectRow(
+      "Jour d'alternance (garde)",
+      "week_switch_day",
+      settings.week_switch_day || "monday",
+      [
+        ["monday", "Lundi (semaine complète)"],
+        ["friday", "Vendredi (départ le vendredi selon les cours, puis semaine suivante)"],
+      ],
+      {
+        sub: "Si Vendredi est choisi : le vendredi de la semaine liée à Pronote, l'enfant part selon le planning/réglages puis MeCasa bascule sur la semaine suivante.",
+      }
+    )}
+    ${row(
+      "Inverser Semaine A et B",
+      "Permute A et B par rapport à la parité ISO.",
+      toggle("week_flip", flip)
+    )}
     <div class="row-between wrap" style="gap:10px">
       <div class="tiny muted">
         Semaine en cours : <strong style="color:var(--text)">${escapeHtml(store.state?.week || "—")}</strong>
@@ -490,6 +507,21 @@ function devicesSection() {
 
 
 
+/** Semaines liées à Pronote : réglage explicite, sinon déduites des jours de cours, sinon A et B. */
+function pronoteLinkedWeeksFor(c) {
+  const raw = Array.isArray(c.pronote_weeks)
+    ? c.pronote_weeks.map((value) => String(value).toUpperCase()).filter((value) => value === "A" || value === "B")
+    : [];
+  if (raw.length) return raw;
+  for (const perWeek of Object.values(c.pronote_school_days || {})) {
+    const hasA = Array.isArray(perWeek?.A) && perWeek.A.some(Boolean);
+    const hasB = Array.isArray(perWeek?.B) && perWeek.B.some(Boolean);
+    if (hasA && !hasB) return ["A"];
+    if (hasB && !hasA) return ["B"];
+  }
+  return ["A", "B"];
+}
+
 function pronoteSection() {
   const c = cfg();
   const rooms = [...(store.state?.rooms || [])].sort(
@@ -499,6 +531,7 @@ function pronoteSection() {
   const linkedRooms = Array.isArray(c.pronote_room_ids)
     ? c.pronote_room_ids.map(Number)
     : (linkedRoom ? [linkedRoom] : []);
+  const linkedWeeks = pronoteLinkedWeeksFor(c);
   return section(
     "pronote",
     "Pronote",
@@ -566,6 +599,14 @@ function pronoteSection() {
       </div>
       ${rooms.length ? "" : '<span class="hint">Aucune pièce pour le moment.</span>'}
       <span class="hint">Cocher une pièce la lie à Pronote : son planning est récupéré chaque nuit à 3 h et appliqué (semaines A et B), sans validation. Les pièces liées sont grisées dans le Planning.</span>
+    </div>
+    <div class="field">
+      <span class="label">Semaines liées à Pronote</span>
+      <div class="row wrap" style="gap:10px">
+        <label class="check"><input type="checkbox" data-pronote-week-setting="A"${linkedWeeks.includes("A") ? " checked" : ""}> Semaine A</label>
+        <label class="check"><input type="checkbox" data-pronote-week-setting="B"${linkedWeeks.includes("B") ? " checked" : ""}> Semaine B</label>
+      </div>
+      <span class="hint">Les jours avec cours des semaines cochées sont gérés par Pronote. Au moins une semaine reste cochée.</span>
     </div>
     <div class="form-grid">
       <label class="field">
@@ -1057,7 +1098,11 @@ async function saveSection(name, button) {
       const settings = {
         week_mode: container.querySelector('[data-key="week_mode"]')?.value || "parity",
         week_flip: container.querySelector('[data-key="week_flip"]')?.checked ? "1" : "0",
-        default_week: container.querySelector('[data-key="default_week"]')?.value || "A",
+        week_switch_day: container.querySelector('[data-key="week_switch_day"]')?.value || "monday",
+        // default_week n'est pas affiché ici : on ne l'écrase que s'il existe.
+        ...(container.querySelector('[data-key="default_week"]')
+          ? { default_week: container.querySelector('[data-key="default_week"]').value || "A" }
+          : {}),
       };
       const payload = await put("/api/settings", settings);
       if (store.state) store.state.settings = payload.settings;
@@ -1071,6 +1116,10 @@ async function saveSection(name, button) {
           .map((box) => Number(box.dataset.pronoteRoom));
         body.pronote_room_ids = checked;
         body.pronote_room_id = checked.length ? checked[0] : 0;
+        const weeks = [...container.querySelectorAll("[data-pronote-week-setting]")]
+          .filter((box) => box.checked)
+          .map((box) => box.dataset.pronoteWeekSetting);
+        body.pronote_weeks = weeks.length ? weeks : ["A", "B"];
         // Heures de lever/coucher : input type="time" -> minutes.
         for (const key of ["pronote_wake_minutes", "pronote_bedtime_minutes"]) {
           const timeInput = container.querySelector(`[data-key="${key}"]`);
