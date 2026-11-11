@@ -300,7 +300,12 @@ export default {
     view.querySelector("#planImport").addEventListener("click", openImportSheet);
     view.querySelector("#planPronote")?.addEventListener("click", () => {
       if (!target) { toast("Choisis d'abord une zone.", { type: "warn" }); return; }
-      openPronoteSheet();
+      try {
+        openPronoteSheet();
+      } catch (err) {
+        console.error(err);
+        toastError(err);
+      }
     });
 
     // Appliquer un modèle prédéfini pour toute la semaine
@@ -512,9 +517,7 @@ function paintRooms() {
     html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinked ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
     html += deviceSelect;
     if (isLinked) {
-      html += '<button class="btn btn-sm" type="button" data-unlink-pronote="' + t.id + '">' + icon("x", 14) + ' Désactiver la liaison</button>';
-    } else {
-      html += '<button class="btn btn-sm" type="button" data-link-pronote="' + t.id + '">' + icon("school", 14) + ' Lier à Pronote</button>';
+      html += '<span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>';
     }
     html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '"' + (isLinked ? " disabled" : "") + '>' + icon("trash", 14) + ' Vider cette pièce</button>';
     html += '</div>';
@@ -630,44 +633,6 @@ function paintRooms() {
       paintRooms();
       paintDirty();
       toast(`Modèle « ${m.name} » appliqué.`);
-    });
-  });
-
-  // Lier / délier une pièce à Pronote (auto)
-  host.querySelectorAll("[data-link-pronote]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const tid = btn.dataset.linkPronote;
-      const t = targets.find((x) => x.id === tid);
-      if (!t || t.kind !== "room") return;
-      if (!confirm(`Lier « ${t.label} » à Pronote (récupération automatique chaque nuit) ?`)) return;
-      btn.disabled = true;
-      try {
-        await put("/api/config", { pronote_room_id: Number(t.targetId) });
-        await refreshState({ silent: true });
-        reloadFromState();
-        toast(`« ${t.label} » lié à Pronote.`);
-      } catch (err) {
-        toastError(err);
-        btn.disabled = false;
-      }
-    });
-  });
-  host.querySelectorAll("[data-unlink-pronote]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const tid = btn.dataset.unlinkPronote;
-      const t = targets.find((x) => x.id === tid);
-      if (!t) return;
-      if (!confirm(`Désactiver la liaison Pronote pour « ${t.label} » ?`)) return;
-      btn.disabled = true;
-      try {
-        await put("/api/config", { pronote_room_id: 0 });
-        await refreshState({ silent: true });
-        reloadFromState();
-        toast(`Liaison Pronote désactivée pour « ${t.label} ».`);
-      } catch (err) {
-        toastError(err);
-        btn.disabled = false;
-      }
     });
   });
 
@@ -1053,7 +1018,7 @@ function openPronoteSheet() {
     selectedTarget = targets[0] || null;
   }
   let device = selectedTarget?.device;
-  if (!device) return;
+  if (!device) { toast("Aucun appareil pour cette zone.", { type: "warn" }); return; }
 
   let plan = null;
   const monday = mondayOf(new Date());
