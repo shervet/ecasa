@@ -857,6 +857,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
     slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
     dirty = true;
     closeSheet();
+    void save();
     paintRooms();
     paintDirty();
     toast(existing ? "Créneau modifié." : "Créneau ajouté.", { type: "info", timeout: 2200 });

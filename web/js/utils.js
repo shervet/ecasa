@@ -91,8 +91,9 @@ export const todayIso = () => isoDay(new Date());
 
 export function addDays(value, days) {
   const date = parseDate(value) || new Date();
-  date.setDate(date.getDate() + days);
-  return date;
+  const copy = new Date(date.getTime());
+  copy.setDate(copy.getDate() + days);
+  return copy;
 }
 
 export function mondayOf(value = new Date()) {
