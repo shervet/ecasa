@@ -3,7 +3,7 @@
 import { get, post, put } from "../api.js";
 import { icon, modeIcon } from "../icons.js";
 import { openSheet, closeSheet } from "../sheet.js";
-import { devicesInRoom, refreshState, setPref, store } from "../state.js";
+import { devicesInRoom, refreshConfig, refreshState, setPref, store } from "../state.js";
 import { toast, toastError } from "../toast.js";
 import {
   clamp,
@@ -576,7 +576,6 @@ function paintRooms() {
       const tt = targets.find((x) => x.id === tid);
       if (!tt) return;
       target = tt;
-      rebuildModels();
       const wd = Number(el.dataset.day);
       const si = Number(el.dataset.slotindex);
       openSlotEditor(target, wd, si >= 0 ? si : null);
@@ -592,7 +591,6 @@ function paintRooms() {
       const tt = targets.find((x) => x.id === tid);
       if (!tt) return;
       target = tt;
-      rebuildModels();
       const wd = Number(el.dataset.day);
       openSlotEditor(target, wd, null, 9 * 60);
     });
@@ -1128,6 +1126,7 @@ function openPronoteSheet() {
       }
       toast(`Planning Pronote importé dans ${targetLabels.join(", ")} — semaine${weeksToWrite.length > 1 ? "s" : ""} ${weeksToWrite.join(", ")}.`);
       closeSheet();
+      await refreshConfig({ silent: true });
       await refreshState({ silent: true });
       dirty = false;
       reloadFromState();
