@@ -299,7 +299,6 @@ export default {
     view.querySelector("#planCopy").addEventListener("click", copyToOtherWeek);
     view.querySelector("#planImport").addEventListener("click", openImportSheet);
     view.querySelector("#planPronote")?.addEventListener("click", () => {
-      if (!target) { toast("Choisis d'abord une zone.", { type: "warn" }); return; }
       try {
         openPronoteSheet();
       } catch (err) {
@@ -347,9 +346,9 @@ function buildTargets() {
     if (!devices.length) continue;
     const actuator = devices.find((d) => Number(d.device_id) === Number(room.actuator_device_id));
     const device = actuator || devices[0];
-    const linkedRooms = Array.isArray(store.state?.settings?.pronote_room_ids)
-      ? store.state.settings.pronote_room_ids.map(Number)
-      : (Number(store.state?.settings?.pronote_room_id || 0) ? [Number(store.state.settings.pronote_room_id)] : []);
+    const linkedRooms = Array.isArray(store.config?.pronote_room_ids)
+      ? store.config.pronote_room_ids.map(Number)
+      : (Number(store.config?.pronote_room_id || 0) ? [Number(store.config.pronote_room_id)] : []);
     targets.push({
       id: `room:${room.id}`,
       kind: "room",
@@ -469,9 +468,9 @@ function paintSub() {
 function paintRooms() {
   const host = root?.querySelector("#planRooms");
   if (!host) return;
-  const linkedRooms = Array.isArray(store.state?.settings?.pronote_room_ids)
-    ? store.state.settings.pronote_room_ids.map(Number)
-    : (Number(store.state?.settings?.pronote_room_id || 0) ? [Number(store.state.settings.pronote_room_id)] : []);
+  const linkedRooms = Array.isArray(store.config?.pronote_room_ids)
+    ? store.config.pronote_room_ids.map(Number)
+    : (Number(store.config?.pronote_room_id || 0) ? [Number(store.config.pronote_room_id)] : []);
   if (!targets.length) {
     host.innerHTML = '<div class="empty"><span class="empty-icon">' + icon("calendar", 24) + '</span><strong>Aucune pièce équipée</strong><p>Ajoute un appareil dans Réglages.</p></div>';
     return;
@@ -522,7 +521,6 @@ function paintRooms() {
     if (isLinked) {
       html += '<span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>';
     }
-    html += '<button class="btn btn-sm" type="button" data-toggle-pronote-auto="' + t.id + '">' + icon("school", 14) + ' ' + (isLinked ? 'Désactiver l\'auto Pronote' : 'Activer l\'auto Pronote') + '</button>';
     html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '"' + (isLinked ? " disabled" : "") + '>' + icon("trash", 14) + ' Vider cette pièce</button>';
     html += '</div>';
     html += '<div class="room-plan-model-row">';
@@ -637,33 +635,6 @@ function paintRooms() {
       paintRooms();
       paintDirty();
       toast(`Modèle « ${m.name} » appliqué.`);
-    });
-  });
-
-  // Activer / désactiver l'auto-update Pronote pour une pièce
-  host.querySelectorAll("[data-toggle-pronote-auto]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const tid = btn.dataset.togglePronoteAuto;
-      const t = targets.find((x) => x.id === tid);
-      if (!t || t.kind !== "room") return;
-      const currentlyLinked = !!t.pronoteLinked;
-      const msg = currentlyLinked
-        ? `Désactiver la mise à jour automatique Pronote pour « ${t.label} » ?`
-        : `Activer la mise à jour automatique Pronote pour « ${t.label} » ?`;
-      if (!confirm(msg)) return;
-      btn.disabled = true;
-      try {
-        const newIds = currentlyLinked
-          ? linkedRooms.filter((id) => id !== Number(t.targetId))
-          : [...new Set([...linkedRooms, Number(t.targetId)])];
-        await put("/api/config", { pronote_room_ids: newIds });
-        await refreshState({ silent: true });
-        reloadFromState();
-        toast(currentlyLinked ? `Auto Pronote désactivé pour « ${t.label} ».` : `Auto Pronote activé pour « ${t.label} ».`);
-      } catch (err) {
-        toastError(err);
-        btn.disabled = false;
-      }
     });
   });
 
@@ -1037,9 +1008,9 @@ function openImportSheet() {
 }
 
 function openPronoteSheet() {
-  const linkedRooms = Array.isArray(store.state?.settings?.pronote_room_ids)
-    ? store.state.settings.pronote_room_ids.map(Number)
-    : (Number(store.state?.settings?.pronote_room_id || 0) ? [Number(store.state.settings.pronote_room_id)] : []);
+  const linkedRooms = Array.isArray(store.config?.pronote_room_ids)
+    ? store.config.pronote_room_ids.map(Number)
+    : (Number(store.config?.pronote_room_id || 0) ? [Number(store.config.pronote_room_id)] : []);
   let selectedTarget = target;
   if (linkedRooms.length) {
     const found = targets.find((t) => t.kind === "room" && linkedRooms.includes(Number(t.targetId)));
@@ -1129,8 +1100,10 @@ function openPronoteSheet() {
       sheet.querySelector(".sheet-sub").textContent = `Emploi du temps → ${t.label}`;
       const autoBox = body.querySelector("[data-pronote-auto]");
       if (autoBox) {
-        const linked = Number(store.state?.settings?.pronote_room_id || 0);
-        autoBox.checked = t.kind === "room" && Number(t.targetId) === linked;
+        const linked = Array.isArray(store.config?.pronote_room_ids)
+          ? store.config.pronote_room_ids.map(Number)
+          : (Number(store.config?.pronote_room_id || 0) ? [Number(store.config.pronote_room_id)] : []);
+        autoBox.checked = t.kind === "room" && linked.includes(Number(t.targetId));
       }
     }
   });
@@ -1161,8 +1134,10 @@ function openPronoteSheet() {
         const newIds = box.checked
           ? [...new Set([...linkedRooms, Number(selectedTarget.targetId)])]
           : linkedRooms.filter((id) => id !== Number(selectedTarget.targetId));
-        store.state = { ...store.state, settings: { ...(store.state?.settings || {}), pronote_room_ids: newIds, pronote_room_id: newIds[0] || 0 } };
+        if (cfg?.config) store.config = cfg.config;
+        else store.config = { ...(store.config || {}), pronote_room_ids: newIds, pronote_room_id: newIds[0] || 0 };
         await refreshState({ silent: true });
+        reloadFromState();
       }
       toast(box.checked ? "Rafraîchissement automatique activé." : "Rafraîchissement automatique désactivé.");
     } catch (err) {
