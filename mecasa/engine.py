@@ -600,7 +600,10 @@ class Engine:
                 current_room = self.wiser_rooms.get(room_id, {})
             current_temp = current_room.get("setpoint")
 
-            if current_temp is not None and abs(current_temp - want_temp) < 0.2:
+            # Si la consigne est déjà celle voulue, on ne renvoie rien.
+            # Sauf en mode forcé (action utilisateur/override) : on réapplique
+            # pour rattraper un hub désynchronisé.
+            if not force and current_temp is not None and abs(current_temp - want_temp) < 0.2:
                 return False
 
             if not force:
