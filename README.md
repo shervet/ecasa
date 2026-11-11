@@ -273,10 +273,12 @@ quotidien.
 
 Dans **Réglages → Pronote**, renseigner le compte et sélectionner la **pièce
 liée au planning**. Chaque nuit vers 3 h, MeCasa récupère les semaines A et B
-depuis Pronote et les applique à cette pièce sans validation, en conservant les
-créneaux du week-end déjà saisis à la main. L'import manuel depuis la page
-**Planning** cible la même pièce (ou l'appareil choisi) et n'écrase pas les
-week-ends.
+depuis Pronote et les applique à cette pièce sans validation. Les journées
+générées passent en température réduite de l'**heure de coucher** à l'**heure
+de lever** (toutes deux configurables), puis en confort autour des cours. Les
+journées sans cours ne sont jamais écrasées — ni par l'import automatique, ni
+par l'import manuel depuis la page **Planning** — : les créneaux saisis à la
+main y sont conservés et restent éditables.
 
 ### Redémarrage des services externes
 

@@ -503,24 +503,29 @@ function pronoteSection() {
     "pronote",
     "Pronote",
     "school",
-    `<div class="field">
-      <span class="label">Retrouver l'établissement</span>
-      <div class="input-row">
-        <input class="input" id="pronoteQuery" placeholder="Nom, ville ou code postal" autocomplete="off">
-        <button class="btn" type="button" id="pronoteSearch">${icon("search", 16)} Chercher</button>
+    `<details class="stack">
+      <summary class="card-title" style="cursor:pointer">${icon("server", 16)} Serveur Pronote</summary>
+      <div class="stack" style="gap:14px;margin-top:8px">
+        <div class="field">
+          <span class="label">Retrouver l'établissement</span>
+          <div class="input-row">
+            <input class="input" id="pronoteQuery" placeholder="Nom, ville ou code postal" autocomplete="off">
+            <button class="btn" type="button" id="pronoteSearch">${icon("search", 16)} Chercher</button>
+          </div>
+          <span class="hint">La recherche remplit l'adresse Pronote. Pense à enregistrer ensuite.</span>
+        </div>
+        <div class="stack" id="pronoteResults"></div>
+        ${textRow("Adresse Pronote", "pronote_url", c.pronote_url, { placeholder: "https://…/pronote/…", sub: "L'adresse de l'établissement, visible dans le navigateur." })}
+        ${textRow("Identifiant", "pronote_username", c.pronote_username, { placeholder: "identifiant Pronote" })}
+        ${row(
+          "Mot de passe",
+          c.pronote_password_set ? "Un mot de passe est déjà enregistré. Laisse vide pour le conserver." : "Aucun mot de passe enregistré.",
+          `<input class="input" data-key="pronote_password" data-secret type="password" autocomplete="new-password" placeholder="${c.pronote_password_set ? "••••••••" : "mot de passe"}" style="width:min(320px,62vw)">`,
+          true
+        )}
+        ${row("Effacer le mot de passe", "", toggle("pronote_password_clear", false))}
       </div>
-      <span class="hint">La recherche remplit l'adresse Pronote. Pense à enregistrer ensuite.</span>
-    </div>
-    <div class="stack" id="pronoteResults"></div>
-    ${textRow("Adresse Pronote", "pronote_url", c.pronote_url, { placeholder: "https://…/pronote/…", sub: "L'adresse de l'établissement, visible dans le navigateur." })}
-    ${textRow("Identifiant", "pronote_username", c.pronote_username, { placeholder: "identifiant Pronote" })}
-    ${row(
-      "Mot de passe",
-      c.pronote_password_set ? "Un mot de passe est déjà enregistré. Laisse vide pour le conserver." : "Aucun mot de passe enregistré.",
-      `<input class="input" data-key="pronote_password" data-secret type="password" autocomplete="new-password" placeholder="${c.pronote_password_set ? "••••••••" : "mot de passe"}" style="width:min(320px,62vw)">`,
-      true
-    )}
-    ${row("Effacer le mot de passe", "", toggle("pronote_password_clear", false))}
+    </details>
     <div class="form-grid">
       <label class="field">
         <span class="label">Type de compte</span>
@@ -549,10 +554,6 @@ function pronoteSection() {
         <span class="label">Trajet domicile ↔ établissement</span>
         <input class="input" data-key="pronote_travel_minutes" data-number type="number" min="0" max="180" value="${escapeHtml(c.pronote_travel_minutes ?? 20)}">
       </label>
-      <label class="field">
-        <span class="label">Préparation / lever</span>
-        <input class="input" data-key="pronote_morning_prep_minutes" data-number type="number" min="0" max="180" value="${escapeHtml(c.pronote_morning_prep_minutes ?? 20)}">
-      </label>
     </div>
     <div class="field">
       <span class="label">Pièces liées au planning (import automatique)</span>
@@ -566,11 +567,18 @@ function pronoteSection() {
       ${rooms.length ? "" : '<span class="hint">Aucune pièce pour le moment.</span>'}
       <span class="hint">Cocher une pièce la lie à Pronote : son planning est récupéré chaque nuit à 3 h et appliqué (semaines A et B), sans validation. Les pièces liées sont grisées dans le Planning.</span>
     </div>
-    <label class="field">
-      <span class="label">Heure de coucher</span>
-      <input class="input" data-key="pronote_bedtime_minutes" type="time" value="${minutesToTime(c.pronote_bedtime_minutes ?? 22 * 60)}" style="width:min(160px,40vw)">
-      <span class="hint">À partir de cette heure, le chauffage passe en température réduite pour la nuit.</span>
-    </label>
+    <div class="form-grid">
+      <label class="field">
+        <span class="label">Heure de lever</span>
+        <input class="input" data-key="pronote_wake_minutes" type="time" value="${minutesToTime(c.pronote_wake_minutes ?? 7 * 60)}" style="width:min(160px,40vw)">
+        <span class="hint">À cette heure, le chauffage passe en confort pour la journée.</span>
+      </label>
+      <label class="field">
+        <span class="label">Heure de coucher</span>
+        <input class="input" data-key="pronote_bedtime_minutes" type="time" value="${minutesToTime(c.pronote_bedtime_minutes ?? 22 * 60)}" style="width:min(160px,40vw)">
+        <span class="hint">À partir de cette heure, le chauffage passe en température réduite pour la nuit.</span>
+      </label>
+    </div>
     <div class="form-grid">
       <label class="field">
         <span class="label">Confort : mode</span>
@@ -1063,13 +1071,15 @@ async function saveSection(name, button) {
           .map((box) => Number(box.dataset.pronoteRoom));
         body.pronote_room_ids = checked;
         body.pronote_room_id = checked.length ? checked[0] : 0;
-        // Heure de coucher : input type="time" -> minutes.
-        const bedtimeInput = container.querySelector('[data-key="pronote_bedtime_minutes"]');
-        if (bedtimeInput && bedtimeInput.value) {
-          const parts = String(bedtimeInput.value).split(":");
-          const h = Number(parts[0] || 0);
-          const m = Number(parts[1] || 0);
-          body.pronote_bedtime_minutes = h * 60 + m;
+        // Heures de lever/coucher : input type="time" -> minutes.
+        for (const key of ["pronote_wake_minutes", "pronote_bedtime_minutes"]) {
+          const timeInput = container.querySelector(`[data-key="${key}"]`);
+          if (timeInput && timeInput.value) {
+            const parts = String(timeInput.value).split(":");
+            const h = Number(parts[0] || 0);
+            const m = Number(parts[1] || 0);
+            body[key] = h * 60 + m;
+          }
         }
       }
       const payload = await put("/api/config", body);

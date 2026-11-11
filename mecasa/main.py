@@ -86,7 +86,8 @@ DEFAULT_CONFIG = {
     "pronote_account": "student",
     "pronote_child": "",
     "pronote_travel_minutes": 20,
-    "pronote_morning_prep_minutes": 20,
+    # Heure de lever (minutes après minuit) : passage en température confort.
+    "pronote_wake_minutes": 7 * 60,
     "pronote_student_status": "externe",
     "pronote_comfort_mode": "heat",
     "pronote_comfort_temp": 20,
@@ -307,9 +308,9 @@ def public_config(config: dict) -> dict:
             20 if config.get("pronote_travel_minutes") is None
             else config["pronote_travel_minutes"]
         ),
-        "pronote_morning_prep_minutes": int(
-            20 if config.get("pronote_morning_prep_minutes") is None
-            else config["pronote_morning_prep_minutes"]
+        "pronote_wake_minutes": int(
+            7 * 60 if config.get("pronote_wake_minutes") is None
+            else config["pronote_wake_minutes"]
         ),
         "pronote_student_status": str(
             config.get("pronote_student_status") or "externe"
@@ -323,6 +324,7 @@ def public_config(config: dict) -> dict:
             int(x) for x in (config.get("pronote_room_ids") or [])
             if str(x).isdigit() or isinstance(x, int)
         ],
+        "pronote_school_days": config.get("pronote_school_days") or {},
         "pronote_bedtime_minutes": int(config.get("pronote_bedtime_minutes") or (22 * 60)),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
@@ -459,16 +461,24 @@ def save_config(body: dict) -> tuple[dict, bool]:
             )
         updated["pronote_travel_minutes"] = travel
 
-    if "pronote_morning_prep_minutes" in body:
+    # Ancien réglage « préparation/lever », remplacé par l'heure de lever.
+    updated.pop("pronote_morning_prep_minutes", None)
+
+    if "pronote_wake_minutes" in body:
+        value = body.get("pronote_wake_minutes")
+        if isinstance(value, str) and ":" in value:
+            parts = value.split(":")
+            try:
+                value = int(parts[0]) * 60 + int(parts[1])
+            except (ValueError, IndexError) as err:
+                raise ValueError("Heure de lever invalide") from err
         try:
-            prep = int(body.get("pronote_morning_prep_minutes"))
+            minutes = int(value)
         except (TypeError, ValueError) as err:
-            raise ValueError("Temps de préparation/lever Pronote invalide") from err
-        if not 0 <= prep <= 180:
-            raise ValueError(
-                "Le temps de préparation/lever doit être compris entre 0 et 180 minutes"
-            )
-        updated["pronote_morning_prep_minutes"] = prep
+            raise ValueError("Heure de lever invalide") from err
+        if not (0 <= minutes <= 24 * 60):
+            raise ValueError("Heure de lever invalide")
+        updated["pronote_wake_minutes"] = minutes
 
     if "pronote_student_status" in body:
         status = str(body.get("pronote_student_status") or "").strip().lower()
@@ -706,13 +716,13 @@ def _slot_minutes(slot: dict) -> int:
         return 0
 
 
-def _merge_weekend_slots(days: list, existing: list[dict]) -> list[list[dict]]:
-    """Conserve les créneaux non gérés par Pronote.
+def _merge_preserved_slots(days: list, existing: list[dict]) -> list[list[dict]]:
+    """Applique l'import Pronote jour par jour (manuel et automatique).
 
-    L'import Pronote ne concerne que les jours de classe et les plages
-    diurnes (7 h - 20 h). Les week-ends personnalisés à la main et les
-    créneaux hors plage (réveil matinal avant 7 h, soirée/nuit après
-    20 h) ne doivent pas être écrasés.
+    - Jour avec cours (Pronote fournit des créneaux) : le planning existant de
+      ce jour est remplacé intégralement par le planning Pronote.
+    - Jour sans cours (aucun créneau Pronote) : le planning existant est
+      conservé tel quel et reste éditable.
     """
     result = [list(day or []) for day in days]
     if not existing:
@@ -720,54 +730,26 @@ def _merge_weekend_slots(days: list, existing: list[dict]) -> list[list[dict]]:
     by_day: list[list[dict]] = [[] for _ in range(7)]
     for slot in existing:
         by_day[int(slot["weekday"])].append(slot)
-    for weekday in (5, 6):
-        if by_day[weekday] and not result[weekday]:
+
+    def convert(slot: dict) -> dict:
+        return {
+            "time": (
+                f"{int(slot['minutes']) // 60:02d}:"
+                f"{int(slot['minutes']) % 60:02d}"
+            ),
+            "mode": slot.get("mode", "off"),
+            "temp": slot.get("temp", 20),
+            "fan": slot.get("fan"),
+        }
+
+    for weekday in range(7):
+        if not result[weekday] and by_day[weekday]:
             result[weekday] = [
-                {
-                    "time": (
-                        f"{int(slot['minutes']) // 60:02d}:"
-                        f"{int(slot['minutes']) % 60:02d}"
-                    ),
-                    "mode": slot.get("mode", "off"),
-                    "temp": slot.get("temp", 20),
-                    "fan": slot.get("fan"),
-                }
+                convert(slot)
                 for slot in sorted(
                     by_day[weekday], key=lambda item: int(item["minutes"])
                 )
             ]
-
-    # Jours de classe : on conserve les créneaux hors plage diurne
-    # (avant 7 h et après 20 h) et on les fusionne avec ceux de Pronote.
-    for weekday in range(5):
-        kept = [
-            slot for slot in by_day[weekday]
-            if _slot_minutes(slot) < DAY_START_MIN
-            or _slot_minutes(slot) >= DAY_END_MIN
-        ]
-        if not kept:
-            continue
-        converted = [
-            {
-                "time": (
-                    f"{int(slot['minutes']) // 60:02d}:"
-                    f"{int(slot['minutes']) % 60:02d}"
-                ),
-                "mode": slot.get("mode", "off"),
-                "temp": slot.get("temp", 20),
-                "fan": slot.get("fan"),
-            }
-            for slot in sorted(kept, key=lambda item: int(item["minutes"]))
-        ]
-        existing_times = {s.get("time") for s in result[weekday]}
-        for slot in converted:
-            if slot["time"] not in existing_times:
-                result[weekday].append(slot)
-                existing_times.add(slot["time"])
-        result[weekday].sort(
-            key=lambda s: int(s["time"].split(":")[0]) * 60
-            + int(s["time"].split(":")[1])
-        )
     return result
 
 
@@ -834,9 +816,15 @@ def import_pronote_weeks(
                 if existing:
                     break
 
-        days = _merge_weekend_slots(days, existing)
+        school_flags = [bool(day) for day in days]
+        days = _merge_preserved_slots(days, existing)
         if room:
             store.set_slots(room_id=target_id, week=target, days=days)
+            school_days = config.setdefault("pronote_school_days", {})
+            room_days = school_days.setdefault(str(target_id), {"A": [False] * 7, "B": [False] * 7})
+            if target not in ("A", "B"):
+                room_days.setdefault(target, [False] * 7)
+            room_days[target] = school_flags
         else:
             store.set_slots(target_id, target, days)
         week_starts[target] = source_start.isoformat()
@@ -935,6 +923,12 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
             app.store.log("warn", f"Synchronisation Pronote échouée pour la pièce {rid} : {err}")
     if not all_starts:
         return {"ok": False, "skipped": "error"}
+    CONFIG_PATH.write_text(
+        json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    global _config_cache
+    with _config_lock:
+        _config_cache = dict(config)
     app.store.log(
         "info",
         "Planning Pronote synchronisé automatiquement.",
@@ -2449,6 +2443,15 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError) as err:
                 self._json(400, {"error": f"Planning invalide : {err}"})
                 return
+
+            if use_room:
+                CONFIG_PATH.write_text(
+                    json.dumps(config, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                global _config_cache
+                with _config_lock:
+                    _config_cache = dict(config)
 
             detail = ", ".join(
                 f"semaine {target} (du {start})"

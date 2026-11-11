@@ -5,10 +5,13 @@ La connexion a Pronote repose sur la bibliotheque facultative `pronotepy`
 elle : seule la generation du planning Pronote est indisponible tant qu'elle
 n'est pas installee.
 
-Principe : on considere que la maison est occupee en dehors des cours, trajets
-compris. Le matin, l'absence commence `temps de trajet + temps de preparation`
-avant le premier cours (lever, petit-dejeuner, depart). Le soir, elle se termine
-`temps de trajet` apres la fin du dernier cours.
+Principe : la nuit est en temperature reduite de l'heure de coucher jusqu'a
+l'heure de lever, puis la maison passe en confort. Les journees avec cours,
+l'absence (cours + trajets) repasse en reduit ; le matin, elle commence
+`temps de trajet` avant le premier cours et, le soir, se termine
+`temps de trajet` apres la fin du dernier cours. Les journees sans cours
+ne produisent aucun creneau : elles sont preservees telles quelles a
+l'import et restent editables a la main.
 
 Pour un eleve externe, le retour a la maison pendant la pause de midi cree un
 creneau de confort. Pour un demi-pensionnaire, la journee scolaire est continue :
@@ -701,15 +704,16 @@ def build_days(
     comfort_temp: float,
     reduced_mode: str,
     reduced_temp: float,
-    morning_prep_minutes: int = 0,
+    wake_minutes: int = 7 * 60,
     student_status: str = STUDENT_STATUS_EXTERNE,
     bedtime_minutes: int = 22 * 60,
 ) -> list[list[dict]]:
     """Construit les 7 listes de creneaux a partir des cours normalises.
 
-    ``morning_prep_minutes`` s'ajoute au trajet uniquement avant le premier
-    cours de la journee (lever et preparation). Le retour, le soir comme le
-    midi, ne compte que le temps de trajet.
+    La nuit est en reduit de ``bedtime_minutes`` (coucher) a ``wake_minutes``
+    (lever), puis la maison passe en confort. Chaque absence (cours + trajet
+    aller-retour) repasse en reduit ; le trajet ne s'ajoute qu'aux cours, il
+    n'y a plus de temps de preparation.
 
     Pour un eleve externe, chaque bloc de cours est encadre par le trajet : les
     trous assez longs (pause de midi) deviennent du confort a la maison. Pour un
@@ -717,9 +721,14 @@ def build_days(
     seule absence continue : pas de confort le midi. Si les cours s'arretent
     avant la fin de la pause dejeuner, l'absence est prolongee jusqu'a
     ``LUNCH_END_MINUTES`` : l'eleve dejeune a la cantine avant de rentrer.
+
+    Une journee sans cours renvoie une liste vide : l'import (manuel ou
+    automatique) conserve alors les creneaux existants au lieu d'ecraser la
+    journee.
     """
     travel = max(0, min(180, int(travel_minutes)))
-    prep = max(0, min(180, int(morning_prep_minutes)))
+    wake = max(0, min(DAY_MINUTES, int(wake_minutes or 0)))
+    bedtime = max(0, min(DAY_MINUTES, int(bedtime_minutes or (22 * 60))))
     status = _clean_student_status(student_status)
     comfort = {"mode": comfort_mode, "temp": comfort_temp}
     reduced = {"mode": reduced_mode, "temp": reduced_temp}
@@ -729,10 +738,15 @@ def build_days(
         day_lessons = [item for item in lessons if item["weekday"] == weekday]
         blocks = _merge_blocks(day_lessons, MERGE_GAP_MINUTES)
 
+        # Journee sans cours : rien a ecrire, la journee est preservee.
+        if not blocks:
+            days.append([])
+            continue
+
         # Demi-pensionnaire : la journee scolaire est continue (cours + eventuels
         # trous passes dans l'etablissement). Un externe, lui, rentre chez lui
         # entre deux blocs assez espaces.
-        if status == STUDENT_STATUS_DEMI_PENSIONNAIRE and blocks:
+        if status == STUDENT_STATUS_DEMI_PENSIONNAIRE:
             first_start = blocks[0][0]
             last_end = blocks[-1][1]
             # Journee qui s'arrete a midi : l'eleve reste dejeuner a la cantine
@@ -741,19 +755,16 @@ def build_days(
                 last_end = LUNCH_END_MINUTES
             blocks = [(first_start, last_end)]
 
-        # Periode d'absence = cours + trajet. Le temps de preparation ne
-        # s'applique qu'au premier depart de la journee.
+        # Periode d'absence = cours + trajet aller-retour.
         occupied = []
-        for index, (start, end) in enumerate(blocks):
-            lead = travel + prep if index == 0 else travel
-            occupied_start = max(0, start - lead)
+        for start, end in blocks:
+            occupied_start = max(0, start - travel)
             occupied_end = min(DAY_MINUTES, end + travel)
             if occupied_end > occupied_start:
                 occupied.append((occupied_start, occupied_end))
         occupied = _merge_intervals(occupied, MIN_HOME_MINUTES)
 
         slots: list[dict] = []
-        cursor = 0
 
         def add(minutes: int, state: dict) -> None:
             if minutes < 0 or minutes >= DAY_MINUTES:
@@ -765,6 +776,13 @@ def build_days(
                     "temp": state["temp"],
                 }
                 return
+            # Inutile d'empiler deux creneaux identiques a la suite.
+            if (
+                slots
+                and slots[-1]["mode"] == state["mode"]
+                and slots[-1]["temp"] == state["temp"]
+            ):
+                return
             slots.append(
                 {
                     "time": _time_label(minutes),
@@ -773,22 +791,21 @@ def build_days(
                 }
             )
 
+        # Nuit : reduit depuis le coucher de la veille jusqu'au lever.
+        add(0, reduced)
+        cursor = wake
+
         for start, end in occupied:
+            if end <= cursor:
+                continue  # absence terminee avant le lever : rien a faire
             if start > cursor and start - cursor >= MIN_HOME_MINUTES:
                 add(cursor, comfort)
-            add(start, reduced)
+            add(max(start, cursor), reduced)
             cursor = max(cursor, end)
 
-        bedtime = max(0, min(DAY_MINUTES, int(bedtime_minutes or (22 * 60))))
         if cursor < DAY_MINUTES and DAY_MINUTES - cursor >= MIN_HOME_MINUTES:
             add(cursor, comfort)
-            if bedtime > cursor and bedtime < DAY_MINUTES:
-                add(bedtime, reduced)
-
-        # Journee entierement occupee (ou cas limite) : au moins un creneau.
-        if not slots:
-            add(0, comfort)
-            if 0 < bedtime < DAY_MINUTES:
+            if cursor < bedtime < DAY_MINUTES:
                 add(bedtime, reduced)
 
         days.append(slots)
@@ -807,14 +824,14 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         0,
         180,
     )
-    morning_prep = _clamp_int(
+    wake_minutes = _clamp_int(
         options.get(
-            "morning_prep_minutes",
-            config.get("pronote_morning_prep_minutes", 20),
+            "wake_minutes",
+            config.get("pronote_wake_minutes", 7 * 60),
         ),
-        20,
+        7 * 60,
         0,
-        180,
+        24 * 60,
     )
     student_status = _clean_student_status(
         options.get(
@@ -852,7 +869,7 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         comfort_temp,
         reduced_mode,
         reduced_temp,
-        morning_prep,
+        wake_minutes,
         student_status,
         bedtime_minutes,
     )
@@ -865,7 +882,8 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         "week_end": (week_start + timedelta(days=6)).isoformat(),
         "dates": dates,
         "travel_minutes": travel,
-        "morning_prep_minutes": morning_prep,
+        "wake_minutes": wake_minutes,
+        "bedtime_minutes": bedtime_minutes,
         "student_status": student_status,
         "comfort": {"mode": comfort_mode, "temp": comfort_temp},
         "reduced": {"mode": reduced_mode, "temp": reduced_temp},
