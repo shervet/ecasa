@@ -409,13 +409,18 @@ class WiserClient:
         return schedules
 
     def set_room_temperature(self, room_id: int, temp_celsius: float) -> bool:
-        """Définit la consigne d'une pièce Wiser (ex: 19.5 °C -> 195)."""
+        """Définit la consigne d'une pièce Wiser (ex: 19.5 °C -> 195).
+
+        On utilise RequestOverride (API Hub v1) : sur certains firmwares,
+        Mode/ManualSetPoint seuls sont acceptés sans effet alors que
+        RequestOverride applique réellement la consigne.
+        """
         temp_wiser = int(round(temp_celsius * 10))
         temp_wiser = max(50, min(300, temp_wiser))  # 5°C à 30°C
         self._request(
             "PATCH",
             f"/data/domain/Room/{int(room_id)}",
-            {"Mode": "Manual", "ManualSetPoint": temp_wiser},
+            {"RequestOverride": {"Type": "Manual", "SetPoint": temp_wiser}},
         )
         return True
 

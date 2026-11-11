@@ -7,7 +7,7 @@ from mecasa.wiser import WiserClient
 
 
 class WiserClientTests(unittest.TestCase):
-    def test_set_room_temperature_uses_manual_mode(self):
+    def test_set_room_temperature_uses_request_override(self):
         client = WiserClient("http://127.0.0.1:1", "secret")
 
         with mock.patch.object(client, "_request", return_value={}) as request:
@@ -17,7 +17,7 @@ class WiserClientTests(unittest.TestCase):
         request.assert_called_once_with(
             "PATCH",
             "/data/domain/Room/3",
-            {"Mode": "Manual", "ManualSetPoint": 200},
+            {"RequestOverride": {"Type": "Manual", "SetPoint": 200}},
         )
 
 
