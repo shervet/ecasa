@@ -92,9 +92,12 @@ DEFAULT_CONFIG = {
     "pronote_comfort_temp": 20,
     "pronote_reduced_mode": "heat",
     "pronote_reduced_temp": 16,
-    # Pièce liée au planning Pronote : 0 = aucune. Quand une pièce est liée,
-    # le planning est récupéré chaque nuit à 3 h et appliqué automatiquement.
+    # Pièces liées au planning Pronote (import automatique nightly).
+    # pronote_room_id conservé pour compatibilité (valeur unique).
     "pronote_room_id": 0,
+    "pronote_room_ids": [],
+    # Heure de coucher (minutes après minuit) : passage en température réduite.
+    "pronote_bedtime_minutes": 22 * 60,
     "weather_enabled": True,
     "weather_city": "",
     "weather_latitude": 48.8566,
@@ -311,6 +314,11 @@ def public_config(config: dict) -> dict:
         "pronote_reduced_mode": str(config.get("pronote_reduced_mode", "heat")),
         "pronote_reduced_temp": float(config.get("pronote_reduced_temp", 16) or 16),
         "pronote_room_id": int(config.get("pronote_room_id") or 0),
+        "pronote_room_ids": [
+            int(x) for x in (config.get("pronote_room_ids") or [])
+            if str(x).isdigit() or isinstance(x, int)
+        ],
+        "pronote_bedtime_minutes": int(config.get("pronote_bedtime_minutes") or (22 * 60)),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
         "weather_latitude": float(config.get("weather_latitude", 48.8566) or 0),
@@ -496,6 +504,36 @@ def save_config(body: dict) -> tuple[dict, bool]:
         if room_id < 0:
             raise ValueError("Pièce Pronote invalide")
         updated["pronote_room_id"] = room_id
+        # Synchronise la liste si on utilise l'ancien champ unique.
+        if "pronote_room_ids" not in body:
+            updated["pronote_room_ids"] = [room_id] if room_id else []
+
+    if "pronote_room_ids" in body:
+        try:
+            ids = [int(x) for x in (body.get("pronote_room_ids") or [])]
+        except (TypeError, ValueError) as err:
+            raise ValueError("Pièces Pronote invalides") from err
+        ids = [i for i in ids if i >= 0]
+        updated["pronote_room_ids"] = ids
+        # Compat : on garde pronote_room_id = première pièce liée (ou 0).
+        if "pronote_room_id" not in body:
+            updated["pronote_room_id"] = ids[0] if ids else 0
+
+    if "pronote_bedtime_minutes" in body:
+        value = body.get("pronote_bedtime_minutes")
+        if isinstance(value, str) and ":" in value:
+            parts = value.split(":")
+            try:
+                value = int(parts[0]) * 60 + int(parts[1])
+            except (ValueError, IndexError) as err:
+                raise ValueError("Heure de coucher invalide") from err
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError) as err:
+            raise ValueError("Heure de coucher invalide") from err
+        if not (0 <= minutes <= 24 * 60):
+            raise ValueError("Heure de coucher invalide")
+        updated["pronote_bedtime_minutes"] = minutes
 
     if "weather_enabled" in body:
         updated["weather_enabled"] = bool(body.get("weather_enabled"))
@@ -855,19 +893,19 @@ def daily_sync_due(
 
 
 def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
-    """Récupère le planning Pronote et l'applique à la pièce liée.
+    """Récupère le planning Pronote et l'applique aux pièces liées.
 
     Ne lève pas d'exception : renvoie un état ``skipped`` ou ``ok``.
     """
     config = load_config()
-    try:
-        room_id = int(config.get("pronote_room_id") or 0)
-    except (TypeError, ValueError):
-        room_id = 0
-    if not room_id:
+    room_ids = config.get("pronote_room_ids")
+    if not room_ids:
+        single = int(config.get("pronote_room_id") or 0)
+        room_ids = [single] if single else []
+    room_ids = [int(x) for x in room_ids if x]
+    valid_rooms = [rid for rid in room_ids if app.store.room(rid)]
+    if not valid_rooms:
         return {"ok": False, "skipped": "no_room"}
-    if not app.store.room(room_id):
-        return {"ok": False, "skipped": "unknown_room"}
     if not all(
         str(config.get(key) or "").strip()
         for key in ("pronote_url", "pronote_username", "pronote_password")
@@ -876,29 +914,28 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
 
     now = now or datetime.now()
     monday = now.date() - timedelta(days=now.weekday())
-    week_starts = import_pronote_weeks(
-        app.store,
-        config,
-        room_id,
-        monday,
-        ["A", "B"],
-        room=True,
-    )
-    detail = ", ".join(
-        f"semaine {target} (du {start})" for target, start in week_starts.items()
-    )
+    all_starts = {}
+    for rid in valid_rooms:
+        try:
+            week_starts = import_pronote_weeks(
+                app.store,
+                config,
+                rid,
+                monday,
+                ["A", "B"],
+                room=True,
+            )
+            all_starts[rid] = week_starts
+        except Exception as err:  # noqa: BLE001
+            app.store.log("warn", f"Synchronisation Pronote échouée pour la pièce {rid} : {err}")
+    if not all_starts:
+        return {"ok": False, "skipped": "error"}
     app.store.log(
         "info",
-        f"Planning Pronote synchronisé automatiquement — {detail}",
+        "Planning Pronote synchronisé automatiquement.",
     )
     app.engine.tick(force=True)
-    return {
-        "ok": True,
-        "room_id": room_id,
-        "week_starts": week_starts,
-        "week_start": monday.isoformat(),
-    }
-
+    return {"ok": True, "rooms": all_starts, "week_start": monday.isoformat()}
 
 def _energy_configured(config: dict) -> bool:
     return bool(

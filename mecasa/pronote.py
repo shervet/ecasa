@@ -703,6 +703,7 @@ def build_days(
     reduced_temp: float,
     morning_prep_minutes: int = 0,
     student_status: str = STUDENT_STATUS_EXTERNE,
+    bedtime_minutes: int = 22 * 60,
 ) -> list[list[dict]]:
     """Construit les 7 listes de creneaux a partir des cours normalises.
 
@@ -778,12 +779,17 @@ def build_days(
             add(start, reduced)
             cursor = max(cursor, end)
 
+        bedtime = max(0, min(DAY_MINUTES, int(bedtime_minutes or (22 * 60))))
         if cursor < DAY_MINUTES and DAY_MINUTES - cursor >= MIN_HOME_MINUTES:
             add(cursor, comfort)
+            if bedtime > cursor and bedtime < DAY_MINUTES:
+                add(bedtime, reduced)
 
         # Journee entierement occupee (ou cas limite) : au moins un creneau.
         if not slots:
             add(0, comfort)
+            if 0 < bedtime < DAY_MINUTES:
+                add(bedtime, reduced)
 
         days.append(slots)
 
@@ -832,6 +838,12 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         options.get("reduced_temp", config.get("pronote_reduced_temp", 16)),
         16.0,
     )
+    bedtime_minutes = _clamp_int(
+        options.get("bedtime_minutes", config.get("pronote_bedtime_minutes", 22 * 60)),
+        22 * 60,
+        0,
+        24 * 60,
+    )
 
     days = build_days(
         lessons,
@@ -842,6 +854,7 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         reduced_temp,
         morning_prep,
         student_status,
+        bedtime_minutes,
     )
 
     dates = [

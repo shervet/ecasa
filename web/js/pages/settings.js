@@ -18,6 +18,7 @@ import {
   fmtDate,
   fmtDateTime,
   fmtTemp,
+  minutesToTime,
   mondayOf,
   parseDate,
   uptime,
@@ -495,6 +496,9 @@ function pronoteSection() {
     (a, b) => Number(a.position ?? 0) - Number(b.position ?? 0)
   );
   const linkedRoom = Number(c.pronote_room_id || 0);
+  const linkedRooms = Array.isArray(c.pronote_room_ids)
+    ? c.pronote_room_ids.map(Number)
+    : (linkedRoom ? [linkedRoom] : []);
   return section(
     "pronote",
     "Pronote",
@@ -550,18 +554,22 @@ function pronoteSection() {
         <input class="input" data-key="pronote_morning_prep_minutes" data-number type="number" min="0" max="180" value="${escapeHtml(c.pronote_morning_prep_minutes ?? 20)}">
       </label>
     </div>
-    <label class="field">
-      <span class="label">Pièce liée au planning</span>
-      <select class="select" data-key="pronote_room_id">
-        <option value="0"${linkedRoom ? "" : " selected"}>Aucune — import manuel seulement</option>
+    <div class="field">
+      <span class="label">Pièces liées au planning (import automatique)</span>
+      <div class="stack" style="gap:6px">
         ${rooms
           .map(
-            (room) =>
-              `<option value="${room.id}"${Number(room.id) === linkedRoom ? " selected" : ""}>${escapeHtml(room.name)}</option>`
+            (room) => `<label class="check"><input type="checkbox" data-pronote-room="${room.id}"${linkedRooms.includes(Number(room.id)) ? " checked" : ""}> ${escapeHtml(room.name)}</label>`
           )
           .join("")}
-      </select>
-      <span class="hint">Quand une pièce est liée, l'emploi du temps Pronote est récupéré chaque nuit à 3 h et appliqué à cette pièce (semaines A et B), sans validation.</span>
+      </div>
+      ${rooms.length ? "" : '<span class="hint">Aucune pièce pour le moment.</span>'}
+      <span class="hint">Cocher une pièce la lie à Pronote : son planning est récupéré chaque nuit à 3 h et appliqué (semaines A et B), sans validation. Les pièces liées sont grisées dans le Planning.</span>
+    </div>
+    <label class="field">
+      <span class="label">Heure de coucher</span>
+      <input class="input" data-key="pronote_bedtime_minutes" type="time" value="${minutesToTime(c.pronote_bedtime_minutes ?? 22 * 60)}" style="width:min(160px,40vw)">
+      <span class="hint">À partir de cette heure, le chauffage passe en température réduite pour la nuit.</span>
     </label>
     <div class="form-grid">
       <label class="field">
@@ -1049,6 +1057,21 @@ async function saveSection(name, button) {
       toast("Alternance des semaines enregistrée.");
     } else {
       const body = collect(container);
+      if (name === "pronote") {
+        const checked = [...container.querySelectorAll("[data-pronote-room]")]
+          .filter((box) => box.checked)
+          .map((box) => Number(box.dataset.pronoteRoom));
+        body.pronote_room_ids = checked;
+        body.pronote_room_id = checked.length ? checked[0] : 0;
+        // Heure de coucher : input type="time" -> minutes.
+        const bedtimeInput = container.querySelector('[data-key="pronote_bedtime_minutes"]');
+        if (bedtimeInput && bedtimeInput.value) {
+          const parts = String(bedtimeInput.value).split(":");
+          const h = Number(parts[0] || 0);
+          const m = Number(parts[1] || 0);
+          body.pronote_bedtime_minutes = h * 60 + m;
+        }
+      }
       const payload = await put("/api/config", body);
       store.config = payload.config;
       if (name === "energy") {

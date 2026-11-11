@@ -342,7 +342,9 @@ function buildTargets() {
     if (!devices.length) continue;
     const actuator = devices.find((d) => Number(d.device_id) === Number(room.actuator_device_id));
     const device = actuator || devices[0];
-    const pronoteRoomId = Number(store.state?.settings?.pronote_room_id || 0);
+    const linkedRooms = Array.isArray(store.state?.settings?.pronote_room_ids)
+      ? store.state.settings.pronote_room_ids.map(Number)
+      : (Number(store.state?.settings?.pronote_room_id || 0) ? [Number(store.state.settings.pronote_room_id)] : []);
     targets.push({
       id: `room:${room.id}`,
       kind: "room",
@@ -352,7 +354,7 @@ function buildTargets() {
       devices,
       label: room.name,
       sub: `${devices.length} appareil${devices.length > 1 ? "s" : ""}`,
-      pronoteLinked: pronoteRoomId !== 0 && Number(room.id) === pronoteRoomId,
+      pronoteLinked: linkedRooms.includes(Number(room.id)),
     });
   }
 
@@ -1039,10 +1041,12 @@ function openImportSheet() {
 }
 
 function openPronoteSheet() {
-  const linkedRoomId = Number(store.state?.settings?.pronote_room_id || 0);
+  const linkedRooms = Array.isArray(store.state?.settings?.pronote_room_ids)
+    ? store.state.settings.pronote_room_ids.map(Number)
+    : (Number(store.state?.settings?.pronote_room_id || 0) ? [Number(store.state.settings.pronote_room_id)] : []);
   let selectedTarget = target;
-  if (linkedRoomId) {
-    const found = targets.find((t) => t.kind === "room" && Number(t.targetId) === linkedRoomId);
+  if (linkedRooms.length) {
+    const found = targets.find((t) => t.kind === "room" && linkedRooms.includes(Number(t.targetId)));
     if (found) selectedTarget = found;
   }
   if (!selectedTarget) {
@@ -1070,7 +1074,7 @@ function openPronoteSheet() {
   body.className = "stack";
   const parity = (store.state?.settings?.week_mode || "parity") === "parity";
   let chosenWeeks = new Set(week === "B" ? ["B"] : ["A"]);
-  const isLinked = (t) => t && t.kind === "room" && Number(t.targetId) === Number(store.state?.settings?.pronote_room_id || 0);
+  const isLinked = (t) => t && t.kind === "room" && linkedRooms.includes(Number(t.targetId));
   body.innerHTML = `
     <label class="field">
       <span class="label">Importer dans</span>
@@ -1151,13 +1155,17 @@ function openPronoteSheet() {
     const box = event.currentTarget;
     const roomPayload =
       selectedTarget?.kind === "room"
-        ? { pronote_room_id: box.checked ? Number(selectedTarget.targetId) : 0 }
+        ? (box.checked
+            ? { pronote_room_ids: [...new Set([...linkedRooms, Number(selectedTarget.targetId)])] }
+            : { pronote_room_ids: linkedRooms.filter((id) => id !== Number(selectedTarget.targetId)) })
         : {};
     try {
       if (Object.keys(roomPayload).length) {
         const cfg = await put("/api/config", roomPayload);
-        if (cfg?.config) store.state = { ...store.state, settings: { ...(store.state?.settings || {}), pronote_room_id: box.checked ? Number(selectedTarget.targetId) : 0 } };
-        else store.state = { ...store.state, settings: { ...(store.state?.settings || {}), pronote_room_id: box.checked ? Number(selectedTarget.targetId) : 0 } };
+        const newIds = box.checked
+          ? [...new Set([...linkedRooms, Number(selectedTarget.targetId)])]
+          : linkedRooms.filter((id) => id !== Number(selectedTarget.targetId));
+        store.state = { ...store.state, settings: { ...(store.state?.settings || {}), pronote_room_ids: newIds, pronote_room_id: newIds[0] || 0 } };
         await refreshState({ silent: true });
       }
       toast(box.checked ? "Rafraîchissement automatique activé." : "Rafraîchissement automatique désactivé.");
