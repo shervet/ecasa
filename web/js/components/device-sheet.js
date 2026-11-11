@@ -3,6 +3,7 @@
 import { post, del, put } from "../api.js";
 import { icon, modeIcon } from "../icons.js";
 import { openSheet, closeSheet } from "../sheet.js";
+import { setPendingPlanningRoom } from "../pages/planning.js";
 import { notify, refreshState, store } from "../state.js";
 import { toast, toastError } from "../toast.js";
 import {
@@ -223,6 +224,8 @@ export function openDeviceSheet(deviceId) {
 
   body.querySelector("[data-goto-planning]")?.addEventListener("click", () => {
     closeSheet();
+    const roomId = device.room_id == null ? null : Number(device.room_id);
+    if (Number.isInteger(roomId)) setPendingPlanningRoom(roomId);
     location.hash = "#/planning";
   });
 

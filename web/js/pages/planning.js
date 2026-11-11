@@ -178,6 +178,30 @@ let appliedModelByTarget = {};
 let selectedModelByTarget = {};
 let viewMode = "day"; // "day" | "week"
 let modelEdit = null; // { index, name, room, model, original }
+let pendingRoomId = null; // roomId (targetId) demandé via deep-link (device sheet → Modifier)
+
+function pickTarget() {
+  const wanted = takePendingPlanningRoom();
+  if (wanted != null) {
+    const found = targets.find(
+      (t) =>
+        (t.kind === "room" && Number(t.targetId) === Number(wanted)) ||
+        (t.kind === "device" && Number(t.targetId) === Number(wanted))
+    );
+    if (found) return found;
+  }
+  return targets[0] || null;
+}
+
+export function setPendingPlanningRoom(roomId) {
+  pendingRoomId = roomId;
+}
+
+export function takePendingPlanningRoom() {
+  const value = pendingRoomId;
+  pendingRoomId = null;
+  return value;
+}
 
 export default {
   title: "Planning",
@@ -268,7 +292,7 @@ export default {
     setPref("week", week);
 
     if (!targets.length) return;
-    target = targets[0];
+    target = pickTarget();
     rebuildModels();
     paintWeekSwitch();
     paintRooms();
@@ -1244,7 +1268,7 @@ function openWiserSheet() {
 function reloadFromState() {
   buildTargets();
   if (!targets.length) return;
-  target = targets[0];
+  target = pickTarget();
   rebuildModels();
   paintWeekSwitch();
   paintRooms();
