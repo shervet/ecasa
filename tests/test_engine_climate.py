@@ -7,6 +7,7 @@ Capacites Cozytouch utilisees :
 """
 
 import unittest
+from datetime import datetime
 
 from mecasa.atlantic import AtlanticError, ExecutionTimeout
 from mecasa.engine import (
@@ -307,6 +308,81 @@ class PollBackfillTests(unittest.TestCase):
         self.assertEqual(device["cap_fan"], 100801)
         self.assertEqual(device["cap_louver"], 100803)
         self.assertEqual(device["cap_swing"], 100804)
+
+
+class ModeSupportTests(unittest.TestCase):
+    """Modes applicables par type d'appareil et délégation Wiser → clim."""
+
+    def test_wiser_only_heats(self):
+        self.assertTrue(Engine.mode_supported({"device_type": "wiser"}, "heat"))
+        self.assertTrue(Engine.mode_supported({"device_type": "wiser"}, "off"))
+        self.assertFalse(Engine.mode_supported({"device_type": "wiser"}, "cool"))
+        self.assertFalse(Engine.mode_supported({"device_type": "wiser"}, "dry"))
+
+    def test_atlantic_cool_requires_cool_capability(self):
+        clim = {"device_type": "atlantic", "cap_setpoint_cool": 177}
+        heat_only = {"device_type": "atlantic", "cap_setpoint_cool": 0}
+        self.assertTrue(Engine.mode_supported(clim, "cool"))
+        self.assertTrue(Engine.mode_supported(clim, "dry"))
+        self.assertFalse(Engine.mode_supported(heat_only, "cool"))
+        self.assertFalse(Engine.mode_supported(heat_only, "dry"))
+        self.assertTrue(Engine.mode_supported(heat_only, "heat"))
+
+    def _store_with_room(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.upsert_device(1001, "Clim")
+        room = store.add_room("Séjour test")
+        store.update_room(room["id"], {"actuator_device_id": 9001})
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+        store.update_device(
+            1001,
+            {
+                "room_id": room["id"],
+                "device_type": "atlantic",
+                "cap_setpoint_cool": 177,
+            },
+        )
+        days = [[] for _ in range(7)]
+        days[0] = [{"time": "00:00", "mode": "cool", "temp": 24}]
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+        engine = Engine(store, FakeClient())
+        engine.state = {}
+        engine.availability = {}
+        return store, engine
+
+    def test_wiser_delegates_cool_to_clim(self):
+        store, engine = self._store_with_room()
+        now = datetime(2026, 11, 9, 10, 0)  # lundi
+        desired, source, _until = engine.desired_for(store.device(9001), now)
+        self.assertIsNone(desired)
+        self.assertEqual(source, "délégué")
+
+        desired, source, _until = engine.desired_for(store.device(1001), now)
+        self.assertIsNotNone(desired)
+        self.assertEqual(desired["mode"], "cool")
+        self.assertEqual(desired["temp"], 24)
+        self.assertTrue(source.startswith("planning"))
+
+    def test_unsupported_mode_is_ignored_without_other_device(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        room = store.add_room("Pièce seule")
+        store.update_room(room["id"], {"actuator_device_id": 9001})
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+        days = [[] for _ in range(7)]
+        days[0] = [{"time": "00:00", "mode": "cool", "temp": 24}]
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+        engine = Engine(store, FakeClient())
+        engine.state = {}
+        engine.availability = {}
+        desired, source, _until = engine.desired_for(
+            store.device(9001), datetime(2026, 11, 9, 10, 0)
+        )
+        self.assertIsNone(desired)
+        self.assertIn("non pris en charge", source)
 
 
 class ConstantsTests(unittest.TestCase):

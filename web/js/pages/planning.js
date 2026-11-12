@@ -16,6 +16,8 @@ import {
   modeColor,
   modeLabel,
   modesList,
+  deviceForMode,
+  targetModes,
   mondayOf,
   parseDate,
   sortByPosition,
@@ -179,6 +181,7 @@ let selectedModelByTarget = {};
 let viewMode = "day"; // "day" | "week"
 let modelEdit = null; // { index, name, room, model, original }
 let pendingRoomId = null; // roomId (targetId) demandé via deep-link (device sheet → Modifier)
+let pendingScrollId = null; // ancre de la pièce à faire défiler après le rendu
 
 function pickTarget() {
   const wanted = takePendingPlanningRoom();
@@ -188,9 +191,26 @@ function pickTarget() {
         (t.kind === "room" && Number(t.targetId) === Number(wanted)) ||
         (t.kind === "device" && Number(t.targetId) === Number(wanted))
     );
-    if (found) return found;
+    if (found) {
+      // Arrivée depuis l'accueil : on affiche la page Planning mais on
+      // positionne directement sur la pièce demandée.
+      pendingScrollId = found.id;
+      return found;
+    }
   }
   return targets[0] || null;
+}
+
+/** Amène la pièce demandée à l'écran (deep-link depuis l'accueil). */
+function scrollToPendingTarget() {
+  const id = pendingScrollId;
+  if (!id) return;
+  pendingScrollId = null;
+  const anchor = root?.querySelector(`[data-room-anchor="${id}"]`);
+  if (!anchor) return;
+  requestAnimationFrame(() => {
+    anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 export function setPendingPlanningRoom(roomId) {
@@ -294,9 +314,22 @@ export default {
 
     if (!targets.length) return;
     target = pickTarget();
+    // Lien profond : #/planning/room:3 (ou device:12) ouvre la pièce demandée.
+    const parts = location.hash.replace(/^#\/?/, "").split("/");
+    if (parts[0] === "planning" && parts[1]) {
+      const wanted = decodeURIComponent(parts[1]);
+      const found = targets.find(
+        (t) => t.id === wanted || `${t.kind}:${t.targetId}` === wanted
+      );
+      if (found) {
+        target = found;
+        pendingScrollId = found.id;
+      }
+    }
     rebuildModels();
     paintWeekSwitch();
     paintRooms();
+    scrollToPendingTarget();
     paintDirty();
     paintSub();
 
@@ -590,7 +623,7 @@ function paintRooms() {
     const schoolDays = isLinkedWeek
       ? (schoolDaysMap[String(t.targetId)]?.[week] || [false, false, false, false, false, false, false])
       : [false, false, false, false, false, false, false];
-    html += '<div class="room-plan' + (isLinkedWeek ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '">';
+    html += '<div class="room-plan' + (isLinkedWeek ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '" style="scroll-margin-top: calc(var(--topbar-h) + 56px)">';
     html += '<div class="room-plan-head">';
     html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
     html += deviceSelect;
@@ -824,6 +857,21 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
   let mode = existing?.mode || "heat";
   const { min: tempMin, max: tempMax } = targetTempRange(target);
   let temp = clamp(Number(existing?.temp ?? 20), tempMin, tempMax);
+  // Modes réellement applicables à la pièce : union des appareils.
+  const availableModes = targetModes(target);
+  const hints = [];
+  if (target.device?.device_type === "wiser") {
+    hints.push("Sur Wiser, « Arrêt » est appliqué par une consigne hors gel à 6 °C.");
+  }
+  const cooler = deviceForMode(target, "cool");
+  if (cooler && Number(cooler.device_id) !== Number(target.device?.device_id)) {
+    hints.push(
+      `Cette pièce est aussi équipée de « ${cooler.name} » : le mode Froid lui sera appliqué.`
+    );
+  }
+  const modeHint = hints.length
+    ? `<p class="hint">${hints.map((text) => escapeHtml(text)).join(" ")}</p>`
+    : "";
 
   const body = document.createElement("div");
   body.className = "stack";
@@ -848,7 +896,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
       <span class="label">Mode</span>
       <div class="mode-grid" data-mode-grid>
         ${modesList(store.meta)
-          .filter(([key]) => (target.device?.device_type === "wiser" ? key === "heat" || key === "off" : true))
+          .filter(([key]) => availableModes.includes(key))
           .map(
             ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
               ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
@@ -856,7 +904,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
           )
           .join("")}
       </div>
-      ${target.device?.device_type === "wiser" ? '<p class="hint">Sur Wiser, « Arrêt » est appliqué par une consigne hors gel à 6 °C.</p>' : ""}
+      ${modeHint}
     </div>
 
     <label class="field">

@@ -207,6 +207,46 @@ export function modeLabel(mode, meta) {
   return found ? found[1] : mode;
 }
 
+/**
+ * Modes réellement applicables à un appareil.
+ *
+ * - Wiser : « Arrêt » (hors gel) et « Chauffage » uniquement.
+ * - Atlantic : tous les modes, si l'appareil expose la consigne de froid
+ *   (`cap_setpoint_cool`) ; sans elle, ni « Froid » ni « Déshumidification ».
+ */
+export function deviceModes(device) {
+  if (!device) return [];
+  if (device.device_type === "wiser") return ["off", "heat"];
+  const cool = Number(device.cap_setpoint_cool || 0) > 0;
+  return cool
+    ? ["off", "cool", "heat", "dry", "fan", "auto"]
+    : ["off", "heat"];
+}
+
+/**
+ * Modes disponibles pour une cible (pièce ou appareil) : union des modes de
+ * ses appareils. Une pièce équipée d'une climatisation propose donc « Froid »
+ * même si son actionnaire est un simple radiateur Wiser.
+ */
+export function targetModes(target) {
+  const devices = target?.devices?.length
+    ? target.devices
+    : (target?.device ? [target.device] : []);
+  const modes = new Set();
+  for (const device of devices) {
+    for (const mode of deviceModes(device)) modes.add(mode);
+  }
+  return [...modes];
+}
+
+/** Appareil de la cible capable d'appliquer un mode donné. */
+export function deviceForMode(target, mode) {
+  const devices = target?.devices?.length
+    ? target.devices
+    : (target?.device ? [target.device] : []);
+  return devices.find((device) => deviceModes(device).includes(mode)) || null;
+}
+
 export const MODE_COLORS = {
   off: "var(--faint)",
   auto: "var(--ok)",

@@ -3,6 +3,13 @@
 MeCasa est une application Python sans dépendance obligatoire. Trois étapes :
 installer Python, récupérer le code, lancer le serveur.
 
+> **À propos** : MeCasa est un projet open source **développé avec l'aide d'une
+> intelligence artificielle**, sous supervision humaine. Le code, les tests et la
+> documentation sont produits par l'IA ; les choix techniques et les essais sur
+> matériel réel restent humains. Les suggestions d'évolution (nouveaux systèmes,
+> nouvelles intégrations, application Android) sont les bienvenues — voir
+> [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 ## Prérequis
 
 | Élément | Minimum | Recommandé |

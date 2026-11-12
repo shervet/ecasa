@@ -484,12 +484,28 @@ class Engine:
                     slots = self.store.slots(room_id=room["id"], week=week)
                     break
         if not slots:
+            # Appareil non actionnaire (ex. climatisation) qui prend en charge
+            # le mode d'une pièce que son actionnaire ne sait pas appliquer.
+            slots = self._delegated_slots(device, week, now)
+        if not slots:
             slots = self.store.slots(device["device_id"], week)
         slot = find_slot(slots, now)
         if not slot:
             return None, "vide", None
 
         mode = slot["mode"]
+        if not self.mode_supported(device, mode):
+            # Un autre appareil de la pièce (climatisation) sait peut-être
+            # appliquer ce mode : on lui laisse la main.
+            if self._delegates_to(device, mode):
+                return None, "délégué", None
+            self.store.log(
+                "avertissement",
+                f"Mode {MODE_LABELS.get(mode, mode)} non pris en charge par "
+                f"{device['name']} : créneau ignoré.",
+                device["device_id"],
+            )
+            return None, "mode non pris en charge", None
         return (
             {
                 "mode": mode,
@@ -499,6 +515,73 @@ class Engine:
             f"planning {week}",
             None,
         )
+
+    # Modes réellement applicables selon le type d'appareil.
+    ATLANTIC_MODES = ("off", "cool", "heat", "dry", "fan", "auto")
+    WISER_MODES = ("off", "heat")
+
+    @classmethod
+    def mode_supported(cls, device: dict, mode: str) -> bool:
+        """Vrai si l'appareil sait appliquer ce mode.
+
+        - Wiser : « Arrêt » (hors gel) et « Chauffage » uniquement.
+        - Atlantic : tous les modes, à condition d'exposer la consigne de froid
+          pour « Froid » et « Déshumidification ».
+        """
+        if not device or not mode:
+            return False
+        if device.get("device_type", "atlantic") == "wiser":
+            return mode in cls.WISER_MODES
+        if mode in ("cool", "dry"):
+            return bool(int(device.get("cap_setpoint_cool") or 0))
+        return mode in cls.ATLANTIC_MODES
+
+    def _room_of(self, device: dict):
+        """Pièce à laquelle l'appareil est rattaché (ou ``None``)."""
+        room_id = device.get("room_id")
+        if room_id in (None, "", 0, "0"):
+            return None
+        for room in self.store.rooms():
+            if int(room.get("id", 0)) == int(room_id):
+                return room
+        return None
+
+    def _delegates_to(self, device: dict, mode: str) -> bool:
+        """Vrai si un autre appareil de la pièce sait appliquer ce mode."""
+        room = self._room_of(device)
+        if not room:
+            return False
+        return any(
+            int(other.get("device_id", 0)) != int(device.get("device_id", 0))
+            and int(other.get("room_id") or 0) == int(room.get("id", 0))
+            and self.mode_supported(other, mode)
+            for other in self.store.devices()
+        )
+
+    def _delegated_slots(self, device: dict, week: str, now: datetime):
+        """Créneaux d'une pièce que cet appareil applique à la place de
+        l'actionnaire (cas d'une climatisation Atlantic dans une pièce dont
+        le radiateur Wiser ne sait que chauffer)."""
+        room = self._room_of(device)
+        if not room:
+            return []
+        actuator_id = room.get("actuator_device_id")
+        if actuator_id in (None, "", 0, "0"):
+            return []
+        actuator = self.store.device(int(actuator_id))
+        if not actuator or int(actuator.get("device_id", 0)) == int(
+            device.get("device_id", 0)
+        ):
+            return []
+        slots = self.store.slots(room_id=room["id"], week=week)
+        if not slots:
+            return []
+        slot = find_slot(slots, now)
+        if not slot or self.mode_supported(actuator, slot["mode"]):
+            return []
+        if not self.mode_supported(device, slot["mode"]):
+            return []
+        return slots
 
     @staticmethod
     def effective_temp(device: dict, mode: str, temp) -> float:

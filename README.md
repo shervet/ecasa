@@ -200,7 +200,7 @@ Les contributions sont bienvenues : corrections, traductions, documentation, tes
 matériel réel. Lire [CONTRIBUTING.md](CONTRIBUTING.md) avant d'ouvrir une pull request.
 
 Tu as une idée d'évolution — nouvel appareil, nouvelle intégration, application
-Android, ещё plus de simplicité ? **Ouvre une discussion** : les suggestions sont
+Android, encore plus de simplicité ? **Ouvre une discussion** : les suggestions sont
 les bienvenues, et chaque proposition est étudiée avant d'être codée.
 
 ```bash

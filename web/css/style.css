@@ -2038,6 +2038,16 @@ svg {
   color: var(--primary-strong);
 }
 
+.mode-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mode-btn:disabled:hover {
+  background: var(--surface);
+  color: var(--muted);
+}
+
 /* --------------------------------------------------------------- stats */
 
 .kpi-grid {

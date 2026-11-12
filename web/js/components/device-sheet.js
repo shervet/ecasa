@@ -17,6 +17,7 @@ import {
   modeColor,
   modeLabel,
   modesList,
+  deviceModes,
   todayIndex,
   weekdayShort,
 } from "../utils.js";
@@ -68,6 +69,21 @@ export function openDeviceSheet(deviceId) {
 
   const room = store.state.rooms?.find((item) => Number(item.id) === Number(device.room_id));
 
+  // Modes de la pièce : un Wiser ne sait que chauffer, mais la pièce peut
+  // contenir une climatisation. On affiche alors les modes de clim, grisés
+  // pour cet appareil, avec un raccourci vers l'appareil qui les applique.
+  const roomDevices = (store.state?.devices || []).filter(
+    (item) => Number(item.room_id) === Number(device.room_id)
+  );
+  const ownModes = deviceModes(device);
+  const otherClim = roomDevices.find(
+    (item) =>
+      Number(item.device_id) !== Number(device.device_id) &&
+      deviceModes(item).includes("cool")
+  );
+  const roomModes = new Set(ownModes);
+  for (const mode of deviceModes(otherClim)) roomModes.add(mode);
+
   const body = document.createElement("div");
   body.className = "stack";
   body.innerHTML = `
@@ -94,14 +110,23 @@ export function openDeviceSheet(deviceId) {
 
     <div class="mode-grid" data-mode-grid>
       ${modesList(store.meta)
-        .filter(([key]) => (isWiser ? key !== "cool" && key !== "dry" && key !== "fan" && key !== "auto" : true))
+        .filter(([key]) => roomModes.has(key))
         .map(
-          ([key, label]) => `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}">
-            ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
-          </button>`
+          ([key, label]) => {
+            const allowed = ownModes.includes(key);
+            return `<button class="mode-btn${key === mode ? " is-active" : ""}" type="button" data-mode="${key}"${allowed ? "" : ' disabled title="Non disponible sur cet appareil"'}>
+              ${modeIcon(key, 20)}<span>${escapeHtml(label)}</span>
+            </button>`;
+          }
         )
         .join("")}
     </div>
+    ${
+      otherClim
+        ? `<p class="hint">« Froid », « Déshumidification » et « Ventilation » s'appliquent à <strong>${escapeHtml(otherClim.name)}</strong> dans cette pièce.</p>
+           <button class="btn btn-sm" type="button" data-open-clim="${escapeHtml(otherClim.device_id)}">${icon("sliders", 15)} Ouvrir ${escapeHtml(otherClim.name)}</button>`
+        : ""
+    }
 
     <div class="field">
       <span class="label">Durée du forçage</span>
@@ -222,11 +247,23 @@ export function openDeviceSheet(deviceId) {
   paint();
   paintProgram(body.querySelector("[data-program]"), device);
 
+  body.querySelector("[data-open-clim]")?.addEventListener("click", (event) => {
+    const id = Number(event.currentTarget.dataset.openClim);
+    if (!Number.isInteger(id)) return;
+    closeSheet();
+    window.setTimeout(() => openDeviceSheet(id), 120);
+  });
+
   body.querySelector("[data-goto-planning]")?.addEventListener("click", () => {
     closeSheet();
     const roomId = device.room_id == null ? null : Number(device.room_id);
-    if (Number.isInteger(roomId)) setPendingPlanningRoom(roomId);
-    location.hash = "#/planning";
+    if (Number.isInteger(roomId)) {
+      setPendingPlanningRoom(roomId);
+      // Lien profond : le Planning s'ouvre directement sur la pièce.
+      location.hash = `#/planning/room:${roomId}`;
+    } else {
+      location.hash = "#/planning";
+    }
   });
 
   body.querySelector("[data-apply-model]")?.addEventListener("click", async (event) => {
