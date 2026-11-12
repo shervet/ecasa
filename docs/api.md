@@ -65,7 +65,9 @@ résultat identique à l'aperçu.
 
 | Méthode | Route | Rôle |
 | --- | --- | --- |
-| POST | `/api/connectors/test` | Teste un connecteur (`{"id": "daikin"}`) ; les réglages vivent dans `config.connectors`. |
+| POST | `/api/connectors/test` | Teste un connecteur (`{"id": "daikin"}`) et renvoie ses appareils. |
+| GET | `/api/connectors/{id}/devices` | Liste les appareils du connecteur (mode, consigne, ambiance). |
+| POST | `/api/connectors/{id}/apply` | Applique un mode et une consigne (`{"device_id": …, "mode": "heat", "temp": 20.5}`). |
 | GET | `/api/discover` | Liste les appareils découverts sur le compte Atlantic. |
 | POST | `/api/discover` | Rafraîchit la découverte des appareils. |
 

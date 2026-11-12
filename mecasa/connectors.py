@@ -1,24 +1,36 @@
 """Connecteurs d'appareils autres qu'Atlantic et Wiser.
 
-Chaque connecteur décrit ses champs de configuration. Les réglages peuvent être
-enregistrés dès maintenant ; les pilotes (lecture et écriture des consignes)
-sont livrés au fur et à mesure des versions. Le catalogue est exposé par
-``GET /api/meta`` et rendu sous forme de panneaux dépliables dans Réglages →
-Appareils.
+Chaque connecteur expose trois opérations, testables sans matériel grâce à
+``_http`` (monkeypatché dans les tests) :
+
+- ``snapshot(settings)`` : lit l'état des appareils (découverte + consignes) ;
+- ``apply(settings, device, mode, temp)`` : applique un mode et une consigne ;
+- ``test_connector(id, settings)`` : diagnostic affiché dans l'interface.
+
+Protocoles :
+- **Daikin** : API HTTP locale du boîtier Wi-Fi (``/aircon/...``) ;
+- **Netatmo** : API cloud OAuth2 (refresh token) ;
+- **Mitsubishi** : MELCloud (login + ListDevices + SetAta) ;
+- **Bosch** : nécessite un appairage matériel (bouton sur le contrôleur + certificat
+  client) : le pilote est donc le seul encore en attente.
 """
 
 from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
+
+MELCLOUD_URL = "https://app.melcloud.com/Mitsubishi.Wifi.Client"
+NETATMO_URL = "https://api.netatmo.com"
 
 CONNECTORS = [
     {
         "id": "daikin",
         "label": "Daikin",
         "kind": "local",
-        "status": "beta",
+        "status": "ready",
         "description": "Climatisation Daikin via le boîtier Wi-Fi local (API HTTP).",
         "fields": [
             {
@@ -40,8 +52,11 @@ CONNECTORS = [
         "id": "bosch",
         "label": "Bosch",
         "kind": "local",
-        "status": "planned",
-        "description": "Thermostats Bosch Smart Home via le contrôleur local.",
+        "status": "pairing",
+        "description": (
+            "Thermostats Bosch Smart Home. L'appairage exige un appui sur le "
+            "bouton du contrôleur et un certificat client : le pilote est en attente."
+        ),
         "fields": [
             {
                 "key": "host",
@@ -61,7 +76,7 @@ CONNECTORS = [
         "id": "netatmo",
         "label": "Netatmo",
         "kind": "cloud",
-        "status": "planned",
+        "status": "ready",
         "description": "Thermostats et vannes Netatmo (API cloud, compte développeur).",
         "fields": [
             {"key": "client_id", "label": "Client ID", "type": "text"},
@@ -83,7 +98,7 @@ CONNECTORS = [
         "id": "mitsubishi",
         "label": "Mitsubishi",
         "kind": "cloud",
-        "status": "planned",
+        "status": "ready",
         "description": "Climatisation Mitsubishi via MELCloud.",
         "fields": [
             {"key": "email", "label": "Identifiant MELCloud", "type": "text"},
@@ -96,6 +111,314 @@ CONNECTORS = [
         ],
     },
 ]
+
+# Modes MeCasa ⇄ modes natifs.
+DAIKIN_MODES = {"auto": "0", "dry": "1", "cool": "2", "heat": "3", "fan": "4"}
+DAIKIN_MODES_REVERSE = {value: key for key, value in DAIKIN_MODES.items()}
+MELCLOUD_MODES = {"heat": 1, "dry": 2, "cool": 3, "fan": 7, "auto": 8}
+MELCLOUD_MODES_REVERSE = {value: key for key, value in MELCLOUD_MODES.items()}
+
+
+# --------------------------------------------------------------------- HTTP
+
+
+def _http(method: str, url: str, headers: dict | None = None,
+          body: bytes | None = None, timeout: int = 10):
+    """Requête HTTP brute, injectable dans les tests."""
+    request = urllib.request.Request(
+        url, data=body, headers=headers or {}, method=method
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as err:
+        return err.code, err.read()
+
+
+def _json_call(method, url, headers=None, payload=None, timeout=10) -> dict:
+    body = None
+    headers = dict(headers or {})
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers.setdefault("Content-Type", "application/json")
+    status, raw = _http(method, url, headers, body, timeout)
+    try:
+        data = json.loads(raw.decode("utf-8", "replace") or "{}")
+    except ValueError:
+        raise ValueError(f"Réponse illisible (HTTP {status})")
+    if status >= 400:
+        message = ""
+        if isinstance(data, dict):
+            message = str(data.get("error") or data.get("Message") or "")
+        raise ValueError(f"HTTP {status}" + (f" : {message}" if message else ""))
+    return data if isinstance(data, dict) else {"data": data}
+
+
+def _kv(text: str) -> dict:
+    """Analyse une réponse Daikin « ret=OK,pow=1,mode=3,… »."""
+    result = {}
+    for part in str(text or "").split(","):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        result[key.strip()] = value.strip()
+    return result
+
+
+def _float(value, default=None):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+# ------------------------------------------------------------------- Daikin
+
+
+def _daikin_base(host: str) -> str:
+    base = str(host or "").strip().rstrip("/")
+    if not base:
+        raise ValueError("Adresse du boîtier manquante")
+    if not base.startswith(("http://", "https://")):
+        base = f"http://{base}"
+    return base
+
+
+def _daikin_get(base: str, path: str, timeout: int = 6) -> dict:
+    status, raw = _http("GET", f"{base}/{path.lstrip('/')}", timeout=timeout)
+    text = raw.decode("ascii", "replace")
+    if status >= 400:
+        raise ValueError(f"Boîtier Daikin : HTTP {status}")
+    data = _kv(text)
+    if data.get("ret") != "OK":
+        raise ValueError("Réponse inattendue du boîtier Daikin")
+    return data
+
+
+def daikin_snapshot(settings: dict) -> dict:
+    base = _daikin_base(settings.get("host"))
+    info = _daikin_get(base, "common/basic_info")
+    control = _daikin_get(base, "aircon/get_control_info")
+    sensor = _daikin_get(base, "aircon/get_sensor_info")
+    power = str(control.get("pow", "0")) == "1"
+    mode = DAIKIN_MODES_REVERSE.get(str(control.get("mode", "")), "auto")
+    return {
+        "ok": True,
+        "devices": [
+            {
+                "id": str(info.get("mac") or info.get("id") or settings.get("host")),
+                "name": str(info.get("name") or "Daikin"),
+                "mode": mode if power else "off",
+                "temp": _float(control.get("stemp"), 20.0),
+                "ambient": _float(sensor.get("htemp")),
+                "outside": _float(sensor.get("otemp")),
+                "online": True,
+            }
+        ],
+    }
+
+
+def daikin_apply(settings: dict, mode: str, temp: float) -> dict:
+    base = _daikin_base(settings.get("host"))
+    control = _daikin_get(base, "aircon/get_control_info")
+    payload = {
+        "pow": "1" if mode != "off" else "0",
+        "mode": DAIKIN_MODES.get(mode if mode != "off" else "auto", "3"),
+        "stemp": f"{float(temp):.1f}",
+        "shum": str(control.get("shum", "0") or "0"),
+        "f_rate": str(control.get("f_rate", "A") or "A"),
+        "f_dir": str(control.get("f_dir", "0") or "0"),
+    }
+    query = urllib.parse.urlencode(payload)
+    _daikin_get(base, f"aircon/set_control_info?{query}")
+    return {"ok": True, "applied": payload}
+
+
+# ---------------------------------------------------------------- MELCloud
+
+
+def _melcloud_login(settings: dict) -> str:
+    email = str(settings.get("email") or "").strip()
+    password = str(settings.get("password") or "")
+    if not email or not password:
+        raise ValueError("Identifiant ou mot de passe MELCloud manquant")
+    data = _json_call(
+        "POST",
+        f"{MELCLOUD_URL}/Login/ClientLogin",
+        payload={"Email": email, "Password": password, "AppVersion": "1.0.0.0"},
+    )
+    context = str((data.get("LoginData") or {}).get("ContextKey") or "")
+    if not context:
+        raise ValueError("Connexion MELCloud refusée")
+    return context
+
+
+def melcloud_snapshot(settings: dict) -> dict:
+    context = _melcloud_login(settings)
+    devices = _json_call(
+        "GET",
+        f"{MELCLOUD_URL}/User/ListDevices",
+        headers={"X-MitsContextKey": context},
+    )
+    items = devices if isinstance(devices, list) else devices.get("data") or []
+    result = []
+    for item in items:
+        if not isinstance(item, dict) or "DeviceID" not in item:
+            continue
+        power = bool(item.get("Power"))
+        mode = MELCLOUD_MODES_REVERSE.get(int(item.get("OperationMode") or 0), "auto")
+        result.append(
+            {
+                "id": str(item["DeviceID"]),
+                "name": str(item.get("DeviceName") or f"Clim {item['DeviceID']}"),
+                "mode": mode if power else "off",
+                "temp": _float(item.get("SetTemperature"), 20.0),
+                "ambient": _float(item.get("RoomTemperature")),
+                "outside": _float(item.get("OutdoorTemperature")),
+                "online": bool(item.get("DeviceOnline", True)),
+            }
+        )
+    if not result:
+        raise ValueError("Aucun appareil MELCloud sur ce compte")
+    return {"ok": True, "devices": result, "context": context}
+
+
+def melcloud_apply(settings: dict, device_id, mode: str, temp: float) -> dict:
+    context = _melcloud_login(settings)
+    payload = {
+        "DeviceID": int(device_id),
+        "Power": mode != "off",
+        "OperationMode": MELCLOUD_MODES.get(mode if mode != "off" else "heat", 1),
+        "SetTemperature": float(temp),
+    }
+    _json_call(
+        "POST",
+        f"{MELCLOUD_URL}/Device/SetAta",
+        headers={"X-MitsContextKey": context},
+        payload=payload,
+    )
+    return {"ok": True, "applied": payload}
+
+
+# ------------------------------------------------------------------ Netatmo
+
+
+def _netatmo_token(settings: dict) -> str:
+    client_id = str(settings.get("client_id") or "").strip()
+    client_secret = str(settings.get("client_secret") or "")
+    refresh = str(settings.get("refresh_token") or "")
+    if not client_id or not client_secret or not refresh:
+        raise ValueError("Client ID, secret et refresh token Netatmo requis")
+    body = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh,
+        }
+    ).encode("utf-8")
+    status, raw = _http(
+        "POST",
+        f"{NETATMO_URL}/oauth2/token",
+        {"Content-Type": "application/x-www-form-urlencoded"},
+        body,
+        10,
+    )
+    try:
+        data = json.loads(raw.decode("utf-8", "replace") or "{}")
+    except ValueError:
+        raise ValueError(f"Réponse Netatmo illisible (HTTP {status})")
+    token = str(data.get("access_token") or "")
+    if status >= 400 or not token:
+        raise ValueError("Connexion Netatmo refusée")
+    return token
+
+
+def netatmo_snapshot(settings: dict) -> dict:
+    token = _netatmo_token(settings)
+    headers = {"Authorization": f"Bearer {token}"}
+    homes = _json_call("GET", f"{NETATMO_URL}/api/homesdata", headers=headers).get(
+        "body", {}
+    )
+    result = []
+    for home in homes.get("homes") or []:
+        home_id = home.get("id")
+        if not home_id:
+            continue
+        status_payload = _json_call(
+            "GET",
+            f"{NETATMO_URL}/api/homestatus?{urllib.parse.urlencode({'home_id': home_id})}",
+            headers=headers,
+        ).get("body", {})
+        home_status = status_payload.get("home") or {}
+        for room in home_status.get("rooms") or []:
+            setpoint = room.get("therm_setpoint_temperature")
+            result.append(
+                {
+                    "id": f"{home_id}:{room.get('id')}",
+                    "name": str(room.get("name") or "Pièce Netatmo"),
+                    "mode": "heat" if room.get("therm_setpoint_mode") != "off" else "off",
+                    "temp": _float(setpoint, 20.0),
+                    "ambient": _float(room.get("therm_measured_temperature")),
+                    "outside": None,
+                    "online": bool(room.get("reachable", True)),
+                }
+            )
+    if not result:
+        raise ValueError("Aucune pièce Netatmo sur ce compte")
+    return {"ok": True, "devices": result}
+
+
+def netatmo_apply(settings: dict, device_id, mode: str, temp: float) -> dict:
+    token = _netatmo_token(settings)
+    home_id, _, room_id = str(device_id).partition(":")
+    if not home_id or not room_id:
+        raise ValueError("Identifiant de pièce Netatmo invalide")
+    payload = {
+        "home_id": home_id,
+        "room_id": room_id,
+        "mode": "off" if mode == "off" else "manual",
+    }
+    if mode != "off":
+        payload["temp"] = float(temp)
+    _json_call(
+        "POST",
+        f"{NETATMO_URL}/api/setroomthermpoint",
+        headers={"Authorization": f"Bearer {token}"},
+        payload=payload,
+    )
+    return {"ok": True, "applied": payload}
+
+
+# ------------------------------------------------------------------ Bosch
+
+
+def bosch_snapshot(settings: dict) -> dict:
+    raise ValueError(
+        "Bosch : appairage matériel requis (bouton du contrôleur + certificat client). "
+        "Renseigne l'adresse et le jeton, puis relance l'appairage."
+    )
+
+
+def bosch_apply(settings: dict, device_id, mode: str, temp: float) -> dict:
+    raise ValueError("Bosch : appairage matériel requis avant tout pilotage.")
+
+
+SNAPSHOTS = {
+    "daikin": daikin_snapshot,
+    "bosch": bosch_snapshot,
+    "netatmo": netatmo_snapshot,
+    "mitsubishi": melcloud_snapshot,
+}
+APPLIERS = {
+    "daikin": lambda settings, device, mode, temp: daikin_apply(settings, mode, temp),
+    "bosch": bosch_apply,
+    "netatmo": netatmo_apply,
+    "mitsubishi": melcloud_apply,
+}
+
+
+# ------------------------------------------------------------------ registre
 
 
 def connector_ids() -> list[str]:
@@ -170,7 +493,6 @@ def merge_settings(body, current: dict) -> dict:
             raw = values.get(key)
             value = "" if raw is None else str(raw).strip()
             if not value and field.get("secret"):
-                # Champ secret laissé vide : on garde la valeur enregistrée.
                 value = str(previous.get(key) or "")
             entry[key] = value
         if any(entry.values()):
@@ -178,45 +500,41 @@ def merge_settings(body, current: dict) -> dict:
     return cleaned
 
 
-def test_connector(connector_id: str, settings: dict, timeout: int = 4) -> dict:
-    """Teste un connecteur.
-
-    Seul Daikin dispose d'une sonde réseau (API HTTP locale) ; les autres
-    répondent honnêtement que le pilote est en cours d'écriture.
-    """
+def test_connector(connector_id: str, settings: dict) -> dict:
+    """Diagnostic : lit réellement l'état des appareils du connecteur."""
     item = connector(connector_id)
     if not item:
         return {"ok": False, "error": "Connecteur inconnu"}
+    snapshot = SNAPSHOTS.get(connector_id)
+    if snapshot is None:
+        return {"ok": False, "error": "Connecteur non pris en charge"}
     values = (settings or {}).get(connector_id) or {}
-
-    if connector_id == "daikin":
-        host = str(values.get("host") or "").strip()
-        if not host:
-            return {"ok": False, "error": "Adresse du boîtier manquante"}
-        if not host.startswith(("http://", "https://")):
-            host = f"http://{host}"
-        url = f"{host.rstrip('/')}/aircon/get_control_info"
-        request = urllib.request.Request(
-            url, headers={"User-Agent": "MeCasa/1.0 (test connecteur)"}
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                payload = response.read(2000).decode("utf-8", "replace")
-        except (urllib.error.URLError, OSError) as err:
-            return {"ok": False, "error": f"Boîtier injoignable : {err}"}
-        if "ret=OK" not in payload and "ret%3DOK" not in payload:
-            return {
-                "ok": False,
-                "error": "Réponse inattendue du boîtier Daikin",
-                "raw": payload[:300],
-            }
-        return {"ok": True, "message": "Boîtier Daikin joignable."}
-
+    try:
+        result = snapshot(values)
+    except ValueError as err:
+        return {"ok": False, "error": str(err)}
+    except Exception as err:  # noqa: BLE001 - réseau
+        return {"ok": False, "error": f"{item['label']} injoignable : {err}"}
+    devices = result.get("devices") or []
     return {
-        "ok": False,
-        "status": item["status"],
-        "message": (
-            f"Connecteur {item['label']} : réglages enregistrés, pilote en cours "
-            "d'écriture (suivre les versions)."
-        ),
+        "ok": True,
+        "message": f"{item['label']} : {len(devices)} appareil(s) détecté(s).",
+        "devices": devices,
     }
+
+
+def snapshot(connector_id: str, settings: dict) -> dict:
+    """État normalisé des appareils d'un connecteur."""
+    function = SNAPSHOTS.get(connector_id)
+    if function is None:
+        raise ValueError("Connecteur non pris en charge")
+    return function(settings or {})
+
+
+def apply_state(connector_id: str, settings: dict, device_id, mode: str,
+                temp: float) -> dict:
+    """Applique un mode et une consigne à un appareil du connecteur."""
+    function = APPLIERS.get(connector_id)
+    if function is None:
+        raise ValueError("Connecteur non pris en charge")
+    return function(settings or {}, device_id, mode, temp)

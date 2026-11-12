@@ -46,6 +46,7 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 | **Chauffage Atlantic** | Connexion au compte Cozytouch, consignes confort/réduit/hors-gel, modes, forçages temporaires. |
 | **Climatisation Atlantic** | Modes chaud/froid/déshumidification/ventilation, soufflerie et orientation du flux appliquées à chaque cycle. |
 | **Schneider Wiser** | Découverte du hub sur le réseau local, lecture des plannings, import dans MeCasa. |
+| **Autres systèmes** | Daikin (local), Netatmo et Mitsubishi (MELCloud) : lecture des appareils et envoi de consignes depuis Réglages → Appareils. Bosch : appairage matériel requis. |
 | **Planning** | Agenda 24 h par pièce, créneaux tactiles, modèles de semaine, copie A↔B, surcharges. |
 | **Pronote** | Import des semaines A et B, mise à jour quotidienne à l'heure choisie (ou désactivée), gestion de la garde alternée. |
 | **Météo** | Température extérieure Open-Meteo, sans clé d'API. |

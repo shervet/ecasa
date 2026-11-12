@@ -19,6 +19,7 @@ import {
   fmtDate,
   fmtDateTime,
   fmtTemp,
+  modeLabel,
   minutesToTime,
   mondayOf,
   parseDate,
@@ -445,13 +446,80 @@ function connectorPanels(c) {
         <p class="hint" style="margin-top:8px">${escapeHtml(item.description || "")}</p>
         ${fields}
         <div class="row wrap" style="gap:8px;margin-top:4px">
+          <button class="btn" type="button" data-connector-sync="${escapeHtml(item.id)}">${icon("refresh", 16)} Synchroniser</button>
           <button class="btn" type="button" data-connector-test="${escapeHtml(item.id)}">${icon("shield", 16)} Tester</button>
           <button class="btn btn-primary" type="button" data-save="devices">${icon("save", 16)} Enregistrer</button>
         </div>
         <div class="hint" data-connector-result="${escapeHtml(item.id)}"></div>
+        <div class="stack" data-connector-devices="${escapeHtml(item.id)}" style="margin-top:8px"></div>
       </details>`;
     })
     .join("");
+}
+
+/** Ligne d'un appareil découvert sur un connecteur (mode + consigne + appliquer). */
+function connectorDeviceRow(device) {
+  const modes = ["off", "heat", "cool", "dry", "fan", "auto"];
+  const currentMode = modes.includes(device.mode) ? device.mode : "heat";
+  return `<div class="list-row" data-device-row>
+    <div class="li-main">
+      <span class="li-title">${escapeHtml(device.name || "Appareil")}</span>
+      <span class="li-sub">${escapeHtml(modeLabel(device.mode, store.meta))} · ${fmtTemp(device.temp)} °C${
+        device.ambient != null ? ` · ambiance ${fmtTemp(device.ambient)} °C` : ""
+      }${device.online === false ? " · hors ligne" : ""}</span>
+    </div>
+    <div class="row wrap" style="gap:6px">
+      <select class="select" data-device-mode style="width:auto">
+        ${modes
+          .map(
+            (mode) => `<option value="${mode}"${mode === currentMode ? " selected" : ""}>${escapeHtml(modeLabel(mode, store.meta))}</option>`
+          )
+          .join("")}
+      </select>
+      <input class="input" type="number" min="5" max="30" step="0.5" style="width:90px" data-device-temp value="${fmtTemp(device.temp)}">
+      <button class="btn btn-sm" type="button" data-device-apply data-device-id="${escapeHtml(String(device.id))}">${icon("check", 14)} Appliquer</button>
+    </div>
+  </div>`;
+}
+
+/** Lit les appareils d'un connecteur et branche les boutons « Appliquer ». */
+async function loadConnectorDevices(connectorId, button = null) {
+  const host = root?.querySelector(`[data-connector-devices="${connectorId}"]`);
+  if (!host) return;
+  if (button) button.disabled = true;
+  host.innerHTML = '<p class="hint">Lecture des appareils…</p>';
+  try {
+    const payload = await get(`/api/connectors/${encodeURIComponent(connectorId)}/devices`);
+    const devices = Array.isArray(payload.devices) ? payload.devices : [];
+    host.innerHTML = devices.length
+      ? devices.map(connectorDeviceRow).join("")
+      : '<p class="hint">Aucun appareil détecté sur ce connecteur.</p>';
+    host.querySelectorAll("[data-device-apply]").forEach((apply) => {
+      apply.addEventListener("click", async () => {
+        const row = apply.closest("[data-device-row]");
+        const mode = row?.querySelector("[data-device-mode]")?.value || "off";
+        const temp = Number(row?.querySelector("[data-device-temp]")?.value || 20);
+        apply.disabled = true;
+        try {
+          await post(`/api/connectors/${encodeURIComponent(connectorId)}/apply`, {
+            device_id: apply.dataset.deviceId,
+            mode,
+            temp,
+          });
+          toast("Consigne envoyée au connecteur.");
+          await loadConnectorDevices(connectorId);
+        } catch (err) {
+          toastError(err);
+        } finally {
+          apply.disabled = false;
+        }
+      });
+    });
+  } catch (err) {
+    host.innerHTML = `<p class="hint is-bad">${escapeHtml(err.message)}</p>`;
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function devicesSection() {
@@ -1058,6 +1126,10 @@ function bind() {
     pronoteAuto.addEventListener("change", syncPronoteHour);
     syncPronoteHour();
   }
+
+  root.querySelectorAll("[data-connector-sync]").forEach((button) => {
+    button.addEventListener("click", () => loadConnectorDevices(button.dataset.connectorSync, button));
+  });
 
   root.querySelectorAll("[data-connector-test]").forEach((button) => {
     button.addEventListener("click", async () => {

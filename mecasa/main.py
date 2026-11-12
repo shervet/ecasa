@@ -2689,6 +2689,65 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, test_pronote_connection(config))
             return
 
+        match = re.fullmatch(r"/api/connectors/([a-z]+)/(devices|apply)", path)
+        if match and method == "GET" and match.group(2) == "devices":
+            connector_id = match.group(1)
+            if not connector_registry.connector(connector_id):
+                self._json(404, {"error": "Connecteur inconnu"})
+                return
+            config = load_config()
+            try:
+                result = connector_registry.snapshot(
+                    connector_id,
+                    (config.get("connectors") or {}).get(connector_id) or {},
+                )
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                return
+            except Exception as err:  # noqa: BLE001 - réseau
+                self._json(502, {"error": f"Connecteur injoignable : {err}"})
+                return
+            self._json(200, result)
+            return
+
+        if match and method == "POST" and match.group(2) == "apply":
+            connector_id = match.group(1)
+            if not connector_registry.connector(connector_id):
+                self._json(404, {"error": "Connecteur inconnu"})
+                return
+            body = self._body()
+            try:
+                device_id = body.get("device_id")
+                mode = str(body.get("mode") or "heat")
+                temp = float(body.get("temp") or 20)
+                if mode not in dict(MODES):
+                    raise ValueError("Mode invalide")
+            except (TypeError, ValueError) as err:
+                self._json(400, {"error": str(err)})
+                return
+            config = load_config()
+            try:
+                result = connector_registry.apply_state(
+                    connector_id,
+                    (config.get("connectors") or {}).get(connector_id) or {},
+                    device_id,
+                    mode,
+                    temp,
+                )
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                return
+            except Exception as err:  # noqa: BLE001 - réseau
+                self._json(502, {"error": f"Commande refusée : {err}"})
+                return
+            app.store.log(
+                "action",
+                f"Connecteur {connector_id} : appareil {device_id} → {mode} "
+                f"{temp:g} °C",
+            )
+            self._json(200, result)
+            return
+
         if method == "POST" and path == "/api/connectors/test":
             body = self._body()
             config = load_config()

@@ -75,21 +75,31 @@ propre planning. L'import convertit les points de consigne Wiser en créneaux Me
 
 ## Autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi)
 
-Ces quatre systèmes sont **déclarés dans Réglages → Appareils**, chacun dans un
-panneau dépliable : les réglages se saisissent et s'enregistrent dès maintenant
-(les secrets restent masqués côté interface). Les pilotes de lecture/écriture des
-consignes sont livrés progressivement ; le bouton **Tester** indique l'état réel.
+Chaque système a son panneau dépliable dans **Réglages → Appareils** : on saisit
+les accès, on enregistre, puis **Synchroniser** liste les appareils détectés avec
+leur mode, leur consigne et l'ambiance. Une ligne = un appareil : choisir le mode,
+la consigne, puis **Appliquer** (commande envoyée immédiatement).
 
 | Système | Type | État |
 | --- | --- | --- |
-| **Daikin** | Local (boîtier Wi-Fi, API HTTP) | Sonde réseau disponible (test de joignabilité du boîtier) ; pilotage à venir. |
-| **Bosch** | Local (contrôleur) | Réglages enregistrés ; pilote à venir. |
-| **Netatmo** | Cloud (compte développeur) | Réglages enregistrés ; pilote à venir. |
-| **Mitsubishi** | Cloud (MELCloud) | Réglages enregistrés ; pilote à venir. |
+| **Daikin** | Local (boîtier Wi-Fi, API HTTP) | **Opérationnel** : lecture (mode, consigne, ambiances) et écriture (`/aircon/set_control_info`). |
+| **Netatmo** | Cloud (OAuth2, compte développeur) | **Opérationnel** : lecture des pièces et écriture des consignes manuelles. |
+| **Mitsubishi** | Cloud (MELCloud) | **Opérationnel** : lecture (ListDevices) et écriture (SetAta). |
+| **Bosch** | Local (contrôleur) | **Appairage matériel requis** : bouton sur le contrôleur + certificat client, impossible à automatiser sans l'appareil. |
 
-Les réglages sont stockés dans `config.json` sous `connectors` et exposés sans
-secrets par `GET /api/config` (booléens `*_set`). Pour tester un connecteur :
-`POST /api/connectors/test` avec `{"id": "daikin"}`.
+Boutons disponibles par panneau :
+
+- **Tester** : lit réellement les appareils et affiche le diagnostic ;
+- **Synchroniser** : liste les appareils et permet d'envoyer une consigne ;
+- **Enregistrer** : sauvegarde les accès (les secrets ne sont jamais renvoyés).
+
+Côté API : `GET /api/connectors/{id}/devices` et `POST /api/connectors/{id}/apply`
+(`{"device_id": …, "mode": "heat", "temp": 20.5}`). Les réglages vivent dans
+`config.json` sous `connectors` ; `GET /api/config` les expose sans secrets
+(booléens `*_set`).
+
+> L'intégration au planning automatique (semaines A/B, Pronote) reste à brancher :
+> aujourd'hui un connecteur se pilote depuis son panneau ou par l'API.
 
 ## Planning
 

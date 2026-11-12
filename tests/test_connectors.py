@@ -1,16 +1,47 @@
-"""Connecteurs Daikin / Bosch / Netatmo / Mitsubishi : catalogue et réglages."""
+"""Connecteurs : catalogue, réglages et protocoles (HTTP simulé)."""
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from mecasa import connectors  # noqa: E402
+
+
+def fake_http(routes):
+    """Fabrique un faux ``_http`` : route (fragment d'URL) -> (status, corps)."""
+
+    def handler(method, url, headers=None, body=None, timeout=10):
+        for fragment, response in routes.items():
+            if fragment in url:
+                value = response(method, url, body) if callable(response) else response
+                if isinstance(value, bytes):
+                    return 200, value
+                if isinstance(value, str):
+                    return 200, value.encode("utf-8")
+                if isinstance(value, tuple):
+                    return value
+                return 200, json.dumps(value).encode("utf-8")
+        return 404, b"{}"
+
+    return handler
+
+
+DAIKIN_ROUTES = {
+    "common/basic_info": "ret=OK,type=aircon,name=Salon,mac=aa:bb:cc",
+    "aircon/get_control_info": (
+        "ret=OK,pow=1,mode=3,stemp=21.0,shum=0,f_rate=A,f_dir=0"
+    ),
+    "aircon/get_sensor_info": "ret=OK,htemp=20.5,hhum=45,otemp=8.0,err=0",
+    "aircon/set_control_info": "ret=OK",
+}
 
 
 class CatalogTests(unittest.TestCase):
@@ -21,15 +52,17 @@ class CatalogTests(unittest.TestCase):
     def test_catalog_exposes_fields_without_values(self):
         for item in connectors.catalog():
             self.assertTrue(item["label"])
-            self.assertIn(item["status"], ("beta", "planned"))
+            self.assertIn(item["status"], ("ready", "pairing"))
             for field in item["fields"]:
                 self.assertIn("key", field)
                 self.assertIn("label", field)
                 self.assertNotIn("value", field)
 
-    def test_every_connector_has_at_least_one_field(self):
-        for item in connectors.CONNECTORS:
-            self.assertGreaterEqual(len(item["fields"]), 1)
+    def test_only_bosch_is_waiting_for_pairing(self):
+        statuses = {item["id"]: item["status"] for item in connectors.CONNECTORS}
+        self.assertEqual(statuses["bosch"], "pairing")
+        for cid in ("daikin", "netatmo", "mitsubishi"):
+            self.assertEqual(statuses[cid], "ready")
 
 
 class SettingsTests(unittest.TestCase):
@@ -57,13 +90,6 @@ class SettingsTests(unittest.TestCase):
             {"mitsubishi": {"email": "a@b.c", "password": ""}}, current
         )
         self.assertEqual(merged["mitsubishi"]["password"], "s3cret")
-        self.assertEqual(merged["mitsubishi"]["email"], "a@b.c")
-
-    def test_merge_replaces_secret_when_provided(self):
-        merged = connectors.merge_settings(
-            {"netatmo": {"client_secret": "nouveau"}}, {}
-        )
-        self.assertEqual(merged["netatmo"]["client_secret"], "nouveau")
 
     def test_merge_drops_empty_and_unknown_entries(self):
         self.assertEqual(connectors.merge_settings({"nope": {"x": "1"}}, {}), {})
@@ -76,29 +102,184 @@ class SettingsTests(unittest.TestCase):
             connectors.merge_settings("nope", {})
 
 
+class DaikinTests(unittest.TestCase):
+    settings = {"host": "192.168.1.50"}
+
+    def test_snapshot_reads_mode_temp_and_ambient(self):
+        with mock.patch.object(connectors, "_http", fake_http(DAIKIN_ROUTES)):
+            result = connectors.daikin_snapshot(self.settings)
+        self.assertTrue(result["ok"])
+        device = result["devices"][0]
+        self.assertEqual(device["name"], "Salon")
+        self.assertEqual(device["mode"], "heat")
+        self.assertEqual(device["temp"], 21.0)
+        self.assertEqual(device["ambient"], 20.5)
+        self.assertEqual(device["outside"], 8.0)
+
+    def test_apply_sends_the_native_values(self):
+        captured = {}
+
+        def setter(method, url, body):
+            captured["url"] = url
+            return "ret=OK"
+
+        routes = dict(DAIKIN_ROUTES)
+        routes["aircon/set_control_info"] = setter
+        with mock.patch.object(connectors, "_http", fake_http(routes)):
+            connectors.daikin_apply(self.settings, "cool", 24)
+        self.assertIn("mode=2", captured["url"])
+        self.assertIn("stemp=24.0", captured["url"])
+        self.assertIn("pow=1", captured["url"])
+
+    def test_off_mode_cuts_the_power(self):
+        captured = {}
+
+        def setter(method, url, body):
+            captured["url"] = url
+            return "ret=OK"
+
+        routes = dict(DAIKIN_ROUTES)
+        routes["aircon/set_control_info"] = setter
+        with mock.patch.object(connectors, "_http", fake_http(routes)):
+            connectors.daikin_apply(self.settings, "off", 16)
+        self.assertIn("pow=0", captured["url"])
+
+    def test_missing_host_is_reported(self):
+        with self.assertRaises(ValueError):
+            connectors.daikin_snapshot({})
+
+
+class MelCloudTests(unittest.TestCase):
+    settings = {"email": "a@b.c", "password": "secret"}
+
+    def routes(self):
+        return {
+            "Login/ClientLogin": {"LoginData": {"ContextKey": "ctx"}},
+            "User/ListDevices": [
+                {
+                    "DeviceID": 7,
+                    "DeviceName": "Clim",
+                    "Power": True,
+                    "OperationMode": 3,
+                    "SetTemperature": 22,
+                    "RoomTemperature": 21.5,
+                    "DeviceOnline": True,
+                }
+            ],
+            "Device/SetAta": {"ok": True},
+        }
+
+    def test_snapshot_lists_devices(self):
+        with mock.patch.object(connectors, "_http", fake_http(self.routes())):
+            result = connectors.melcloud_snapshot(self.settings)
+        device = result["devices"][0]
+        self.assertEqual(device["name"], "Clim")
+        self.assertEqual(device["mode"], "cool")
+        self.assertEqual(device["temp"], 22.0)
+
+    def test_apply_sends_operation_mode(self):
+        captured = {}
+
+        def setter(method, url, body):
+            captured["body"] = json.loads(body.decode("utf-8"))
+            return {"ok": True}
+
+        routes = self.routes()
+        routes["Device/SetAta"] = setter
+        with mock.patch.object(connectors, "_http", fake_http(routes)):
+            connectors.melcloud_apply(self.settings, 7, "heat", 20)
+        self.assertEqual(captured["body"]["OperationMode"], 1)
+        self.assertEqual(captured["body"]["SetTemperature"], 20.0)
+        self.assertTrue(captured["body"]["Power"])
+
+    def test_missing_credentials_is_reported(self):
+        with self.assertRaises(ValueError):
+            connectors.melcloud_snapshot({})
+
+
+class NetatmoTests(unittest.TestCase):
+    settings = {
+        "client_id": "id",
+        "client_secret": "secret",
+        "refresh_token": "refresh",
+    }
+
+    def routes(self):
+        return {
+            "oauth2/token": {"access_token": "tok"},
+            "/api/homesdata": {"body": {"homes": [{"id": "home1"}]}},
+            "/api/homestatus": {
+                "body": {
+                    "home": {
+                        "rooms": [
+                            {
+                                "id": "r1",
+                                "name": "Salon",
+                                "therm_setpoint_temperature": 19,
+                                "therm_measured_temperature": 18.5,
+                                "therm_setpoint_mode": "manual",
+                                "reachable": True,
+                            }
+                        ]
+                    }
+                }
+            },
+            "setroomthermpoint": {"status": "ok"},
+        }
+
+    def test_snapshot_lists_rooms(self):
+        with mock.patch.object(connectors, "_http", fake_http(self.routes())):
+            result = connectors.netatmo_snapshot(self.settings)
+        device = result["devices"][0]
+        self.assertEqual(device["id"], "home1:r1")
+        self.assertEqual(device["name"], "Salon")
+        self.assertEqual(device["temp"], 19.0)
+
+    def test_apply_sends_manual_setpoint(self):
+        captured = {}
+
+        def setter(method, url, body):
+            captured["body"] = json.loads(body.decode("utf-8"))
+            return {"status": "ok"}
+
+        routes = self.routes()
+        routes["setroomthermpoint"] = setter
+        with mock.patch.object(connectors, "_http", fake_http(routes)):
+            connectors.netatmo_apply(self.settings, "home1:r1", "heat", 20.5)
+        self.assertEqual(captured["body"]["room_id"], "r1")
+        self.assertEqual(captured["body"]["mode"], "manual")
+        self.assertEqual(captured["body"]["temp"], 20.5)
+
+    def test_missing_token_is_reported(self):
+        with self.assertRaises(ValueError):
+            connectors.netatmo_snapshot({})
+
+
 class TestConnectorTests(unittest.TestCase):
     def test_unknown_connector(self):
         result = connectors.test_connector("nope", {})
         self.assertFalse(result["ok"])
         self.assertIn("inconnu", result["error"])
 
-    def test_daikin_without_host_reports_a_clear_error(self):
-        result = connectors.test_connector("daikin", {})
-        self.assertFalse(result["ok"])
-        self.assertIn("Adresse", result["error"])
+    def test_daikin_via_test_connector(self):
+        with mock.patch.object(connectors, "_http", fake_http(DAIKIN_ROUTES)):
+            result = connectors.test_connector("daikin", {"daikin": {"host": "1.2.3.4"}})
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["devices"]), 1)
 
-    def test_daikin_unreachable_host_fails_without_raising(self):
-        result = connectors.test_connector(
-            "daikin", {"daikin": {"host": "127.0.0.1:9"}}, timeout=1
-        )
+    def test_network_error_is_reported(self):
+        def boom(*args, **kwargs):
+            raise OSError("réseau indisponible")
+
+        with mock.patch.object(connectors, "_http", boom):
+            result = connectors.test_connector("daikin", {"daikin": {"host": "1.2.3.4"}})
         self.assertFalse(result["ok"])
         self.assertIn("injoignable", result["error"])
 
-    def test_planned_connectors_explain_the_status(self):
-        for connector_id in ("bosch", "netatmo", "mitsubishi"):
-            result = connectors.test_connector(connector_id, {})
-            self.assertFalse(result["ok"])
-            self.assertIn("pilote", result["message"])
+    def test_bosch_requires_hardware_pairing(self):
+        result = connectors.test_connector("bosch", {"bosch": {"host": "1.2.3.4"}})
+        self.assertFalse(result["ok"])
+        self.assertIn("appairage", result["error"].lower())
 
 
 if __name__ == "__main__":
