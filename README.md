@@ -25,7 +25,10 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 - **Sobre et sûr** : aucune télémétrie, aucun compte en ligne, CSP stricte, secrets
   jamais renvoyés au navigateur, administration limitée à la machine locale par défaut.
 - **Utilisable au quotidien** : interface mobile-first installable (PWA), thème clair/sombre,
-  app Android optionnelle via Tailscale.
+  application Android en préparation.
+- **Simple à installer et à prendre en main** : deux commandes, aucune dépendance à
+  installer, aucun build, aucun compte à créer. L'interface se comprend en quelques
+  minutes, sans jargon ni formation.
 
 ## Fonctions
 
@@ -40,7 +43,7 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 | **Statistiques** | Ambiance / consigne / extérieur, consommation électrique Enedis multi-années. |
 | **Journal** | Événements filtrables, recherche, export JSON. |
 | **Sauvegarde** | Export/import complet de l'état et des réglages. |
-| **Accès distant** | Tailscale intégré (HTTPS, MagicDNS) et app Android. |
+| **Accès distant** | Tailscale intégré (HTTPS, MagicDNS) et application Android (à venir). |
 
 ## MeCasa, Home Assistant et Jeedom
 
@@ -65,7 +68,54 @@ web, sans rapport avec le pilotage thermique.)
 (Zigbee, alarme, médias…). Choisis MeCasa si tu veux une chose simple qui marche :
 chauffer la bonne pièce au bon moment, suivre le planning de l'école et ne plus y penser.
 
+## Un projet écrit avec l'aide d'une IA
+
+MeCasa a été **conçu et développé avec l'aide d'une intelligence artificielle**, au
+service d'un besoin très concret : piloter le chauffage d'une maison avec le
+planning scolaire de l'enfant. L'IA a écrit le code, les tests et la documentation ;
+le pilotage du produit, les choix techniques et les essais sur matériel réel restent
+humains.
+
+Ce qui en découle, et qui te concerne directement :
+
+- **un code lisible et reproductible** : pas de boîte noire, pas de service caché,
+  tout est lisible, commenté et modifiable ;
+- **une base de tests solide** : le moteur, le planning, les connecteurs et la
+  synchronisation quotidienne sont couverts par des tests unitaires ;
+- **des évolutions discutées avant d'être codées** : chaque proposition est lue,
+  commentée, puis implémentée si elle simplifie vraiment l'usage.
+
+### Tes suggestions sont les bienvenues
+
+MeCasa n'est pas figé. Les idées les plus utiles pour la suite :
+
+- **d'autres systèmes et appareils** : Daikin, Bosch, Netatmo, HP WebOS,
+  Fritz!DECT, Zigbee, Z-Wave, Connected Home… ;
+- **d'autres usages** : volets, pilotage de PAC, consignes par pièce, export
+  iCal/ICS du planning ;
+- **d'autres intégrations** : MQTT, Home Assistant (via son API REST), Jeedom,
+  Alexa, Google Home ;
+- **encore plus de simplicité** : un assistant de configuration, des modèles de
+  planning prêts à l'emploi, moins de réglages à retenir.
+
+Ouvre une **discussion** ou une **issue** : chaque proposition est lue et peut
+finir en contribution.
+
+## Feuille de route
+
+- **Application Android** : une application native d'**accès direct à l'app**, en
+  complément de la PWA actuelle — ouverture instantanée de MeCasa, notification
+  quand le planning Pronote a été mis à jour, forçage du chauffage en un geste,
+  alertes de l'état de la maison.
+- **Nouveaux connecteurs** d'appareils et de systèmes (voir les suggestions ci-dessus).
+- **Export du planning** au format iCal/ICS pour les agendas du téléphone.
+- **Mode hors ligne** de l'interface (consultation du planning sans réseau).
+
 ## Démarrage rapide
+
+Une poignée de commandes et c'est prêt. Sans identifiants Atlantic, MeCasa démarre en
+**simulation** avec des appareils fictifs : on peut découvrir toute l'interface
+avant de brancher quoi que ce soit.
 
 ### Windows
 
@@ -148,6 +198,10 @@ Voir [SECURITY.md](SECURITY.md) pour signaler une vulnérabilité.
 
 Les contributions sont bienvenues : corrections, traductions, documentation, tests sur
 matériel réel. Lire [CONTRIBUTING.md](CONTRIBUTING.md) avant d'ouvrir une pull request.
+
+Tu as une idée d'évolution — nouvel appareil, nouvelle intégration, application
+Android, ещё plus de simplicité ? **Ouvre une discussion** : les suggestions sont
+les bienvenues, et chaque proposition est étudiée avant d'être codée.
 
 ```bash
 python -m unittest discover -s tests -v

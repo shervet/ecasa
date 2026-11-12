@@ -10,6 +10,22 @@ traductions, tests sur matériel réel, nouvelles ressources.
 - Pour un bug : remplir le modèle d'issue (version, plateforme, étapes, journal
   **anonymisé** — aucun mot de passe, aucun identifiant).
 
+## Ce projet est écrit avec l'aide d'une IA
+
+Le code, les tests et la documentation de MeCasa sont produits avec l'aide d'une
+intelligence artificielle, sous la supervision d'un humain. Les contributions sont
+relues et testées comme n'importe quelle autre : **lisibilité, tests et simplicité
+d'usage** sont les trois critères de validation.
+
+## Proposer une évolution
+
+Les idées les plus attendues : d'autres systèmes et appareils (Daikin, Bosch,
+Netatmo, Zigbee, Z-Wave…), d'autres intégrations (MQTT, Home Assistant via son API
+REST), l'export iCal/ICS du planning, l'application Android d'accès direct, ou
+encore plus de simplicité (assistant de configuration, modèles prêts à l'emploi).
+
+Ouvre une discussion : la proposition est étudiée avant d'être codée.
+
 ## Environnement
 
 ```bash

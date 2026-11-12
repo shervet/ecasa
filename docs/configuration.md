@@ -130,13 +130,3 @@ uniquement des booléens de présence : `password_set`, `wiser_secret_set`,
 Pour effacer un secret, utiliser la case dédiée dans l'interface (ou
 `*_clear: true` dans le corps de `PUT /api/config`).
 
-## Migration depuis cozytouch-scheduler
-
-```bash
-python tools/migrate_from_cozytouch.py \
-  --db "../cozytouch-scheduler/data/cozytouch.db"
-```
-
-La migration reprend réglages, pièces, appareils, plannings et surcharges A/B.
-Les anciennes mesures et le journal ne sont pas copiés : MeCasa repart sur son
-historique horaire, beaucoup plus économe en écritures.
