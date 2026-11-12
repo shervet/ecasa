@@ -1,29 +1,27 @@
 # Captures d'écran
 
-Dépose ici les images utilisées par le README :
+Images utilisées par le README, prises sur une instance de **simulation**
+(MeCasa lancé sans identifiants Atlantic) : les pièces, l'historique et la
+consommation sont fictifs, aucune donnée personnelle n'apparaît.
 
-| Fichier | Contenu | Taille conseillée |
+| Fichier | Contenu | Taille |
 | --- | --- | --- |
-| `home.png` | Accueil : ambiance des pièces, consignes, prochain changement | 1200 × 800 |
-| `planning.png` | Planning : agenda 24 h d'une pièce | 1200 × 800 |
-| `stats.png` | Statistiques : courbes et KPI | 1200 × 800 |
-| `settings-pronote.png` | Réglages → Pronote | 1200 × 800 |
-| `pronote-import.png` | Feuille d'import Pronote (Planning) | 1200 × 800 |
+| `home.png` | Accueil : ambiance des pièces, consigne moyenne, prochain changement | 1440 × 900 |
+| `planning.png` | Planning : agenda 24 h d'une pièce sur la semaine B | 1440 × 900 |
+| `stats.png` | Statistiques : KPI et courbes ambiance / consigne / extérieur | 1440 × 900 |
+| `stats-consommation.png` | Carte « Consommation électrique » : comparaison par année | 1170 × 930 |
+| `settings-pronote.png` | Réglages → Pronote (section complète) | 1240 × 1300 |
+| `mobile-home.png` | Vue mobile (PWA) | 480 × 900 |
 
-## Comment faire une capture nette
+## Refaire les captures
 
-1. Ouvrir MeCasa en plein écran (ou en mode téléphone pour l'illustration mobile).
-2. Utiliser le thème sombre : les couleurs ressortent mieux sur GitHub.
-3. Masquer les données personnelles (noms de pièces, identifiants).
-4. Exporter en PNG, puis compresser (300 à 600 Ko maximum par image).
+1. Lancer MeCasa en simulation : `python -m mecasa.main` (sans identifiants Atlantic).
+2. Vérifier que les données affichées ne contiennent rien de personnel.
+3. Capturer avec un navigateur (Chrome/Edge) en 1440 × 900, thème clair ou sombre.
+4. Recadrer si besoin (les images ci-dessus sont recadrées proprement).
 
-## Les activer dans le README
+## Bonnes pratiques
 
-Le bloc correspondant est commenté dans `README.md` (section « Captures d'écran »).
-Décommente les lignes concernées une fois les images déposées :
-
-```markdown
-| Accueil | Planning | Statistiques |
-| --- | --- | --- |
-| ![Accueil](docs/screenshots/home.png) | ![Planning](docs/screenshots/planning.png) | ![Statistiques](docs/screenshots/stats.png) |
-```
+- Masquer les noms de pièces, adresses et identifiants.
+- Éviter les écrans d'erreur : une capture qui montre une panne décourage.
+- Préférer le thème sombre pour les images dans un README sombre.

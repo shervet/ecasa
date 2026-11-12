@@ -219,7 +219,12 @@ export default {
     const parts = location.hash.replace(/^#\/?/, "").split("/");
     if (parts[0] === "settings" && parts[1]) {
       const target = parts[1];
-      requestAnimationFrame(() => jumpToSection(target));
+      // Défilement instantané : la mise en page n'est pas encore stable et un
+      // défilement animé repartirait de zéro.
+      requestAnimationFrame(() => jumpToSection(target, true));
+      // Les sections se chargent de façon asynchrone (pièces, appareils) :
+      // on recommence une fois la mise en page stabilisée.
+      window.setTimeout(() => jumpToSection(target, true), 500);
     }
   },
 
@@ -934,7 +939,7 @@ function supportSection() {
 
 /* --------------------------------------------------------------- liaisons */
 
-function jumpToSection(id) {
+function jumpToSection(id, instant = false) {
   const target = root?.querySelector(`#sec-${id}`);
   if (!target) return;
   // Laisse la place au bandeau supérieur pour que le titre de la section
@@ -943,7 +948,10 @@ function jumpToSection(id) {
   const settingsNav = document.querySelector(".settings-nav");
   const offset = (topbar?.offsetHeight || 64) + (settingsNav?.offsetHeight || 40) + 16;
   const top = target.getBoundingClientRect().top + window.scrollY - offset;
-  window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  window.scrollTo({
+    top: Math.max(0, top),
+    behavior: instant ? "auto" : "smooth",
+  });
   root.querySelectorAll("[data-jump]").forEach((item) => {
     item.classList.toggle("is-active", item.dataset.jump === id);
   });

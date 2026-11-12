@@ -112,16 +112,25 @@ Guide détaillé : [docs/installation.md](docs/installation.md).
 
 ## Captures d'écran
 
-<!--
-Dépose les images dans docs/screenshots/ puis décommente :
-
 | Accueil | Planning | Statistiques |
 | --- | --- | --- |
 | ![Accueil](docs/screenshots/home.png) | ![Planning](docs/screenshots/planning.png) | ![Statistiques](docs/screenshots/stats.png) |
--->
 
-Les captures sont à ajouter dans [`docs/screenshots/`](docs/screenshots/) (voir le
-fichier d'aide du dossier).
+**Consommation électrique** — comparaison des mêmes périodes d'une année sur l'autre,
+via MyElectricalData (Enedis) :
+
+![Consommation électrique](docs/screenshots/stats-consommation.png)
+
+**Réglages → Pronote** — compte, statut scolaire, pièces liées, jour d'alternance et
+mise à jour automatique :
+
+![Réglages Pronote](docs/screenshots/settings-pronote.png)
+
+Et l'application installée sur téléphone (PWA, installable depuis le navigateur) :
+
+![Vue mobile](docs/screenshots/mobile-home.png)
+
+> Captures prises sur une instance de **simulation** : aucune donnée personnelle.
 
 ## Sécurité et vie privée
 
