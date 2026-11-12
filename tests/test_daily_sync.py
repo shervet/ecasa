@@ -102,6 +102,47 @@ class DailySyncDueTests(unittest.TestCase):
         )
 
 
+class PronoteRoomOverridesTests(unittest.TestCase):
+    """Réglages confort/réduit par pièce (clim en froid, chambres en chaud)."""
+
+    def test_valid_overrides_are_kept(self):
+        cleaned = main._clean_room_overrides(
+            {
+                "1": {"comfort_mode": "cool", "comfort_temp": 24},
+                "2": {"reduced_mode": "heat", "reduced_temp": 17.5},
+            }
+        )
+        self.assertEqual(cleaned["1"], {"comfort_mode": "cool", "comfort_temp": 24.0})
+        self.assertEqual(cleaned["2"], {"reduced_mode": "heat", "reduced_temp": 17.5})
+
+    def test_empty_values_inherit_global_settings(self):
+        cleaned = main._clean_room_overrides(
+            {"3": {"comfort_mode": "", "comfort_temp": None}}
+        )
+        self.assertEqual(cleaned, {})
+
+    def test_invalid_mode_and_temp_are_rejected(self):
+        with self.assertRaises(ValueError):
+            main._clean_room_overrides({"1": {"comfort_mode": "bogus"}})
+        with self.assertRaises(ValueError):
+            main._clean_room_overrides({"1": {"comfort_temp": 55}})
+        with self.assertRaises(ValueError):
+            main._clean_room_overrides("nope")
+
+    def test_room_options_only_returns_defined_keys(self):
+        config = {
+            "pronote_room_overrides": {
+                "1": {"comfort_mode": "cool", "reduced_mode": "off"},
+            }
+        }
+        self.assertEqual(
+            main.pronote_room_options(config, 1),
+            {"comfort_mode": "cool", "reduced_mode": "off"},
+        )
+        self.assertEqual(main.pronote_room_options(config, 2), {})
+        self.assertEqual(main.pronote_room_options({}, 1), {})
+
+
 class MergePreservedSlotsTests(unittest.TestCase):
     """Import partiel : seule la portion gérée par Pronote est écrite."""
 

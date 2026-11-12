@@ -406,6 +406,54 @@ function roomsSection() {
   );
 }
 
+/**
+ * Panneaux dépliables des autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi).
+ * Le catalogue vient de `GET /api/meta` : ajouter un connecteur côté backend
+ * suffit pour qu'il apparaisse ici.
+ */
+function connectorPanels(c) {
+  const catalog = Array.isArray(store.meta?.connectors) ? store.meta.connectors : [];
+  if (!catalog.length) return "";
+  return catalog
+    .map((item) => {
+      const values = c.connectors?.[item.id] || {};
+      const fields = (item.fields || [])
+        .map((field) => {
+          const key = `${item.id}:${field.key}`;
+          const hint = field.placeholder ? `Exemple : ${escapeHtml(field.placeholder)}` : "";
+          if (field.secret) {
+            const set = Boolean(values[`${field.key}_set`]);
+            return row(
+              escapeHtml(field.label),
+              set ? "Une valeur est enregistrée. Laisse vide pour la conserver." : hint,
+              `<input class="input" data-secret type="password" autocomplete="new-password" placeholder="${set ? "••••••••" : escapeHtml(field.placeholder || "")}" data-connector="${key}" style="width:min(320px,62vw)">`,
+              true
+            );
+          }
+          return row(
+            escapeHtml(field.label),
+            hint,
+            `<input class="input" value="${escapeHtml(values[field.key] || "")}" placeholder="${escapeHtml(field.placeholder || "")}" data-connector="${key}" style="width:min(320px,62vw)">`,
+            true
+          );
+        })
+        .join("");
+      const badge = item.status === "beta" ? "pill pill-warn" : "pill pill-ghost";
+      const badgeLabel = item.status === "beta" ? "bêta" : "à venir";
+      return `<details class="stack" style="margin-top:18px">
+        <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} ${escapeHtml(item.label)} <span class="${badge}" style="margin-left:6px">${badgeLabel}</span></summary>
+        <p class="hint" style="margin-top:8px">${escapeHtml(item.description || "")}</p>
+        ${fields}
+        <div class="row wrap" style="gap:8px;margin-top:4px">
+          <button class="btn" type="button" data-connector-test="${escapeHtml(item.id)}">${icon("shield", 16)} Tester</button>
+          <button class="btn btn-primary" type="button" data-save="devices">${icon("save", 16)} Enregistrer</button>
+        </div>
+        <div class="hint" data-connector-result="${escapeHtml(item.id)}"></div>
+      </details>`;
+    })
+    .join("");
+}
+
 function devicesSection() {
   const cfg_ = cfg();
   return section(
@@ -505,7 +553,8 @@ function devicesSection() {
         <button class="btn" type="button" id="wiserImportPrograms">${icon("download", 16)} Import programmes</button>
         <button class="btn btn-primary" type="button" data-save="wiser">${icon("save", 16)} Enregistrer</button>
       </div>
-    </details>` ,
+    </details>
+    ${connectorPanels(cfg_)}` ,
   );
 }
 
@@ -526,8 +575,49 @@ function pronoteLinkedWeeksFor(c) {
   return ["A", "B"];
 }
 
-function pronoteSection() {
-  const c = cfg();
+/**
+ * Réglages Pronote par pièce (confort / réduit). Vide = réglage global.
+ * Permet par exemple « Froid » sur une climatisation et « Chaud » ailleurs.
+ */
+function pronoteRoomOverrides(c, rooms) {
+  const overrides = c.pronote_room_overrides || {};
+  const modeSelect = (roomId, key, value) =>
+    `<select class="select" data-pronote-room-mode="${roomId}:${key}" style="width:min(200px,58vw)">
+      <option value="">— réglage global —</option>
+      ${modeOptions()
+        .map(
+          ([modeValue, label]) =>
+            `<option value="${modeValue}"${value === modeValue ? " selected" : ""}>${escapeHtml(label)}</option>`
+        )
+        .join("")}
+    </select>`;
+  const tempInput = (roomId, key, value) =>
+    `<input class="input" type="number" min="5" max="30" step="0.5" style="width:110px" placeholder="global" value="${value != null ? escapeHtml(value) : ""}" data-pronote-room-temp="${roomId}:${key}">`;
+  const rows = rooms
+    .map((room) => {
+      const item = overrides[String(room.id)] || {};
+      return `<div class="stack" style="gap:8px;padding:12px 0;border-top:1px solid var(--line)">
+        <div class="row-between wrap" style="gap:8px">
+          <strong>${escapeHtml(room.name)}</strong>
+          <span class="tiny muted">vide = réglage global</span>
+        </div>
+        <div class="form-grid">
+          <label class="field"><span class="label">Confort : mode</span>${modeSelect(room.id, "comfort_mode", item.comfort_mode)}</label>
+          <label class="field"><span class="label">Confort : consigne</span>${tempInput(room.id, "comfort_temp", item.comfort_temp)}</label>
+          <label class="field"><span class="label">Réduit : mode</span>${modeSelect(room.id, "reduced_mode", item.reduced_mode)}</label>
+          <label class="field"><span class="label">Réduit : consigne</span>${tempInput(room.id, "reduced_temp", item.reduced_temp)}</label>
+        </div>
+      </div>`;
+    })
+    .join("");
+  return `<details class="stack">
+    <summary class="card-title" style="cursor:pointer">${icon("sliders", 16)} Réglages par pièce (confort / réduit)</summary>
+    <p class="hint" style="margin-top:8px">Par défaut, toutes les pièces liées suivent les réglages globaux ci-dessus. Ici, une pièce peut avoir son propre mode : par exemple « Froid » pour une climatisation et « Chaud » pour les chambres.</p>
+    ${rows || '<p class="hint">Aucune pièce pour le moment.</p>'}
+  </details>`;
+}
+
+function pronoteSection() {  const c = cfg();
   const rooms = [...(store.state?.rooms || [])].sort(
     (a, b) => Number(a.position ?? 0) - Number(b.position ?? 0)
   );
@@ -604,6 +694,7 @@ function pronoteSection() {
       ${rooms.length ? "" : '<span class="hint">Aucune pièce pour le moment.</span>'}
       <span class="hint">Cocher une pièce la lie à Pronote : son planning est récupéré automatiquement (heure ci-dessous) et appliqué (semaines A et B), sans validation. Les pièces liées sont grisées dans le Planning.</span>
     </div>
+    ${pronoteRoomOverrides(c, rooms)}
     <div class="field">
       <span class="label">Semaines liées à Pronote</span>
       <div class="row wrap" style="gap:10px">
@@ -968,6 +1059,32 @@ function bind() {
     syncPronoteHour();
   }
 
+  root.querySelectorAll("[data-connector-test]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const connectorId = button.dataset.connectorTest;
+      const out = root.querySelector(`[data-connector-result="${connectorId}"]`);
+      button.disabled = true;
+      try {
+        const result = await post("/api/connectors/test", { id: connectorId });
+        if (out) {
+          out.textContent = result.ok
+            ? result.message || "Connecteur joignable."
+            : result.error || result.message || "Connecteur indisponible.";
+          out.classList.toggle("is-bad", !result.ok);
+        }
+        if (result.ok) toast("Connecteur joignable.");
+      } catch (err) {
+        if (out) {
+          out.textContent = err.message;
+          out.classList.add("is-bad");
+        }
+        toastError(err);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
   root.querySelectorAll("[data-jump]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1187,6 +1304,17 @@ async function saveSection(name, button) {
       toast("Alternance des semaines enregistrée.");
     } else {
       const body = collect(container);
+      if (name === "devices") {
+        // Connecteurs des autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi).
+        const connectors = {};
+        container.querySelectorAll("[data-connector]").forEach((node) => {
+          const [connectorId, key] = String(node.dataset.connector || "").split(":");
+          if (!connectorId || !key) return;
+          connectors[connectorId] = connectors[connectorId] || {};
+          connectors[connectorId][key] = node.value;
+        });
+        if (Object.keys(connectors).length) body.connectors = connectors;
+      }
       if (name === "pronote") {
         const checked = [...container.querySelectorAll("[data-pronote-room]")]
           .filter((box) => box.checked)
@@ -1197,6 +1325,22 @@ async function saveSection(name, button) {
           .filter((box) => box.checked)
           .map((box) => box.dataset.pronoteWeekSetting);
         body.pronote_weeks = weeks.length ? weeks : ["A", "B"];
+        // Réglages confort/réduit par pièce (vide = global).
+        const roomOverrides = {};
+        container.querySelectorAll("[data-pronote-room-mode]").forEach((node) => {
+          const [roomId, key] = String(node.dataset.pronoteRoomMode || "").split(":");
+          if (!roomId || !key || !node.value) return;
+          roomOverrides[roomId] = roomOverrides[roomId] || {};
+          roomOverrides[roomId][key] = node.value;
+        });
+        container.querySelectorAll("[data-pronote-room-temp]").forEach((node) => {
+          const [roomId, key] = String(node.dataset.pronoteRoomTemp || "").split(":");
+          const raw = String(node.value || "").trim();
+          if (!roomId || !key || !raw) return;
+          roomOverrides[roomId] = roomOverrides[roomId] || {};
+          roomOverrides[roomId][key] = Number(raw);
+        });
+        body.pronote_room_overrides = roomOverrides;
         // Heures de lever/coucher : input type="time" -> minutes.
         for (const key of ["pronote_wake_minutes", "pronote_bedtime_minutes"]) {
           const timeInput = container.querySelector(`[data-key="${key}"]`);

@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import urllib.request
 
 from . import __version__
+from . import connectors as connector_registry
 from .atlantic import AtlanticClient, AtlanticError, AuthError, MockAtlanticClient
 from .energy import (
     ENERGY_VIEWS,
@@ -98,8 +99,12 @@ DEFAULT_CONFIG = {
     # pronote_room_id conservé pour compatibilité (valeur unique).
     "pronote_room_id": 0,
     "pronote_room_ids": [],
-    # Semaines gérées par Pronote ("A" et/ou "B"). Vide = les deux (legacy).
+    # Modes gérés par Pronote ("A" et/ou "B"). Vide = les deux (legacy).
     "pronote_weeks": [],
+    # Réglages par pièce (confort/réduit) : {"<room_id>": {"comfort_mode": "cool",
+    # "comfort_temp": 24, "reduced_mode": "cool", "reduced_temp": 26}}. Les clés
+    # absentes héritent des réglages globaux ci-dessus.
+    "pronote_room_overrides": {},
     # Jour de bascule de l'alternance : "monday" ou "friday".
     "pronote_switch_day": "monday",
     # Heure de coucher (minutes après minuit) : passage en température réduite.
@@ -108,6 +113,9 @@ DEFAULT_CONFIG = {
     # minuit) et activation. Désactivée = import manuel uniquement.
     "pronote_auto_enabled": True,
     "pronote_sync_minutes": 3 * 60,
+    # Connecteurs d'autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi) :
+    # réglages enregistrés dès maintenant, pilotes livrés progressivement.
+    "connectors": connector_registry.default_settings(),
     "weather_enabled": True,
     "weather_city": "",
     "weather_latitude": 48.8566,
@@ -373,6 +381,12 @@ def public_config(config: dict) -> dict:
         "pronote_sync_minutes": _minutes_of_day(
             config.get("pronote_sync_minutes"), 3 * 60
         ),
+        "pronote_room_overrides": {
+            str(room_id): dict(values)
+            for room_id, values in (config.get("pronote_room_overrides") or {}).items()
+            if isinstance(values, dict) and values
+        },
+        "connectors": connector_registry.public_settings(config),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
         "weather_latitude": float(config.get("weather_latitude", 48.8566) or 0),
@@ -619,6 +633,16 @@ def save_config(body: dict) -> tuple[dict, bool]:
             raise ValueError("Heure de coucher invalide")
         updated["pronote_bedtime_minutes"] = minutes
 
+    if "pronote_room_overrides" in body:
+        updated["pronote_room_overrides"] = _clean_room_overrides(
+            body.get("pronote_room_overrides")
+        )
+
+    if "connectors" in body:
+        updated["connectors"] = connector_registry.merge_settings(
+            body.get("connectors"), updated.get("connectors") or {}
+        )
+
     if "pronote_auto_enabled" in body:
         updated["pronote_auto_enabled"] = _truthy(
             body.get("pronote_auto_enabled"), True
@@ -806,6 +830,64 @@ def _slot_minutes(slot: dict) -> int:
         return 0
 
 
+ROOM_OVERRIDE_KEYS = ("comfort_mode", "comfort_temp", "reduced_mode", "reduced_temp")
+
+
+def _clean_room_overrides(value) -> dict:
+    """Valide les réglages Pronote par pièce (modes et consignes).
+
+    Les clés absentes héritent des réglages globaux : un dictionnaire vide pour
+    une pièce signifie « comme tout le monde ».
+    """
+    if not isinstance(value, dict):
+        raise ValueError("Réglages Pronote par pièce invalides")
+    cleaned: dict[str, dict] = {}
+    for raw_room, raw_item in value.items():
+        try:
+            room_id = int(raw_room)
+        except (TypeError, ValueError):
+            continue
+        if room_id <= 0 or not isinstance(raw_item, dict):
+            continue
+        item: dict = {}
+        for key in ("comfort_mode", "reduced_mode"):
+            mode = raw_item.get(key)
+            if mode in (None, ""):
+                continue
+            if mode not in dict(MODES):
+                raise ValueError("Mode Pronote par pièce invalide")
+            item[key] = str(mode)
+        for key in ("comfort_temp", "reduced_temp"):
+            raw_temp = raw_item.get(key)
+            if raw_temp in (None, ""):
+                continue
+            try:
+                temp = float(raw_temp)
+            except (TypeError, ValueError) as err:
+                raise ValueError("Consigne Pronote par pièce invalide") from err
+            if not (5 <= temp <= 30):
+                raise ValueError("Consigne Pronote par pièce hors limites")
+            item[key] = temp
+        if item:
+            cleaned[str(room_id)] = item
+    return cleaned
+
+
+def pronote_room_options(config: dict, room_id) -> dict:
+    """Réglages Pronote propres à une pièce (vide = réglages globaux)."""
+    overrides = config.get("pronote_room_overrides") or {}
+    if not isinstance(overrides, dict):
+        return {}
+    item = overrides.get(str(room_id)) or {}
+    if not isinstance(item, dict):
+        return {}
+    return {
+        key: item[key]
+        for key in ROOM_OVERRIDE_KEYS
+        if key in item and item[key] not in (None, "")
+    }
+
+
 def _clean_scopes(value) -> list | None:
     """Valide la portee d'import renvoyee par Pronote (7 jours)."""
     if not isinstance(value, list) or len(value) != 7:
@@ -969,11 +1051,12 @@ def import_pronote_weeks(
                     f"Aucune semaine {target} trouvée dans les 26 semaines "
                     "qui suivent la date choisie." + hint
                 )
-            plan = build_pronote_plan(
-                config,
-                source_start,
-                {**(body or {}), "switch_day": switch_day},
-            )
+            options = {**(body or {}), "switch_day": switch_day}
+            if room:
+                # Réglages par pièce : une clim peut être en froid confort alors
+                # que les chambres Wiser restent en chaud.
+                options.update(pronote_room_options(config, target_id))
+            plan = build_pronote_plan(config, source_start, options)
             days = plan["days"]
             scopes = _clean_scopes(plan.get("scopes"))
 
@@ -2563,6 +2646,7 @@ class Handler(BaseHTTPRequestHandler):
                 "app": APP_NAME,
                 "version": __version__,
                 "modes": MODES,
+                "connectors": connector_registry.catalog(),
                 "weekdays": WEEKDAY_NAMES,
                 "now": datetime.now().isoformat(timespec="seconds"),
             })
@@ -2605,6 +2689,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, test_pronote_connection(config))
             return
 
+        if method == "POST" and path == "/api/connectors/test":
+            body = self._body()
+            config = load_config()
+            connector_id = str(body.get("id") or "").strip()
+            if not connector_id:
+                self._json(400, {"error": "Connecteur manquant"})
+                return
+            self._json(200, connector_registry.test_connector(connector_id, config.get("connectors") or {}))
+            return
+
         if method == "POST" and path == "/api/pronote/preview":
             body = self._body()
             config = load_config()
@@ -2615,6 +2709,13 @@ class Handler(BaseHTTPRequestHandler):
                 or config.get("pronote_switch_day")
                 or "monday"
             )
+            # Aperçu pour une pièce précise : applique ses réglages confort/réduit.
+            raw_room = body.get("room_id")
+            if raw_room not in (None, "", 0, "0"):
+                try:
+                    options.update(pronote_room_options(config, int(raw_room)))
+                except (TypeError, ValueError):
+                    pass
             try:
                 monday = parse_week_start(body.get("week"))
                 plan = build_pronote_plan(config, monday, options)

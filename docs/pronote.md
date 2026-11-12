@@ -43,6 +43,18 @@ Cas particuliers :
   quel et reste modifiable.
 - **Cours annulés** : Pronote les signale, MeCasa les ignore.
 
+## Réglages par pièce (confort / réduit)
+
+Les réglages globaux s'appliquent à toutes les pièces liées. Une pièce peut avoir
+les siens, dans **Réglages → Pronote → Réglages par pièce** : mode et consigne de
+confort, mode et consigne de réduit. Une valeur vide hérite du réglage global.
+
+Exemple typique : la pièce équipée d'une **climatisation** en `Froid` (24 °C en
+confort, 26 °C en réduit) et les chambres Wiser en `Chaud`.
+
+À l'import, chaque pièce reçoit son propre planning ; l'aperçu de la page Planning
+reste calculé avec les réglages globaux (il est indicatif).
+
 ## Garde alternée
 
 Le **jour d'alternance** indique le jour où l'enfant change de parent :

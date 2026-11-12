@@ -61,7 +61,6 @@ l'état demandé et journalise un **avertissement** (niveau `avertissement`, pas
 erreur) : l'ordre est généralement appliqué avec du retard.
 
 ## Schneider Wiser
-
 ### Découverte
 
 1. **Réglages → Appareils → Wiser** : activer la passerelle.
@@ -73,6 +72,24 @@ erreur) : l'ordre est généralement appliqué avec du retard.
 MeCasa lit les plannings Wiser (par pièce et par jour) et peut les importer dans son
 propre planning. L'import convertit les points de consigne Wiser en créneaux MeCasa et
 **remplace le planning de l'appareil pour les semaines choisies** (A, B ou les deux).
+
+## Autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi)
+
+Ces quatre systèmes sont **déclarés dans Réglages → Appareils**, chacun dans un
+panneau dépliable : les réglages se saisissent et s'enregistrent dès maintenant
+(les secrets restent masqués côté interface). Les pilotes de lecture/écriture des
+consignes sont livrés progressivement ; le bouton **Tester** indique l'état réel.
+
+| Système | Type | État |
+| --- | --- | --- |
+| **Daikin** | Local (boîtier Wi-Fi, API HTTP) | Sonde réseau disponible (test de joignabilité du boîtier) ; pilotage à venir. |
+| **Bosch** | Local (contrôleur) | Réglages enregistrés ; pilote à venir. |
+| **Netatmo** | Cloud (compte développeur) | Réglages enregistrés ; pilote à venir. |
+| **Mitsubishi** | Cloud (MELCloud) | Réglages enregistrés ; pilote à venir. |
+
+Les réglages sont stockés dans `config.json` sous `connectors` et exposés sans
+secrets par `GET /api/config` (booléens `*_set`). Pour tester un connecteur :
+`POST /api/connectors/test` avec `{"id": "daikin"}`.
 
 ## Planning
 

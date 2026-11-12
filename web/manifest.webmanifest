@@ -7,11 +7,18 @@
   "start_url": "/#/home",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui", "window-controls-overlay"],
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "window-controls-overlay"
+  ],
   "orientation": "portrait-primary",
   "background_color": "#f5f1ea",
   "theme_color": "#f5f1ea",
-  "categories": ["utilities", "lifestyle"],
+  "categories": [
+    "utilities",
+    "lifestyle"
+  ],
   "icons": [
     {
       "src": "/icons/icon.svg",
@@ -32,7 +39,7 @@
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512.png",
+      "src": "/icons/icon-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

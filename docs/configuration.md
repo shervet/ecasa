@@ -61,6 +61,7 @@ source de vérité au démarrage et reste modifiable à la main si besoin.
 | `pronote_room_ids` | `[]` | Pièces liées au planning. |
 | `pronote_weeks` | `[]` | Semaines gérées (`["A"]`, `["B"]` ou les deux). |
 | `pronote_switch_day` | `monday` | Jour d'alternance : `monday` ou `friday`. |
+| `pronote_room_overrides` | `{}` | Réglages confort/réduit par pièce (`{"1": {"comfort_mode": "cool", "comfort_temp": 24}}`). Les clés absentes héritent des réglages globaux. |
 | `pronote_auto_enabled` | `true` | Mise à jour automatique quotidienne. |
 | `pronote_sync_minutes` | `180` (03:00) | Heure de la mise à jour automatique. |
 
@@ -85,8 +86,13 @@ configurations.
 | `med_pdl` | vide | Numéro de PDL (14 chiffres). |
 | `med_start` | vide | Début d'historique (`AAAA-MM-JJ`), vide = 3 ans. |
 
-### Tailscale
+### Connecteurs d'autres systèmes
 
+| Clé | Défaut | Rôle |
+| --- | --- | --- |
+| `connectors` | `{}` | Réglages Daikin, Bosch, Netatmo et Mitsubishi (`{"daikin": {"host": "192.168.1.50"}, …}`). Champs détaillés dans [equipements.md](equipements.md). |
+
+### Tailscale
 | Clé | Défaut | Rôle |
 | --- | --- | --- |
 | `tailscale_enabled` | `false` | Connecte le nœud au démarrage. |

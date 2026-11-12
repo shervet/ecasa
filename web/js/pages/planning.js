@@ -1251,6 +1251,7 @@ function openPronoteSheet() {
       <span class="hint">Le lundi de la semaine scolaire. L'aperçu ne modifie rien.</span>
     </label>
     <button class="btn" type="button" data-preview>${icon("search", 17)} Charger l'aperçu</button>
+    <p class="hint">L'aperçu utilise les réglages globaux ; à l'import, chaque pièce applique ses propres réglages confort/réduit (Réglages → Pronote).</p>
     <div data-preview-zone></div>
   `;
 
