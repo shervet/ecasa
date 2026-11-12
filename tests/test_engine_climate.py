@@ -8,6 +8,7 @@ Capacites Cozytouch utilisees :
 
 import unittest
 
+from mecasa.atlantic import AtlanticError, ExecutionTimeout
 from mecasa.engine import (
     AIRFLOW_POSITIONS,
     FAN_VALUES,
@@ -55,6 +56,20 @@ class FakeClient:
         return True
 
 
+class TimeoutClient(FakeClient):
+    """Ordre accepte mais execution non confirmee (cas du 2026-11-12)."""
+
+    def write_capability(self, device_id, capability_id, value, wait=True):
+        self.writes.append((int(capability_id), str(value)))
+        raise ExecutionTimeout("Execution non confirmee a temps", 4242)
+
+
+class FailingClient(FakeClient):
+    def write_capability(self, device_id, capability_id, value, wait=True):
+        self.writes.append((int(capability_id), str(value)))
+        raise AtlanticError("Ecriture refusee (HTTP 403)")
+
+
 DEFAULT_DEVICE = {
     "device_id": DEVICE_ID,
     "name": "Clim",
@@ -87,9 +102,9 @@ def live_caps(overrides=None):
     return caps
 
 
-def make_engine(settings=None, device=None, caps=None):
+def make_engine(settings=None, device=None, caps=None, client=None):
     store = FakeStore(settings, device)
-    client = FakeClient()
+    client = client or FakeClient()
     engine = Engine(store, client)
     engine.state = {int(store._device["device_id"]): dict(caps or live_caps())}
     engine.availability = {int(store._device["device_id"]): True}
@@ -217,6 +232,44 @@ class ApplyDefaultsTests(unittest.TestCase):
         self.assertEqual(current["fan_label"], "Moyenne")
         self.assertEqual(current["airflow"], "pos3")
         self.assertEqual(current["airflow_label"], "Position 3")
+
+
+class ExecutionTimeoutTests(unittest.TestCase):
+    """Un ordre accepte mais non confirme ne doit pas etre une erreur rouge."""
+
+    def test_unconfirmed_write_is_a_warning(self):
+        engine, store, client = make_engine(
+            caps=live_caps({177: "20"}),
+            client=TimeoutClient(),
+        )
+        self.assertTrue(engine._apply(dict(DEFAULT_DEVICE), DESIRED, force=True))
+        self.assertEqual(client.writes, [(177, "24")])
+        self.assertIsNone(engine.last_error)
+        # Etat optimiste : pas de reecriture au tick suivant.
+        self.assertEqual(engine.state[DEVICE_ID][177], "24")
+        self.assertIn("confirmation non reçue", engine.last_action)
+        levels = [level for level, _message, _device in store.logs]
+        self.assertIn("avertissement", levels)
+        self.assertNotIn("erreur", levels)
+
+    def test_sequence_continues_after_unconfirmed_write(self):
+        engine, _store, client = make_engine(
+            caps=live_caps({177: "20", 184: "1"}),
+            client=TimeoutClient(),
+        )
+        self.assertTrue(engine._apply(dict(DEFAULT_DEVICE), DESIRED, force=True))
+        self.assertEqual(client.writes, [(184, "0"), (177, "24")])
+
+    def test_real_write_error_still_fails(self):
+        engine, store, client = make_engine(
+            caps=live_caps({177: "20"}),
+            client=FailingClient(),
+        )
+        self.assertFalse(engine._apply(dict(DEFAULT_DEVICE), DESIRED, force=True))
+        self.assertEqual(client.writes, [(177, "24")])
+        self.assertIn("consigne (capacite 177 = 24)", engine.last_error)
+        levels = [level for level, _message, _device in store.logs]
+        self.assertIn("erreur", levels)
 
 
 class PollBackfillTests(unittest.TestCase):

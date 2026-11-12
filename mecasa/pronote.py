@@ -41,6 +41,10 @@ MIN_HOME_MINUTES = 15
 # en confort a midi.
 LUNCH_END_MINUTES = 13 * 60 + 30
 
+# Au-dela de cette heure, une journee n'est plus consideree comme « cours le
+# matin seulement » : l'import ne reecrit alors que le debut de la journee.
+MORNING_END_MINUTES = 13 * 60 + 30
+
 VALID_MODES = ("off", "auto", "cool", "heat", "dry", "fan")
 
 # Statut scolaire : un externe rentre dejeuner chez lui, un demi-pensionnaire
@@ -705,6 +709,73 @@ def _parse_time_label(value: str) -> int:
         return -1
 
 
+def _day_scope(
+    weekday: int,
+    slots: list[dict],
+    blocks: list[tuple[int, int]],
+    occupied: list[tuple[int, int]],
+    student_status: str,
+    switch_day: str,
+    last_lesson_end: int = 0,
+) -> tuple[str, int]:
+    """Part de la journee que l'import Pronote a le droit de reecrire.
+
+    Renvoie ``(kind, index)`` :
+
+    - ``("full", 0)`` : toute la journee est remplacee (comportement historique) ;
+    - ``("prefix", n)`` : seuls les ``n`` premiers creneaux generes sont ecrits,
+      la fin de la journee existante est conservee ;
+    - ``("suffix", i)`` : seuls les creneaux generes a partir de l'index ``i``
+      sont ecrits, le debut de la journee existante est conserve.
+
+    En garde alternee, l'enfant n'est pas la toute la journee : le vendredi on
+    n'ecrit que la matinee (jusqu'au depart), le lundi que la fin de journee.
+    Une journee qui se termine le matin (mercredi type) ne voit que son debut
+    reecrit : le reste est edite a la main.
+    """
+    if not slots:
+        return ("full", 0)
+
+    if weekday == 4 and switch_day == "friday":
+        # Vendredi : la journee s'arrete sur le depart (dernier creneau genere).
+        return ("prefix", len(slots))
+
+    if weekday == 0 and switch_day == "monday":
+        if _clean_student_status(student_status) == STUDENT_STATUS_DEMI_PENSIONNAIRE:
+            # Demi-pensionnaire : il quitte apres la fin des cours de la journee.
+            boundary = occupied[-1][1] if occupied else 0
+        else:
+            # Externe : il quitte apres les cours du matin.
+            morning = [end for start, end in blocks if start < MORNING_END_MINUTES]
+            boundary = morning[-1] if morning else MORNING_END_MINUTES
+        index = next(
+            (
+                position
+                for position, slot in enumerate(slots)
+                if _parse_time_label(slot.get("time")) >= boundary
+            ),
+            len(slots),
+        )
+        return ("suffix", index)
+
+    # Journee terminee le matin : on ne remplace que le debut (nuit, lever,
+    # cours, retour a la maison). Le reste de la journee reste celui de
+    # l'utilisateur.
+    if last_lesson_end and last_lesson_end <= MORNING_END_MINUTES:
+        boundary = occupied[-1][1] if occupied else last_lesson_end
+        index = next(
+            (
+                position
+                for position, slot in enumerate(slots)
+                if _parse_time_label(slot.get("time")) >= boundary
+            ),
+            len(slots) - 1,
+        )
+        return ("prefix", index + 1)
+
+    return ("full", 0)
+
+
 def build_days(
     lessons: list[dict],
     travel_minutes: int,
@@ -716,6 +787,7 @@ def build_days(
     student_status: str = STUDENT_STATUS_EXTERNE,
     bedtime_minutes: int = 22 * 60,
     switch_day: str = "monday",
+    scopes: list | None = None,
 ) -> list[list[dict]]:
     """Construit les 7 listes de creneaux a partir des cours normalises.
 
@@ -755,6 +827,8 @@ def build_days(
         # Journee sans cours : rien a ecrire, la journee est preservee.
         if not blocks:
             days.append([])
+            if scopes is not None:
+                scopes.append(("full", 0))
             continue
 
         # Demi-pensionnaire : la journee scolaire est continue (cours + eventuels
@@ -827,6 +901,22 @@ def build_days(
                 add(bedtime, reduced)
 
         days.append(slots)
+
+        if scopes is not None:
+            last_end = max(
+                (int(item["end_minutes"]) for item in day_lessons), default=0
+            )
+            scopes.append(
+                _day_scope(
+                    weekday,
+                    slots,
+                    blocks,
+                    occupied,
+                    status,
+                    "friday" if friday_switch else "monday",
+                    last_end,
+                )
+            )
 
     return days
 
@@ -920,6 +1010,7 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
     ).strip().lower()
     switch_day = "friday" if switch_day == "friday" else "monday"
 
+    scopes: list = []
     days = build_days(
         lessons,
         travel,
@@ -931,6 +1022,7 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         student_status,
         bedtime_minutes,
         switch_day,
+        scopes,
     )
     friday_switch = friday_departure_minutes(days, wake_minutes, travel)
 
@@ -951,6 +1043,8 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         "reduced": {"mode": reduced_mode, "temp": reduced_temp},
         "lessons": lessons,
         "days": days,
+        # Portee de chaque jour : "full" (remplace), "prefix"/"suffix" (partiel).
+        "scopes": scopes,
         "stats": {
             "lessons": len(lessons),
             "canceled": canceled,

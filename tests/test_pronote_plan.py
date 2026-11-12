@@ -211,6 +211,66 @@ class FridayDepartureMinutesTests(unittest.TestCase):
         )
 
 
+class DayScopeTests(unittest.TestCase):
+    """Portée de l'import : garde alternée et journées qui finissent le matin."""
+
+    def scopes_for(self, lessons, **kwargs):
+        scopes = []
+        build(lessons, scopes=scopes, **kwargs)
+        return scopes
+
+    def test_friday_switch_writes_the_morning(self):
+        scopes = self.scopes_for(
+            [lesson(4, 8 * 60, 12 * 60)], switch_day="friday"
+        )
+        kind, index = scopes[4]
+        self.assertEqual(kind, "prefix")
+        self.assertGreater(index, 0)
+
+    def test_friday_scope_ignored_when_switch_is_monday(self):
+        # Vendredi après-midi : la journée ne s'arrête pas le matin, donc
+        # l'import remplace toute la journée quand la bascule est le lundi.
+        scopes = self.scopes_for([lesson(4, 14 * 60, 16 * 60)])
+        self.assertEqual(scopes[4], ("full", 0))
+
+    def test_monday_externe_writes_after_morning_classes(self):
+        lessons = [lesson(0, 8 * 60, 12 * 60), lesson(0, 14 * 60, 16 * 60)]
+        kind, index = self.scopes_for(lessons)[0]
+        self.assertEqual(kind, "suffix")
+        # Le premier créneau écrit est le retour à la maison pour le repas.
+        self.assertEqual(build(lessons)[0][index]["time"], "12:20")
+
+    def test_monday_demi_pensionnaire_writes_evening_only(self):
+        lessons = [lesson(0, 8 * 60, 12 * 60), lesson(0, 14 * 60, 16 * 60)]
+        kind, index = self.scopes_for(
+            lessons, student_status="demi_pensionnaire"
+        )[0]
+        self.assertEqual(kind, "suffix")
+        self.assertEqual(
+            build(lessons, student_status="demi_pensionnaire")[0][index]["time"],
+            "16:20",
+        )
+
+    def test_morning_only_day_writes_its_start(self):
+        lessons = [lesson(2, 8 * 60, 12 * 60)]
+        kind, index = self.scopes_for(lessons)[2]
+        self.assertEqual(kind, "prefix")
+        self.assertEqual(build(lessons)[2][index - 1]["time"], "12:20")
+
+    def test_full_day_is_replaced_entirely(self):
+        scopes = self.scopes_for([lesson(2, 8 * 60, 15 * 60)])
+        self.assertEqual(scopes[2], ("full", 0))
+
+    def test_day_without_lessons_is_full_and_preserved(self):
+        scopes = self.scopes_for([])
+        self.assertEqual(len(scopes), 7)
+        self.assertTrue(all(scope == ("full", 0) for scope in scopes))
+
+    def test_no_scopes_requested_keeps_legacy_return(self):
+        days = build([lesson(0, 8 * 60, 12 * 60)])
+        self.assertEqual(len(days), 7)
+
+
 class BuildPlanTests(unittest.TestCase):
     def test_wake_minutes_comes_from_config(self):
         config = {

@@ -104,6 +104,10 @@ DEFAULT_CONFIG = {
     "pronote_switch_day": "monday",
     # Heure de coucher (minutes après minuit) : passage en température réduite.
     "pronote_bedtime_minutes": 22 * 60,
+    # Mise à jour automatique du planning Pronote : heure (minutes après
+    # minuit) et activation. Désactivée = import manuel uniquement.
+    "pronote_auto_enabled": True,
+    "pronote_sync_minutes": 3 * 60,
     "weather_enabled": True,
     "weather_city": "",
     "weather_latitude": 48.8566,
@@ -197,6 +201,30 @@ def _is_loopback_host(host: str) -> bool:
     return str(host or "").strip().lower() in (
         "127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1",
     )
+
+
+def _truthy(value, default: bool = False) -> bool:
+    """Booleen tolerant : accepte true/false, 0/1, oui/non, on/off."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() not in ("", "0", "false", "non", "no", "off")
+
+
+def _minutes_of_day(value, default: int) -> int:
+    """Minutes apres minuit, accepte un entier ou une heure « HH:MM »."""
+    if isinstance(value, str) and ":" in value:
+        parts = value.split(":")
+        try:
+            value = int(parts[0]) * 60 + int(parts[1])
+        except (ValueError, IndexError):
+            return default
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(24 * 60 - 1, minutes))
 
 
 def local_ipv4_addresses() -> list[str]:
@@ -340,6 +368,10 @@ def public_config(config: dict) -> dict:
             "friday"
             if str(config.get("pronote_switch_day")).strip().lower() == "friday"
             else "monday"
+        ),
+        "pronote_auto_enabled": _truthy(config.get("pronote_auto_enabled"), True),
+        "pronote_sync_minutes": _minutes_of_day(
+            config.get("pronote_sync_minutes"), 3 * 60
         ),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
@@ -587,6 +619,27 @@ def save_config(body: dict) -> tuple[dict, bool]:
             raise ValueError("Heure de coucher invalide")
         updated["pronote_bedtime_minutes"] = minutes
 
+    if "pronote_auto_enabled" in body:
+        updated["pronote_auto_enabled"] = _truthy(
+            body.get("pronote_auto_enabled"), True
+        )
+
+    if "pronote_sync_minutes" in body:
+        raw = body.get("pronote_sync_minutes")
+        if isinstance(raw, str) and ":" in raw:
+            parts = raw.split(":")
+            try:
+                raw = int(parts[0]) * 60 + int(parts[1])
+            except (ValueError, IndexError) as err:
+                raise ValueError("Heure de mise à jour Pronote invalide") from err
+        try:
+            minutes = int(raw)
+        except (TypeError, ValueError) as err:
+            raise ValueError("Heure de mise à jour Pronote invalide") from err
+        if not (0 <= minutes < 24 * 60):
+            raise ValueError("Heure de mise à jour Pronote invalide")
+        updated["pronote_sync_minutes"] = minutes
+
     if "weather_enabled" in body:
         updated["weather_enabled"] = bool(body.get("weather_enabled"))
 
@@ -753,11 +806,35 @@ def _slot_minutes(slot: dict) -> int:
         return 0
 
 
-def _merge_preserved_slots(days: list, existing: list[dict]) -> list[list[dict]]:
+def _clean_scopes(value) -> list | None:
+    """Valide la portee d'import renvoyee par Pronote (7 jours)."""
+    if not isinstance(value, list) or len(value) != 7:
+        return None
+    cleaned: list[tuple[str, int]] = []
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            return None
+        kind, index = item
+        if kind not in ("full", "prefix", "suffix"):
+            return None
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            return None
+        cleaned.append((kind, max(0, index)))
+    return cleaned
+
+
+def _merge_preserved_slots(
+    days: list, existing: list[dict], scopes: list | None = None
+) -> list[list[dict]]:
     """Applique l'import Pronote jour par jour (manuel et automatique).
 
-    - Jour avec cours (Pronote fournit des créneaux) : le planning existant de
-      ce jour est remplacé intégralement par le planning Pronote.
+    - Jour avec cours et portee « full » : le planning existant de ce jour est
+      remplacé intégralement par le planning Pronote.
+    - Jour partiel (« prefix » / « suffix ») : seule la portion gérée par
+      Pronote est écrite (matinée du vendredi, fin de journée du lundi, début
+      du mercredi), le reste de la journée reste éditable.
     - Jour sans cours (aucun créneau Pronote) : le planning existant est
       conservé tel quel et reste éditable.
     """
@@ -779,14 +856,40 @@ def _merge_preserved_slots(days: list, existing: list[dict]) -> list[list[dict]]
             "fan": slot.get("fan"),
         }
 
+    def convert_all(slots: list[dict]) -> list[dict]:
+        return [
+            convert(slot)
+            for slot in sorted(slots, key=lambda item: int(item["minutes"]))
+        ]
+
     for weekday in range(7):
-        if not result[weekday] and by_day[weekday]:
-            result[weekday] = [
-                convert(slot)
-                for slot in sorted(
-                    by_day[weekday], key=lambda item: int(item["minutes"])
-                )
-            ]
+        new_day = result[weekday]
+        old_day = by_day[weekday]
+        if not new_day:
+            result[weekday] = convert_all(old_day)
+            continue
+        if not old_day:
+            continue
+
+        kind, index = ("full", 0)
+        if scopes and weekday < len(scopes):
+            kind, index = scopes[weekday]
+
+        if kind == "prefix":
+            if index <= 0:
+                result[weekday] = convert_all(old_day)
+                continue
+            index = min(index, len(new_day))
+            boundary = _slot_minutes(new_day[index - 1])
+            kept = [slot for slot in old_day if _slot_minutes(slot) > boundary]
+            result[weekday] = new_day[:index] + convert_all(kept)
+        elif kind == "suffix":
+            if index >= len(new_day):
+                result[weekday] = convert_all(old_day)
+                continue
+            boundary = _slot_minutes(new_day[index])
+            kept = [slot for slot in old_day if _slot_minutes(slot) < boundary]
+            result[weekday] = convert_all(kept) + new_day[index:]
     return result
 
 
@@ -846,11 +949,13 @@ def import_pronote_weeks(
         # L'aperçu affiché est écrit tel quel dans la semaine cible, même
         # si le type de la semaine analysée diffère : l'utilisateur choisit
         # la destination (A/B), pas une semaine alignée automatiquement.
+        scopes = None
         if preview_days is not None and (
             target == preview_type or len(weeks) == 1
         ):
             days = preview_days
             source_start = base_monday
+            scopes = _clean_scopes((body or {}).get("scopes"))
         else:
             source_start = aligned_week_start(store, base_monday, target)
             if source_start is None:
@@ -870,6 +975,7 @@ def import_pronote_weeks(
                 {**(body or {}), "switch_day": switch_day},
             )
             days = plan["days"]
+            scopes = _clean_scopes(plan.get("scopes"))
 
         if not isinstance(days, list) or len(days) != 7:
             raise ValueError("Planning Pronote invalide : 7 jours attendus")
@@ -901,8 +1007,13 @@ def import_pronote_weeks(
                 if existing:
                     break
 
-        school_flags = [bool(day) for day in days]
-        days = _merge_preserved_slots(days, existing)
+        # Un jour partiellement importe (garde alternee, mercredi matin) reste
+        # editable : Pronote n'en gere qu'une portion.
+        school_flags = [
+            bool(day) and (scopes is None or scopes[index][0] == "full")
+            for index, day in enumerate(days)
+        ]
+        days = _merge_preserved_slots(days, existing, scopes)
         if room:
             store.set_slots(room_id=target_id, week=target, days=days)
             school_days = config.setdefault("pronote_school_days", {})
@@ -917,7 +1028,20 @@ def import_pronote_weeks(
 
 
 SYNC_HOUR = 3
+PRONOTE_SYNC_MINUTES = 3 * 60
 SYNC_STATE_FILE = DATA_DIR / "sync.json"
+
+
+def pronote_auto_enabled(config: dict) -> bool:
+    """Vrai si la mise à jour automatique du planning Pronote est active."""
+    return _truthy(config.get("pronote_auto_enabled"), True)
+
+
+def pronote_sync_minutes(config: dict) -> int:
+    """Heure (minutes après minuit) de la mise à jour Pronote automatique."""
+    return _minutes_of_day(
+        config.get("pronote_sync_minutes"), PRONOTE_SYNC_MINUTES
+    )
 
 
 def _sync_state_path(path=None) -> Path:
@@ -954,20 +1078,29 @@ def daily_sync_due(
     now: datetime,
     state: dict | None = None,
     hour: int = SYNC_HOUR,
+    pronote_minutes: int | None = None,
+    pronote_enabled: bool = True,
 ) -> bool:
     """Vrai si une synchro quotidienne reste à faire.
 
     Chaque tâche est suivie séparément (``energy`` et ``pronote``) : elle ne
-    s'exécute qu'une fois par jour, après ``hour`` (3 h). Une tentative, même
+    s'exécute qu'une fois par jour. L'électricité part à ``hour`` (3 h) ; le
+    planning Pronote à ``pronote_minutes`` (réglable, 3 h par défaut) et
+    seulement si la mise à jour automatique est activée. Une tentative, même
     en échec, est comptée : il n'y a donc pas de réessai automatique le
     même jour. La relance reste manuelle (bouton Actualiser des
     statistiques, import Pronote depuis le planning).
     """
-    if now.hour < hour:
-        return False
-    today = now.date().isoformat()
     state = state or {}
-    return state.get("energy") != today or state.get("pronote") != today
+    today = now.date().isoformat()
+    now_minutes = now.hour * 60 + now.minute
+    if state.get("energy") != today and now_minutes >= int(hour) * 60:
+        return True
+    if pronote_enabled and state.get("pronote") != today:
+        target = int(hour) * 60 if pronote_minutes is None else int(pronote_minutes)
+        if now_minutes >= target:
+            return True
+    return False
 
 
 def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
@@ -976,6 +1109,8 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
     Ne lève pas d'exception : renvoie un état ``skipped`` ou ``ok``.
     """
     config = load_config()
+    if not pronote_auto_enabled(config):
+        return {"ok": False, "skipped": "disabled"}
     room_ids = config.get("pronote_room_ids")
     if not room_ids:
         single = int(config.get("pronote_room_id") or 0)
@@ -1087,7 +1222,7 @@ def run_daily_sync(
             pronote = {"ok": False, "error": str(err)}
         result["pronote"] = pronote
         if pronote.get("ok") or pronote.get("skipped") in (
-            "no_room", "unknown_room", "not_configured",
+            "no_room", "unknown_room", "not_configured", "disabled",
         ):
             state.pop("pronote_error", None)
         else:
@@ -1132,12 +1267,14 @@ def run_daily_sync(
 
 
 class DailySync:
-    """Fil de fond : une synchro électricité + Pronote par jour, à 3 h.
+    """Fil de fond : une synchro électricité + Pronote par jour.
 
-    Si MeCasa démarre après 3 h, le rattrapage se fait immédiatement, sauf
-    si la tâche a déjà été tentée ce jour-là (état persisté dans
-    ``data/sync.json``). Il n'y a donc jamais deux synchros automatiques le
-    même jour, même après plusieurs redémarrages.
+    L'électricité part à 3 h ; le planning Pronote à l'heure réglée dans
+    Réglages → Pronote (3 h par défaut), et seulement si la mise à jour
+    automatique est activée. Si MeCasa démarre après l'heure prévue, le
+    rattrapage se fait immédiatement, sauf si la tâche a déjà été tentée ce
+    jour-là (état persisté dans ``data/sync.json``). Il n'y a donc jamais deux
+    synchros automatiques le même jour, même après plusieurs redémarrages.
     """
 
     def __init__(self, app, hour: int = SYNC_HOUR, check_seconds: float = 60,
@@ -1165,7 +1302,14 @@ class DailySync:
         while not self._stop.is_set():
             now = datetime.now()
             state = load_sync_state(self.state_path)
-            if daily_sync_due(now, state, self.hour):
+            config = load_config()
+            if daily_sync_due(
+                now,
+                state,
+                self.hour,
+                pronote_sync_minutes(config),
+                pronote_auto_enabled(config),
+            ):
                 try:
                     run_daily_sync(self.app, now, state, self.state_path)
                 except Exception as err:  # noqa: BLE001

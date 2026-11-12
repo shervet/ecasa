@@ -11,7 +11,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from .atlantic import AtlanticError, RateLimited
+from .atlantic import AtlanticError, ExecutionTimeout, RateLimited
 from .wiser import WiserError
 from .schedule import (
     MODE_LABELS,
@@ -680,10 +680,24 @@ class Engine:
 
         self._last_attempt[device_id] = time.time()
 
+        warnings: list[str] = []
+
         def write(cap_id: int, value: str, label: str) -> None:
             """Ecrit une capacite en gardant le contexte dans le message d'erreur."""
             try:
                 self.client.write_capability(device_id, int(cap_id), str(value))
+            except ExecutionTimeout as err:
+                # Atlantic a accepte l'ordre (HTTP 201) mais la confirmation
+                # n'est pas arrivee dans la fenetre de suivi : la passerelle
+                # applique souvent la consigne quelques dizaines de secondes
+                # plus tard. On ne bloque pas le reste de la sequence et on ne
+                # reecrit pas tout de suite (anti-flap).
+                warnings.append(f"{label} non confirmée à temps")
+                self.store.log(
+                    "avertissement",
+                    f"{label} (capacite {cap_id} = {value}) : {err}",
+                    device_id,
+                )
             except AtlanticError as err:
                 raise AtlanticError(
                     f"{label} (capacite {cap_id} = {value}) : {err}"
@@ -760,6 +774,8 @@ class Engine:
                     parts.append(f"orientation position {airflow_pos}")
 
             label = " ; ".join(parts) or "état déjà conforme"
+            if warnings:
+                label = f"{label} (confirmation non reçue)"
             self.last_action = (
                 f"{datetime.now():%H:%M:%S} {device['name']} -> {label}"
             )

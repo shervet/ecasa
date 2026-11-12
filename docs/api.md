@@ -1,0 +1,113 @@
+# API HTTP
+
+Toutes les routes renvoient du JSON. Le serveur écoute sur `http://<hôte>:<port>`
+(8780 par défaut) et sert aussi l'interface statique.
+
+## Sécurité
+
+- Les routes **sensibles** (réglages, Pronote, Tailscale, arrêt/redémarrage, import)
+  sont réservées à la machine locale, sauf si `allow_remote_admin` est activé.
+- Aucune authentification par jeton : MeCasa est prévu pour un réseau de confiance
+  (maison) ou un accès via Tailscale.
+- Les secrets ne sont jamais renvoyés : seulement des booléens `*_set`.
+
+## État et configuration
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/state` | Snapshot complet du moteur (pièces, appareils, plannings, forçages). |
+| GET | `/api/meta` | Modes, jours, heure serveur. |
+| GET | `/api/system` | Mémoire, disque, uptime, réseau, version. |
+| GET | `/api/config` | Configuration publique (sans secrets). |
+| PUT | `/api/config` | Enregistre la configuration. |
+| POST | `/api/config/test` | Teste le compte Cozytouch. |
+| PUT | `/api/settings` | Moteur, alternance A/B, défauts climatisation. |
+| GET | `/api/weeks` | Surcharges de semaine A/B. |
+| PUT | `/api/weeks` | Enregistre les surcharges. |
+
+## Pièces, appareils, planning
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/rooms` | Liste des pièces. |
+| POST | `/api/rooms` | Crée une pièce. |
+| PUT/DELETE | `/api/rooms/{id}` | Modifie ou supprime une pièce. |
+| PUT/DELETE | `/api/devices/{id}` | Modifie ou supprime un appareil. |
+| PUT | `/api/programs/{id}/{A\|B}` | Planning d'une pièce ou d'un appareil. |
+| POST | `/api/override` | Forçage temporaire (`device_id`, `mode`, `temp`, `minutes`). |
+| DELETE | `/api/override/{device_id}` | Reprise du planning. |
+| POST | `/api/apply` | Applique immédiatement l'état cible. |
+| POST | `/api/sync` | Resynchronise les appareils. |
+
+## Pronote
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| POST | `/api/pronote/search` | Recherche un établissement. |
+| POST | `/api/pronote/test` | Teste le compte. |
+| POST | `/api/pronote/preview` | Aperçu d'une semaine (`week`, `switch_day`). |
+| POST | `/api/pronote/import` | Importe (`room_id`, `weeks`, `days`, `scopes`, `switch_day`). |
+
+`preview` renvoie aussi `scopes` : la portion de chaque jour que l'import a le droit
+d'écrire (`full`, `prefix`, `suffix`). Le renvoyer tel quel à `import` garantit un
+résultat identique à l'aperçu.
+
+## Wiser
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/wiser/find` | Cherche le hub sur le réseau. |
+| GET | `/api/wiser/schedules` | Liste les plannings disponibles. |
+| GET | `/api/wiser/schedule/{id}` | Planning d'un appareil. |
+| POST | `/api/wiser/import` | Importe dans MeCasa. |
+
+## Statistiques, météo, énergie
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/stats?range=day\|week\|month&date=…&room_id=…` | Statistiques thermiques. |
+| GET | `/api/weather` | Météo et température extérieure. |
+| GET | `/api/weather/search?q=…` | Recherche de ville. |
+| GET | `/api/energy?view=day\|week\|month\|year&month=…&refresh=1` | Consommation électrique. |
+| POST | `/api/energy/test` | Teste le jeton et le PDL. |
+
+## Journal, sauvegarde, exploitation
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/logs` | Journal (filtres, pagination). |
+| DELETE | `/api/logs` | Vide le journal. |
+| GET | `/api/export` | Sauvegarde complète JSON. |
+| POST | `/api/import` | Restaure une sauvegarde. |
+| POST | `/api/storage/flush` | Force l'écriture disque. |
+| GET | `/api/health` | Sonde de vie (200 = OK). |
+| POST | `/api/control/restart` | Redémarre le service et les services externes. |
+| POST | `/api/control/stop` | Arrêt propre. |
+
+## Tailscale
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/tailscale/status` | Diagnostic complet. |
+| POST | `/api/tailscale/up` | Connecte le nœud. |
+| POST | `/api/tailscale/serve/enable` | Publie en HTTPS. |
+| POST | `/api/tailscale/serve/disable` | Dépublie. |
+| POST | `/api/tailscale/install` | Installe / désinstalle le client. |
+| POST | `/api/tailscale/uninstall` | Désinstalle le client. |
+
+## Exemples
+
+```bash
+# État complet
+curl -s http://127.0.0.1:8780/api/state | jq .
+
+# Forcer le salon en confort 21 °C pendant 2 h
+curl -s -X POST http://127.0.0.1:8780/api/override \
+  -H 'Content-Type: application/json' \
+  -d '{"device_id": 1, "mode": "heat", "temp": 21, "minutes": 120}'
+
+# Aperçu Pronote (semaine du 9 novembre 2026, bascule le lundi)
+curl -s -X POST http://127.0.0.1:8780/api/pronote/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"week": "2026-11-09", "switch_day": "monday"}'
+```

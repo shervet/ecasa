@@ -51,6 +51,20 @@ class RateLimited(AtlanticError):
         self.retry_after = retry_after
 
 
+class ExecutionTimeout(AtlanticError):
+    """Ordre accepte (HTTP 201) mais execution non confirmee a temps.
+
+    La passerelle cloud Atlantic serialise les executions par appareil et
+    peut prendre plusieurs dizaines de secondes (reveil de la clim, file
+    d'attente). L'ordre est alors generalement applique apres coup : ce n'est
+    pas un echec, seulement une confirmation manquante.
+    """
+
+    def __init__(self, message: str, execution_id=None):
+        super().__init__(message)
+        self.execution_id = execution_id
+
+
 def _http(method, path, *, data=None, headers=None, timeout=20):
     """Requete brute. Ne leve pas sur les codes HTTP : renvoie (status, body)."""
     request = urllib.request.Request(BASE_URL + path, data=data, method=method)
@@ -231,9 +245,16 @@ class AtlanticClient:
 
         return True
 
-    def _await_execution(self, execution_id, attempts: int = 8,
-                         delay: float = 1.0) -> None:
-        for _ in range(attempts):
+    def _await_execution(self, execution_id, attempts: int = 30,
+                         delay: float = 2.5) -> None:
+        """Attend la fin de l'execution (state = 3).
+
+        Fenetre volontairement large (~75 s) : Atlantic peut mettre 10 a 60 s
+        a relayer un ordre, surtout quand plusieurs executions s'enchainent sur
+        le meme appareil. Un delai trop court produisait de fausses erreurs
+        « Execution non terminee » alors que la consigne etait bien appliquee.
+        """
+        for attempt in range(attempts):
             status, raw = self._request(
                 "GET", f"/magellan/executions/{execution_id}"
             )
@@ -250,9 +271,13 @@ class AtlanticClient:
             if state not in (EXEC_PENDING, EXEC_RUNNING):
                 raise AtlanticError(f"Execution terminee en erreur (state={state})")
 
-            time.sleep(delay)
+            if attempt < attempts - 1:
+                time.sleep(delay)
 
-        raise AtlanticError("Execution non terminee apres plusieurs essais")
+        raise ExecutionTimeout(
+            "Execution non confirmee a temps (ordre probablement applique)",
+            execution_id,
+        )
 
     def close(self) -> None:
         self._token = None

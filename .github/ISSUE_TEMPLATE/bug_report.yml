@@ -1,0 +1,49 @@
+name: Bug
+description: Signaler un problème rencontré
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de préciser la version (`GET /api/system` → `app.version`) et la plateforme.
+        **Aucun mot de passe, aucun identifiant, aucun jeton** dans le rapport.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version de MeCasa
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Plateforme
+      options:
+        - Raspberry Pi (Linux)
+        - Linux (autre)
+        - Windows
+        - macOS
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      description: "Ce que j'ai fait, ce que j'attendais, ce que j'ai obtenu."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Extrait du journal (anonymisé)
+      description: "Page Journal → exporter, ou GET /api/logs (une dizaine de lignes suffisent)."
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Autre chose à signaler ?

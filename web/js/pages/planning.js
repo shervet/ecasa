@@ -1147,20 +1147,21 @@ function openPronoteSheet() {
   }
   let plan = null;
   let planStart = null;
+  let planSwitch = null;
   const monday = mondayOf(new Date());
   const body = document.createElement("div");
   body.className = "stack";
   const parity = (store.state?.settings?.week_mode || "parity") === "parity";
-  // Par défaut, les semaines déjà liées à Pronote (réglage enregistré) ;
-  // sinon la semaine affichée.
-  const configuredWeeks = pronoteLinkedWeeks();
-  const configured = Array.isArray(store.config?.pronote_weeks) && store.config.pronote_weeks.length
-    ? configuredWeeks
-    : [week === "B" ? "B" : "A"];
-  let chosenWeeks = new Set(configured);
+  // Semaines et jour d'alternance : valeurs enregistrées, modifiables ici.
+  const linkedWeeks = pronoteLinkedWeeks();
+  const chosenWeeks = new Set(linkedWeeks);
   const initialSwitch = store.state?.settings?.week_switch_day || store.config?.pronote_switch_day || "monday";
   let switchDay = initialSwitch === "friday" ? "friday" : "monday";
-  let planSwitch = null;
+  const autoEnabled = store.config?.pronote_auto_enabled !== false;
+  const syncMinutes = Number(store.config?.pronote_sync_minutes ?? 180);
+  const autoLabel = autoEnabled
+    ? `chaque jour à ${String(Math.floor(syncMinutes / 60)).padStart(2, "0")}:00`
+    : "désactivée (import manuel)";
   const roomsHtml = rooms.map((room) => `<li>${escapeHtml(room.label)}</li>`).join("");
   body.innerHTML = `
     <div class="field">
@@ -1176,18 +1177,26 @@ function openPronoteSheet() {
         <label class="check"><input type="checkbox" data-pronote-week="A"${chosenWeeks.has("A") ? " checked" : ""}> Semaine A</label>
         <label class="check"><input type="checkbox" data-pronote-week="B"${chosenWeeks.has("B") ? " checked" : ""}> Semaine B</label>
       </div>
-      <span class="hint">Les jours avec cours sont remplacés et non modifiables ; les jours sans cours restent inchangés et modifiables. Les semaines cochées restent gérées par Pronote (et resynchronisées automatiquement) ; les autres restent modifiables.</span>
+      <span class="hint">Les semaines cochées restent gérées par Pronote (et resynchronisées automatiquement) ; les autres restent modifiables.</span>
     </div>`
-        : `<p class="hint">Les jours avec cours sont remplacés et non modifiables ; les jours sans cours restent inchangés et modifiables.</p>`
+        : `<p class="hint">Les jours avec cours sont remplacés (ou complétés selon le jour d'alternance) ; les jours sans cours restent modifiables.</p>`
     }
     <label class="field">
       <span class="label">Jour d'alternance (garde)</span>
       <select class="select" data-pronote-switch-day>
-        <option value="monday"${switchDay === "monday" ? " selected" : ""}>Lundi (semaine complète)</option>
-        <option value="friday"${switchDay === "friday" ? " selected" : ""}>Vendredi (départ le vendredi selon les cours, puis semaine suivante)</option>
+        <option value="monday"${switchDay === "monday" ? " selected" : ""}>Lundi — l'enfant arrive après l'école</option>
+        <option value="friday"${switchDay === "friday" ? " selected" : ""}>Vendredi — l'enfant part après l'école</option>
       </select>
-      <span class="hint">En garde alternée, le vendredi bascule la semaine à partir du départ de l'école.</span>
+      <span class="hint">Lundi : l'enfant arrive chez le parent gardien (repas s'il est externe, après les cours s'il est demi-pensionnaire). Vendredi : il part selon les cours. Le reste de la journée reste modifiable.</span>
     </label>
+    <div class="field">
+      <span class="label">Mise à jour automatique</span>
+      <div class="row-between wrap" style="gap:10px">
+        <span class="tiny muted">${escapeHtml(autoLabel)}</span>
+        <button class="btn" type="button" data-open-settings>${icon("settings", 16)} Réglages</button>
+      </div>
+      <span class="hint">L'heure et l'activation se règlent dans Réglages &gt; Pronote.</span>
+    </div>
     <label class="field">
       <span class="label">Semaine à analyser</span>
       <input class="input" type="date" value="${monday}" data-week-start>
@@ -1210,6 +1219,12 @@ function openPronoteSheet() {
 
   const previewZone = body.querySelector("[data-preview-zone]");
   const importButton = footer.querySelector("[data-do-import]");
+
+  body.querySelector("[data-open-settings]")?.addEventListener("click", () => {
+    closeSheet();
+    // Lien profond : la page Réglages ouvre et fait défiler jusqu'à Pronote.
+    location.hash = "#/settings/pronote";
+  });
 
   body.querySelectorAll("[data-pronote-week]").forEach((box) => {
     box.addEventListener("change", () => {
@@ -1267,10 +1282,20 @@ function openPronoteSheet() {
       const weeksToWrite = [...chosenWeeks];
       if (!weeksToWrite.length) weeksToWrite.push("A");
       const targetLabels = [];
-      // Enregistre les semaines gérées par Pronote et le jour de bascule : les
-      // autres semaines redeviennent modifiables et ne sont plus resynchronisées.
-      await put("/api/config", { pronote_weeks: weeksToWrite, pronote_switch_day: switchDay });
-      // Un seul import par pièce : il écrit toutes les semaines cochées et
+      // Un seul enregistrement par clic : on n'écrit les réglages que s'ils
+      // ont changé depuis la dernière fois (sinon aucun PUT inutile).
+      const storedWeeks = (store.config?.pronote_weeks || []).slice().sort();
+      const storedSwitch = store.state?.settings?.week_switch_day
+        || store.config?.pronote_switch_day
+        || "monday";
+      const weeksChanged = weeksToWrite.slice().sort().join(",") !== storedWeeks.join(",");
+      if (weeksChanged || switchDay !== storedSwitch) {
+        await put("/api/config", {
+          pronote_weeks: weeksToWrite,
+          pronote_switch_day: switchDay,
+        });
+      }
+      // Un seul import par pièce : il écrit toutes les semaines choisies et
       // lie la pièce à chacune d'elles (évite d'écraser la liaison de la 1re).
       for (const room of rooms) {
         await post("/api/pronote/import", {
@@ -1279,6 +1304,7 @@ function openPronoteSheet() {
           linked_weeks: weeksToWrite,
           week_start: start,
           days: plan.days,
+          scopes: plan.scopes,
           preview_week_type: plan.week_type,
           switch_day: switchDay,
         });

@@ -76,6 +76,102 @@ class DailySyncDueTests(unittest.TestCase):
             )
         )
 
+    def test_pronote_waits_for_configured_hour(self):
+        # Électricité à 3 h, Pronote à 7 h : à 5 h seule l'énergie est due.
+        now = datetime(2026, 11, 10, 5, 0)
+        self.assertTrue(main.daily_sync_due(now, {}, pronote_minutes=7 * 60))
+        self.assertFalse(
+            main.daily_sync_due(
+                now, {"energy": "2026-11-10"}, pronote_minutes=7 * 60
+            )
+        )
+        self.assertTrue(
+            main.daily_sync_due(
+                now + timedelta(hours=2),
+                {"energy": "2026-11-10"},
+                pronote_minutes=7 * 60,
+            )
+        )
+
+    def test_disabled_pronote_is_never_due(self):
+        now = datetime(2026, 11, 10, 23, 0)
+        self.assertFalse(
+            main.daily_sync_due(
+                now, {"energy": "2026-11-10"}, pronote_enabled=False
+            )
+        )
+
+
+class MergePreservedSlotsTests(unittest.TestCase):
+    """Import partiel : seule la portion gérée par Pronote est écrite."""
+
+    @staticmethod
+    def scopes(*values):
+        values = list(values) + [("full", 0)] * (7 - len(values))
+        return values[:7]
+
+    def test_prefix_keeps_end_of_day(self):
+        new = [
+            [
+                {"time": "00:00", "mode": "off", "temp": 16},
+                {"time": "07:00", "mode": "heat", "temp": 20},
+                {"time": "07:40", "mode": "off", "temp": 16},
+            ],
+            [], [], [], [], [], [],
+        ]
+        existing = [
+            {"weekday": 0, "minutes": 7 * 60 + 30, "mode": "off", "temp": 16},
+            {"weekday": 0, "minutes": 22 * 60, "mode": "heat", "temp": 19},
+        ]
+        merged = main._merge_preserved_slots(
+            new, existing, self.scopes(("prefix", 3))
+        )
+        self.assertEqual(
+            [slot["time"] for slot in merged[0]],
+            ["00:00", "07:00", "07:40", "22:00"],
+        )
+
+    def test_suffix_keeps_start_of_day(self):
+        new = [
+            [
+                {"time": "12:20", "mode": "heat", "temp": 20},
+                {"time": "13:40", "mode": "off", "temp": 16},
+            ],
+            [], [], [], [], [], [],
+        ]
+        existing = [
+            {"weekday": 0, "minutes": 0, "mode": "off", "temp": 16},
+            {"weekday": 0, "minutes": 7 * 60, "mode": "heat", "temp": 20},
+            {"weekday": 0, "minutes": 12 * 60 + 30, "mode": "off", "temp": 16},
+        ]
+        merged = main._merge_preserved_slots(
+            new, existing, self.scopes(("suffix", 0))
+        )
+        self.assertEqual(
+            [slot["time"] for slot in merged[0]],
+            ["00:00", "07:00", "12:20", "13:40"],
+        )
+
+    def test_full_scope_replaces_the_day(self):
+        new = [[{"time": "08:00", "mode": "heat", "temp": 20}], [], [], [], [], [], []]
+        existing = [{"weekday": 0, "minutes": 0, "mode": "off", "temp": 16}]
+        merged = main._merge_preserved_slots(new, existing, self.scopes())
+        self.assertEqual([slot["time"] for slot in merged[0]], ["08:00"])
+
+    def test_day_without_lessons_keeps_existing_planning(self):
+        new = [[] for _ in range(7)]
+        existing = [{"weekday": 2, "minutes": 0, "mode": "off", "temp": 16}]
+        merged = main._merge_preserved_slots(new, existing, self.scopes())
+        self.assertEqual([slot["time"] for slot in merged[2]], ["00:00"])
+
+    def test_invalid_scopes_are_ignored(self):
+        self.assertIsNone(main._clean_scopes("nope"))
+        self.assertIsNone(main._clean_scopes([["full", 0]]))
+        self.assertIsNone(main._clean_scopes([["bogus", 0]] * 7))
+        self.assertEqual(
+            main._clean_scopes([["prefix", 2]] * 7), [("prefix", 2)] * 7
+        )
+
 
 class FakeEnergy:
     def __init__(self, values=None, error=None):

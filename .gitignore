@@ -15,3 +15,6 @@ Thumbs.db
 *.db
 *.sqlite3
 .env
+
+# Scripts de developpement locaux (non publies)
+/test_*.py

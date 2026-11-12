@@ -9,11 +9,13 @@ import { deviceName, escapeHtml, fmtDate, fmtTime } from "../utils.js";
 const FILTERS = [
   ["all", "Tout"],
   ["info", "Infos"],
+  ["avertissement", "Avertissements"],
   ["erreur", "Erreurs"],
 ];
 
 const LEVEL_ICON = {
   erreur: "alert",
+  avertissement: "info",
   action: "check",
   info: "info",
 };

@@ -3,6 +3,7 @@
 import { del, get, post, put } from "../api.js";
 import { icon } from "../icons.js";
 import { closeSheet, openSheet } from "../sheet.js";
+import { SITE } from "../site.js";
 import {
   refreshConfig,
   refreshState,
@@ -154,6 +155,7 @@ export default {
       ["tailscale", "Tailscale"],
       ["storage", "Stockage"],
       ["energy", "Électricité"],
+      ["support", "Soutenir"],
     ];
 
     view.innerHTML = `
@@ -197,6 +199,7 @@ export default {
           ${tailscaleSection()}
           ${storageSection()}
           ${energySection()}
+          ${supportSection()}
           <p class="hint">
             MeCasa ${escapeHtml(store.system?.app?.version || "")} · les secrets ne sont jamais renvoyés à l'interface.
           </p>
@@ -211,6 +214,13 @@ export default {
     renderSystem();
     await loadWeeks();
     await loadTailscale();
+
+    // Lien profond depuis le Planning : #/settings/pronote ouvre la section.
+    const parts = location.hash.replace(/^#\/?/, "").split("/");
+    if (parts[0] === "settings" && parts[1]) {
+      const target = parts[1];
+      requestAnimationFrame(() => jumpToSection(target));
+    }
   },
 
   unmount() {
@@ -364,18 +374,7 @@ function weeksSection() {
         sub: "La parité ISO alterne A et B une semaine sur deux. En mode « Pas d'alternance », toutes les semaines sont traitées comme la semaine A.",
       }
     )}
-    ${selectRow(
-      "Jour d'alternance (garde)",
-      "week_switch_day",
-      settings.week_switch_day || "monday",
-      [
-        ["monday", "Lundi (semaine complète)"],
-        ["friday", "Vendredi (départ le vendredi selon les cours, puis semaine suivante)"],
-      ],
-      {
-        sub: "Si Vendredi est choisi : le vendredi de la semaine liée à Pronote, l'enfant part selon le planning/réglages puis MeCasa bascule sur la semaine suivante.",
-      }
-    )}
+    <div class="hint">Le jour d'alternance (garde) se règle dans la section Pronote.</div>
     ${row(
       "Inverser Semaine A et B",
       "Permute A et B par rapport à la parité ISO.",
@@ -598,7 +597,7 @@ function pronoteSection() {
           .join("")}
       </div>
       ${rooms.length ? "" : '<span class="hint">Aucune pièce pour le moment.</span>'}
-      <span class="hint">Cocher une pièce la lie à Pronote : son planning est récupéré chaque nuit à 3 h et appliqué (semaines A et B), sans validation. Les pièces liées sont grisées dans le Planning.</span>
+      <span class="hint">Cocher une pièce la lie à Pronote : son planning est récupéré automatiquement (heure ci-dessous) et appliqué (semaines A et B), sans validation. Les pièces liées sont grisées dans le Planning.</span>
     </div>
     <div class="field">
       <span class="label">Semaines liées à Pronote</span>
@@ -607,6 +606,30 @@ function pronoteSection() {
         <label class="check"><input type="checkbox" data-pronote-week-setting="B"${linkedWeeks.includes("B") ? " checked" : ""}> Semaine B</label>
       </div>
       <span class="hint">Les jours avec cours des semaines cochées sont gérés par Pronote. Au moins une semaine reste cochée.</span>
+    </div>
+    <div class="field">
+      <span class="label">Jour d'alternance (garde)</span>
+      <select class="select" data-key="pronote_switch_day">
+        <option value="monday"${c.pronote_switch_day !== "friday" ? " selected" : ""}>Lundi — l'enfant arrive après l'école</option>
+        <option value="friday"${c.pronote_switch_day === "friday" ? " selected" : ""}>Vendredi — l'enfant part après l'école</option>
+      </select>
+      <span class="hint">Lundi : l'enfant arrive chez le parent gardien (pour le repas s'il est externe, après les cours s'il est demi-pensionnaire). Vendredi : il part selon les cours. Pronote ne gère alors que la fin (lundi) ou le début (vendredi) de la journée ; le reste du planning reste modifiable à la main.</span>
+    </div>
+    ${row(
+      "Mise à jour automatique",
+      "Récupère le planning Pronote chaque jour à l'heure choisie. Désactivée, l'import reste manuel depuis le Planning.",
+      toggle("pronote_auto_enabled", c.pronote_auto_enabled !== false)
+    )}
+    <div class="field">
+      <span class="label">Heure de la mise à jour</span>
+      <select class="select" data-key="pronote_sync_minutes" style="width:min(160px,40vw)">
+        ${Array.from({ length: 24 }, (_, h) => h)
+          .map(
+            (h) => `<option value="${h * 60}"${Math.floor((c.pronote_sync_minutes ?? 180) / 60) === h ? " selected" : ""}>${String(h).padStart(2, "0")}:00</option>`
+          )
+          .join("")}
+      </select>
+      <span class="hint">Heure locale du serveur. L'électricité reste synchronisée à 3 h.</span>
     </div>
     <div class="form-grid">
       <label class="field">
@@ -882,14 +905,38 @@ function tailscaleSection() {
   );
 }
 
+function supportSection() {
+  const donate = String(SITE.donateUrl || "").trim();
+  const link = (url, iconName, label) =>
+    `<a class="btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon(iconName, 16)} ${label}</a>`;
+  return section(
+    "support",
+    "Soutenir MeCasa",
+    "sparkles",
+    `<p class="hint" style="margin-top:0">MeCasa est libre, sans publicité, sans compte en ligne et sans télémétrie. Toutes les fonctions restent gratuites : un don finance le matériel de test et le temps de développement.</p>
+     <div class="row wrap" style="gap:10px">
+       ${
+         donate
+           ? `<a class="btn btn-primary" href="${escapeHtml(donate)}" target="_blank" rel="noopener noreferrer">${icon("sparkles", 16)} Faire un don</a>`
+           : ""
+       }
+       ${link(SITE.repo, "external", "Code source")}
+       ${link(SITE.docs, "list", "Documentation")}
+       ${link(SITE.issues, "info", "Signaler un problème")}
+     </div>
+     ${
+       donate
+         ? ""
+         : `<p class="hint">Aucun lien de don n'est configuré pour cette instance (voir <code>web/js/site.js</code>).</p>`
+     }`
+  );
+}
+
 /* --------------------------------------------------------------- liaisons */
 
-function bind() {
-  root.querySelectorAll("[data-jump]").forEach((link) => {
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      const target = root.querySelector(`#sec-${link.dataset.jump}`);
-      if (target) {
+function jumpToSection(id) {
+  const target = root?.querySelector(`#sec-${id}`);
+  if (!target) return;
   // Laisse la place au bandeau supérieur pour que le titre de la section
   // reste visible après le défilement.
   const topbar = document.querySelector(".topbar, header, .app-bar, .navbar");
@@ -897,8 +944,26 @@ function bind() {
   const offset = (topbar?.offsetHeight || 64) + (settingsNav?.offsetHeight || 40) + 16;
   const top = target.getBoundingClientRect().top + window.scrollY - offset;
   window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  root.querySelectorAll("[data-jump]").forEach((item) => {
+    item.classList.toggle("is-active", item.dataset.jump === id);
+  });
 }
-      root.querySelectorAll("[data-jump]").forEach((item) => item.classList.toggle("is-active", item === link));
+
+function bind() {
+  const pronoteAuto = root.querySelector('[data-key="pronote_auto_enabled"]');
+  const pronoteHour = root.querySelector('[data-key="pronote_sync_minutes"]');
+  if (pronoteAuto && pronoteHour) {
+    const syncPronoteHour = () => {
+      pronoteHour.disabled = !pronoteAuto.checked;
+    };
+    pronoteAuto.addEventListener("change", syncPronoteHour);
+    syncPronoteHour();
+  }
+
+  root.querySelectorAll("[data-jump]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      jumpToSection(link.dataset.jump);
     });
   });
 
@@ -1098,7 +1163,11 @@ async function saveSection(name, button) {
       const settings = {
         week_mode: container.querySelector('[data-key="week_mode"]')?.value || "parity",
         week_flip: container.querySelector('[data-key="week_flip"]')?.checked ? "1" : "0",
-        week_switch_day: container.querySelector('[data-key="week_switch_day"]')?.value || "monday",
+        // Le jour d'alternance se règle dans la section Pronote : on ne
+        // l'écrase que si le champ est présent ici.
+        ...(container.querySelector('[data-key="week_switch_day"]')
+          ? { week_switch_day: container.querySelector('[data-key="week_switch_day"]').value || "monday" }
+          : {}),
         // default_week n'est pas affiché ici : on ne l'écrase que s'il existe.
         ...(container.querySelector('[data-key="default_week"]')
           ? { default_week: container.querySelector('[data-key="default_week"]').value || "A" }
