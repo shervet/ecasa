@@ -61,6 +61,17 @@ résultat identique à l'aperçu.
 | GET | `/api/wiser/schedule/{id}` | Planning d'un appareil. |
 | POST | `/api/wiser/import` | Importe dans MeCasa. |
 
+## Connecteurs (Daikin, Bosch, Netatmo, Mitsubishi)
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| POST | `/api/connectors/test` | Teste un connecteur (`{"id": "daikin"}`) ; les réglages vivent dans `config.connectors`. |
+| GET | `/api/discover` | Liste les appareils découverts sur le compte Atlantic. |
+| POST | `/api/discover` | Rafraîchit la découverte des appareils. |
+
+Le catalogue (libellés, champs, état) est exposé par `GET /api/meta` (clé
+`connectors`) et rendu en panneaux dépliables dans Réglages → Appareils.
+
 ## Statistiques, météo, énergie
 
 | Méthode | Route | Rôle |
@@ -73,9 +84,11 @@ résultat identique à l'aperçu.
 
 ## Journal, sauvegarde, exploitation
 
+Le journal est inclus dans `GET /api/state` (clé `logs`) : la page Journal de
+l'interface le lit depuis l'état temps réel, sans route dédiée.
+
 | Méthode | Route | Rôle |
 | --- | --- | --- |
-| GET | `/api/logs` | Journal (filtres, pagination). |
 | DELETE | `/api/logs` | Vide le journal. |
 | GET | `/api/export` | Sauvegarde complète JSON. |
 | POST | `/api/import` | Restaure une sauvegarde. |
