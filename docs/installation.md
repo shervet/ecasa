@@ -26,25 +26,38 @@ installer Python, récupérer le code, lancer le serveur.
 ```bat
 git clone https://github.com/shervet/mecasa.git
 cd mecasa
-python -m mecasa.main
+run.bat
 ```
 
-Ouvrir <http://127.0.0.1:8780>.
+`run.bat` lance MeCasa (avec `.venv\Scripts\python.exe` s'il existe, sinon le Python
+du système) et garde la fenêtre ouverte en cas d'erreur. Pour arrêter proprement :
+double-cliquer sur **`stop.bat`** (arrête aussi pm2, les unités systemd Node et le
+conteneur MyElectricalData local s'ils tournent).
 
-Pour un lancement en un clic : double-cliquer `run.bat`. Pour arrêter : `stop.bat`.
+Ouvrir ensuite <http://127.0.0.1:8780>.
 
-> Si `python` n'est pas reconnu, installer Python depuis python.org en cochant
-> « Add python.exe to PATH ».
+> Si `run.bat` affiche « python n'est pas reconnu », installer Python depuis
+> python.org en cochant « Add python.exe to PATH ».
 
 ## Linux (général)
 
 ```bash
 git clone https://github.com/shervet/mecasa.git
 cd mecasa
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # facultatif : Pronote
-.venv/bin/python -m mecasa.main
+./run.sh
 ```
+
+`run.sh` utilise `.venv/bin/python` s'il existe, sinon `python3`.
+
+Pour Pronote, créer l'environnement une fois avant :
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Pour arrêter : `./stop.sh` (service systemd, processus résiduels, pm2 et
+MyElectricalData local).
 
 ## Raspberry Pi (service systemd)
 
@@ -118,20 +131,43 @@ Une sauvegarde régulière du dossier complet suffit à tout restaurer.
 ```bash
 cd mecasa
 git pull
-# Linux/Pi
+```
+
+Puis relancer :
+
+```bat
+rem Windows
+stop.bat
+run.bat
+```
+
+```bash
+# Linux / Raspberry Pi (script)
+./stop.sh
+./run.sh
+
+# Linux / Raspberry Pi (service systemd)
 sudo systemctl restart mecasa
-# Windows
-stop.bat && run.bat
 ```
 
 Les migrations de configuration sont automatiques : les clés absentes prennent leur
-valeur par défaut.
+valeur par défaut. Pense à recharger l'onglet (les fichiers web sont mis en cache en
+RAM au démarrage) et à vider le cache du service worker si l'icône ou le style
+semble ancien.
 
 ## Désinstallation
 
+```bat
+rem Windows
+stop.bat
+```
+
 ```bash
+# Linux / Raspberry Pi (service installé)
 sudo systemctl disable --now mecasa
 sudo rm /etc/systemd/system/mecasa.service
+
+# puis supprimer le dossier du projet
 rm -rf ~/mecasa
 ```
 

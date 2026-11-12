@@ -11,6 +11,15 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 [![Sans dépendance](https://img.shields.io/badge/d%C3%A9pendances-biblioth%C3%A8que%20standard-success.svg)](requirements.txt)
 [![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8.svg)](docs/installation.md)
 
+> **Essayer en 2 minutes, sans matériel.** Windows : double-clique sur **`run.bat`**.
+> Linux / Raspberry Pi : `./run.sh`. Ouvre ensuite <http://localhost:8780>.
+> MeCasa démarre en **simulation** avec des appareils fictifs : tu vois toute
+> l'interface avant de brancher quoi que ce soit.
+
+- **Rien à connecter pour commencer** : mode simulation intégré, sans compte Atlantic.
+- **Rien à héberger ailleurs** : un seul processus, aucune base de données, aucun Docker.
+- **Rien à payer** : gratuit, open source, sans compte en ligne ni télémétrie.
+
 ---
 
 ## Pourquoi MeCasa ?
@@ -113,38 +122,37 @@ finir en contribution.
 
 ## Démarrage rapide
 
-Une poignée de commandes et c'est prêt. Sans identifiants Atlantic, MeCasa démarre en
-**simulation** avec des appareils fictifs : on peut découvrir toute l'interface
-avant de brancher quoi que ce soit.
+Des **scripts fournis** font tout : démarrage, arrêt. Sans identifiants Atlantic,
+MeCasa démarre en **simulation** avec des appareils fictifs — on découvre toute
+l'interface avant de brancher quoi que ce soit.
 
 ### Windows
 
-```bat
-git clone https://github.com/shervet/mecasa.git
-cd mecasa
-python -m mecasa.main
-```
+1. Récupérer le dépôt (`git clone`, ou télécharger l'archive et la dézipper).
+2. Double-cliquer sur **`run.bat`**.
+3. Ouvrir <http://127.0.0.1:8780>.
 
-Puis ouvrir <http://127.0.0.1:8780>. Sans identifiants Atlantic, MeCasa démarre en
-**simulation** avec des appareils fictifs : idéal pour découvrir l'interface.
+Pour arrêter : double-cliquer sur **`stop.bat`**.
 
-### Raspberry Pi / Linux
+### Raspberry Pi / Linux / macOS
 
 ```bash
 git clone https://github.com/shervet/mecasa.git
 cd mecasa
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # facultatif : Pronote
-.venv/bin/python -m mecasa.main
+./run.sh
 ```
 
-Service systemd (démarrage auto, résistant aux coupures) :
+Pour arrêter : `./stop.sh`.
+
+Installation en service (démarrage automatique, résistant aux coupures) :
 
 ```bash
 sudo ./install-pi.sh
-sudo systemctl status mecasa
-sudo journalctl -u mecasa -f
 ```
+
+Les scripts utilisent le Python du projet (`.venv`) s'il existe, sinon celui du
+système. Si tu préfères la ligne de commande, `python -m mecasa.main` fonctionne
+aussi — voir [docs/installation.md](docs/installation.md).
 
 Guide détaillé : [docs/installation.md](docs/installation.md).
 
