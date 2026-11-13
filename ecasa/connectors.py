@@ -137,6 +137,18 @@ CONNECTORS = [
     },
 ]
 
+# Champ interne : identifiants des appareils dont le pilotage est coupé.
+# Masqué dans l'interface, il est modifié par le bouton Activer/Désactiver.
+DISABLED_DEVICES_FIELD = {
+    "key": "disabled_devices",
+    "label": "Appareils désactivés",
+    "type": "text",
+    "hidden": True,
+}
+for _item in CONNECTORS:
+    _item["fields"] = [*_item["fields"], dict(DISABLED_DEVICES_FIELD)]
+del _item
+
 # Modes eCasa ⇄ modes natifs.
 DAIKIN_MODES = {"auto": "0", "dry": "1", "cool": "2", "heat": "3", "fan": "4"}
 DAIKIN_MODES_REVERSE = {value: key for key, value in DAIKIN_MODES.items()}
@@ -195,6 +207,19 @@ def _float(value, default=None):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _disabled_ids(settings: dict) -> set[str]:
+    raw = str((settings or {}).get("disabled_devices") or "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _with_enabled(settings: dict, result: dict) -> dict:
+    disabled = _disabled_ids(settings)
+    for device in result.get("devices") or []:
+        if isinstance(device, dict):
+            device["enabled"] = str(device.get("id")) not in disabled
+    return result
 
 
 # ------------------------------------------------------------------- Daikin
@@ -840,12 +865,11 @@ def test_connector(connector_id: str, settings: dict) -> dict:
     item = connector(connector_id)
     if not item:
         return {"ok": False, "error": "Connecteur inconnu"}
-    snapshot = SNAPSHOTS.get(connector_id)
-    if snapshot is None:
+    if connector_id not in SNAPSHOTS:
         return {"ok": False, "error": "Connecteur non pris en charge"}
     values = (settings or {}).get(connector_id) or {}
     try:
-        result = snapshot(values)
+        result = snapshot(connector_id, values)
     except ValueError as err:
         return {"ok": False, "error": str(err)}
     except Exception as err:  # noqa: BLE001 - réseau
@@ -863,7 +887,8 @@ def snapshot(connector_id: str, settings: dict) -> dict:
     function = SNAPSHOTS.get(connector_id)
     if function is None:
         raise ValueError("Connecteur non pris en charge")
-    return function(settings or {})
+    settings = settings or {}
+    return _with_enabled(settings, function(settings))
 
 
 def apply_state(connector_id: str, settings: dict, device_id, mode: str,
@@ -872,4 +897,9 @@ def apply_state(connector_id: str, settings: dict, device_id, mode: str,
     function = APPLIERS.get(connector_id)
     if function is None:
         raise ValueError("Connecteur non pris en charge")
-    return function(settings or {}, device_id, mode, temp)
+    settings = settings or {}
+    if str(device_id) in _disabled_ids(settings):
+        raise ValueError(
+            "Appareil désactivé : réactive son pilotage avant d'envoyer une consigne."
+        )
+    return function(settings, device_id, mode, temp)

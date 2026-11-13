@@ -167,6 +167,27 @@ class DaikinTests(unittest.TestCase):
             connectors.daikin_snapshot({})
 
 
+class DisabledDeviceTests(unittest.TestCase):
+    """Appareils coupés depuis l'interface : marqués et non pilotables."""
+
+    def test_snapshot_marks_disabled_devices(self):
+        settings = {"host": "1.2.3.4", "disabled_devices": "aa:bb:cc"}
+        with mock.patch.object(connectors, "_http", fake_http(DAIKIN_ROUTES)):
+            result = connectors.snapshot("daikin", settings)
+        self.assertFalse(result["devices"][0]["enabled"])
+
+    def test_snapshot_keeps_other_devices_enabled(self):
+        with mock.patch.object(connectors, "_http", fake_http(DAIKIN_ROUTES)):
+            result = connectors.snapshot("daikin", {"host": "1.2.3.4"})
+        self.assertTrue(result["devices"][0]["enabled"])
+
+    def test_apply_refuses_disabled_device(self):
+        settings = {"host": "1.2.3.4", "disabled_devices": "aa:bb:cc"}
+        with self.assertRaises(ValueError) as ctx:
+            connectors.apply_state("daikin", settings, "aa:bb:cc", "heat", 20)
+        self.assertIn("désactivé", str(ctx.exception).lower())
+
+
 class MelCloudTests(unittest.TestCase):
     settings = {"email": "a@b.c", "password": "secret"}
 

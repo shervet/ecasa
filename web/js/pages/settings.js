@@ -419,6 +419,7 @@ function connectorPanels(c) {
     .map((item) => {
       const values = c.connectors?.[item.id] || {};
       const fields = (item.fields || [])
+        .filter((field) => !field.hidden)
         .map((field) => {
           const key = `${item.id}:${field.key}`;
           const hint = field.placeholder ? `Exemple : ${escapeHtml(field.placeholder)}` : "";
@@ -463,28 +464,55 @@ function connectorPanels(c) {
 }
 
 /** Ligne d'un appareil découvert sur un connecteur (mode + consigne + appliquer). */
-function connectorDeviceRow(device) {
+function connectorDeviceRow(connectorId, device) {
   const modes = ["off", "heat", "cool", "dry", "fan", "auto"];
   const currentMode = modes.includes(device.mode) ? device.mode : "heat";
+  const isOn = device.enabled !== false;
   return `<div class="list-row" data-device-row>
     <div class="li-main">
-      <span class="li-title">${escapeHtml(device.name || "Appareil")}</span>
+      <span class="li-title${isOn ? "" : " is-off"}">${escapeHtml(device.name || "Appareil")}</span>
       <span class="li-sub">${escapeHtml(modeLabel(device.mode, store.meta))} · ${fmtTemp(device.temp)} °C${
         device.ambient != null ? ` · ambiance ${fmtTemp(device.ambient)} °C` : ""
-      }${device.online === false ? " · hors ligne" : ""}</span>
+      }${device.online === false ? " · hors ligne" : ""}${isOn ? "" : " · pilotage désactivé"}</span>
     </div>
-    <div class="row wrap" style="gap:6px">
-      <select class="select" data-device-mode style="width:auto">
+    <div class="row wrap" style="gap:6px;align-items:center;justify-content:flex-end">
+      <button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-connector-toggle data-connector-id="${escapeHtml(connectorId)}" data-device-id="${escapeHtml(String(device.id))}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${icon("power", 14)}<span>${isOn ? "Désactiver" : "Activer"}</span></button>
+      <select class="select" data-device-mode style="width:auto"${isOn ? "" : " disabled"}>
         ${modes
           .map(
             (mode) => `<option value="${mode}"${mode === currentMode ? " selected" : ""}>${escapeHtml(modeLabel(mode, store.meta))}</option>`
           )
           .join("")}
       </select>
-      <input class="input" type="number" min="5" max="30" step="0.5" style="width:90px" data-device-temp value="${fmtTemp(device.temp)}">
-      <button class="btn btn-sm" type="button" data-device-apply data-device-id="${escapeHtml(String(device.id))}">${icon("check", 14)} Appliquer</button>
+      <input class="input" type="number" min="5" max="30" step="0.5" style="width:90px" data-device-temp value="${fmtTemp(device.temp)}"${isOn ? "" : " disabled"}>
+      <button class="btn btn-sm" type="button" data-device-apply data-device-id="${escapeHtml(String(device.id))}"${isOn ? "" : " disabled"}>${icon("check", 14)} Appliquer</button>
     </div>
   </div>`;
+}
+
+/** Active/désactive le pilotage d'un appareil d'un connecteur (persisté en config). */
+async function setConnectorDeviceEnabled(connectorId, deviceId, enabled) {
+  const current = (cfg().connectors || {})[connectorId] || {};
+  const ids = new Set(
+    String(current.disabled_devices || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+  if (enabled) ids.delete(String(deviceId));
+  else ids.add(String(deviceId));
+  const item = (store.meta?.connectors || []).find((entry) => entry.id === connectorId);
+  const body = {};
+  for (const field of item?.fields || []) {
+    if (field.hidden || field.secret) continue;
+    body[field.key] = current[field.key] ?? "";
+  }
+  body.disabled_devices = [...ids].join(",");
+  const payload = await put("/api/config", {
+    connectors: { [connectorId]: body },
+  });
+  store.config = payload.config;
+  return payload;
 }
 
 /** Lit les appareils d'un connecteur et branche les boutons « Appliquer ». */
@@ -497,8 +525,27 @@ async function loadConnectorDevices(connectorId, button = null) {
     const payload = await get(`/api/connectors/${encodeURIComponent(connectorId)}/devices`);
     const devices = Array.isArray(payload.devices) ? payload.devices : [];
     host.innerHTML = devices.length
-      ? devices.map(connectorDeviceRow).join("")
+      ? devices.map((device) => connectorDeviceRow(connectorId, device)).join("")
       : '<p class="hint">Aucun appareil détecté sur ce connecteur.</p>';
+    host.querySelectorAll("[data-connector-toggle]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const isOn = button.getAttribute("aria-pressed") === "true";
+        button.disabled = true;
+        try {
+          await setConnectorDeviceEnabled(
+            button.dataset.connectorId,
+            button.dataset.deviceId,
+            !isOn
+          );
+          await loadConnectorDevices(connectorId);
+          toast(!isOn ? "Pilotage activé." : "Pilotage désactivé.");
+        } catch (err) {
+          toastError(err);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
     host.querySelectorAll("[data-device-apply]").forEach((apply) => {
       apply.addEventListener("click", async () => {
         const row = apply.closest("[data-device-row]");
@@ -2103,7 +2150,7 @@ function renderDevices() {
 
   const roomName = (id) => (state.rooms || []).find((room) => Number(room.id) === Number(id))?.name;
 
-  const renderOne = (host, list, emptyText) => {
+  const renderOne = (host, list, emptyText, { withToggle = true, header = "" } = {}) => {
     if (!list.length) {
       host.innerHTML = `<div class="empty" style="padding:14px 12px">
         <span class="empty-icon">${icon("thermometer", 20)}</span>
@@ -2112,16 +2159,18 @@ function renderDevices() {
       </div>`;
       return;
     }
-    host.innerHTML = list
+    host.innerHTML = header + list
       .map((device) => {
         const isWiser = device.device_type === "wiser";
         const isOn = Number(device.enabled) !== 0;
         const room = roomName(device.room_id);
         const ambient = device.current?.ambient ?? device.current?.wiser_ambient;
+        const toggle = withToggle
+          ? `<button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-toggle-device="${device.device_id}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${icon("power", 14)}<span>${isOn ? "Désactiver" : "Activer"}</span></button>`
+          : "";
         return `<div class="settings-row">
           <div class="sr-main">
             <div class="device-line">
-              <button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-toggle-device="${device.device_id}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${icon("power", 14)}<span>${isOn ? "Désactiver" : "Activer"}</span></button>
               <span class="sr-title${isOn ? "" : " is-off"}">${escapeHtml(device.name)}</span>
               <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>
             </div>
@@ -2133,6 +2182,7 @@ function renderDevices() {
             </div>
           </div>
           <div class="sr-control">
+            ${toggle}
             <button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}">${icon("edit", 18)}</button>
             <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}">${icon("trash", 18)}</button>
           </div>
@@ -2194,7 +2244,49 @@ function renderDevices() {
     const atlanticDevices = devices.filter((d) => d.device_type !== "wiser");
     renderOne(atlanticHost, atlanticDevices, "Synchronise le compte Atlantic pour découvrir les appareils.");
   }
-  renderOne(wiserHost, wiserDevices, "Configure le Hub Wiser puis synchronise pour découvrir les zones.");
+
+  // Un seul interrupteur pour tout Wiser (les zones sont des pièces, pas des
+  // appareils à piloter séparément).
+  const wiserOn = wiserDevices.length > 0 && wiserDevices.every((d) => Number(d.enabled) !== 0);
+  const wiserHeader = wiserDevices.length
+    ? `<div class="settings-row">
+        <div class="sr-main">
+          <div class="device-line">
+            <span class="sr-title${wiserOn ? "" : " is-off"}">Wiser (toutes les pièces)</span>
+            <span class="pill pill-accent">Wiser</span>
+          </div>
+          <div class="sr-sub">${wiserDevices.length} zone${wiserDevices.length > 1 ? "s" : ""} · ${wiserOn ? "pilotage actif" : "pilotage désactivé"}</div>
+        </div>
+        <div class="sr-control">
+          <button class="btn btn-sm device-toggle${wiserOn ? " is-on" : ""}" type="button" data-toggle-wiser aria-pressed="${wiserOn}" title="${wiserOn ? "Désactiver tout Wiser" : "Activer tout Wiser"}">${icon("power", 14)}<span>${wiserOn ? "Désactiver" : "Activer"}</span></button>
+        </div>
+      </div>`
+    : "";
+  renderOne(wiserHost, wiserDevices, "Configure le Hub Wiser puis synchronise pour découvrir les zones.", {
+    withToggle: false,
+    header: wiserHeader,
+  });
+
+  wiserHost.querySelectorAll("[data-toggle-wiser]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const enable = button.getAttribute("aria-pressed") !== "true";
+      button.disabled = true;
+      try {
+        for (const device of wiserDevices) {
+          if ((Number(device.enabled) !== 0) === enable) continue;
+          await put(`/api/devices/${device.device_id}`, { enabled: enable ? 1 : 0 });
+        }
+        await refreshState({ silent: true });
+        renderDevices();
+        renderRooms();
+        toast(enable ? "Wiser activé." : "Wiser désactivé.");
+      } catch (err) {
+        toastError(err);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 
