@@ -677,7 +677,6 @@ function devicesSection() {
         <div class="row-between" style="align-items:center;gap:8px">
           <button class="btn btn-sm" type="button" id="wiserFind">${icon("wifi", 16)} Chercher le Hub</button>
         </div>
-      ${row("Activer Wiser", "Pilote aussi les zones du Hub Wiser.", toggle("wiser_enabled", Boolean(cfg_.wiser_enabled)))}
       ${textRow("Adresse du Hub", "wiser_host", cfg_.wiser_host, { placeholder: "http://192.168.1.20", sub: "Adresse IP ou nom du Hub sur le réseau local." })}
       ${row(
         "Secret du Hub",
@@ -1200,6 +1199,34 @@ function bind() {
     pronoteAuto.addEventListener("change", syncPronoteHour);
     syncPronoteHour();
   }
+
+  root.querySelectorAll("[data-brand-toggle]").forEach((input) => {
+    bindSummarySwitch(input);
+    input.onchange = async () => {
+      const key = input.dataset.brandToggle;
+      const devices = (store.state?.devices || []).filter((device) =>
+        key === "wiser" ? device.device_type === "wiser" : device.device_type !== "wiser"
+      );
+      const label = key === "wiser" ? "Wiser" : "Atlantic";
+      const enable = Boolean(input.checked);
+      input.disabled = true;
+      try {
+        for (const device of devices) {
+          if ((Number(device.enabled) !== 0) === enable) continue;
+          await put(`/api/devices/${device.device_id}`, { enabled: enable ? 1 : 0 });
+        }
+        await refreshState({ silent: true });
+        renderDevices();
+        renderRooms();
+        toast(`${label} ${enable ? "activé" : "désactivé"}.`);
+      } catch (err) {
+        toastError(err);
+        input.checked = !input.checked;
+      } finally {
+        input.disabled = false;
+      }
+    };
+  });
 
   root.querySelectorAll("[data-connector-enabled]").forEach((input) => {
     bindSummarySwitch(input);
@@ -2262,36 +2289,19 @@ function renderDevices() {
   }
   renderOne(wiserHost, wiserDevices, "Configure le Hub Wiser puis synchronise pour découvrir les zones.");
 
-  // Interrupteur unique au niveau de la marque (dans le résumé du panneau) :
-  // il coupe ou réactive d'un coup tous les appareils de ce système.
-  const bindBrand = (key, list, label) => {
-    const input = root?.querySelector(`[data-brand-toggle="${key}"]`);
-    if (!input) return;
-    const isOn = list.length > 0 && list.every((d) => Number(d.enabled) !== 0);
-    input.checked = isOn;
-    bindSummarySwitch(input);
-    input.onchange = async () => {
-      const enable = Boolean(input.checked);
-      input.disabled = true;
-      try {
-        for (const device of list) {
-          if ((Number(device.enabled) !== 0) === enable) continue;
-          await put(`/api/devices/${device.device_id}`, { enabled: enable ? 1 : 0 });
-        }
-        await refreshState({ silent: true });
-        renderDevices();
-        renderRooms();
-        toast(`${label} ${enable ? "activé" : "désactivé"}.`);
-      } catch (err) {
-        toastError(err);
-        input.checked = !input.checked;
-      } finally {
-        input.disabled = false;
-      }
-    };
-  };
-  bindBrand("atlantic", atlanticDevices, "Atlantic");
-  bindBrand("wiser", wiserDevices, "Wiser");
+  // État des interrupteurs de marque (le clic est branché une seule fois
+  // dans bind(), donc indépendant de l'arrivée de l'état).
+  const atlanticSwitch = root?.querySelector('[data-brand-toggle="atlantic"]');
+  const wiserSwitch = root?.querySelector('[data-brand-toggle="wiser"]');
+  if (atlanticSwitch) {
+    atlanticSwitch.checked =
+      atlanticDevices.length > 0 &&
+      atlanticDevices.every((d) => Number(d.enabled) !== 0);
+  }
+  if (wiserSwitch) {
+    wiserSwitch.checked =
+      wiserDevices.length > 0 && wiserDevices.every((d) => Number(d.enabled) !== 0);
+  }
 }
 
 
