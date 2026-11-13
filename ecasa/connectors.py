@@ -145,8 +145,19 @@ DISABLED_DEVICES_FIELD = {
     "type": "text",
     "hidden": True,
 }
+# Interrupteur de la marque / du modèle (panneau replié).
+ENABLED_FIELD = {
+    "key": "enabled",
+    "label": "Connecteur actif",
+    "type": "text",
+    "hidden": True,
+}
 for _item in CONNECTORS:
-    _item["fields"] = [*_item["fields"], dict(DISABLED_DEVICES_FIELD)]
+    _item["fields"] = [
+        *_item["fields"],
+        dict(DISABLED_DEVICES_FIELD),
+        dict(ENABLED_FIELD),
+    ]
 del _item
 
 # Modes eCasa ⇄ modes natifs.
@@ -214,11 +225,17 @@ def _disabled_ids(settings: dict) -> set[str]:
     return {part.strip() for part in raw.split(",") if part.strip()}
 
 
+def _connector_enabled(settings: dict) -> bool:
+    """Interrupteur global de la marque (vide ou « 1 » = actif)."""
+    return str((settings or {}).get("enabled", "1")).strip() != "0"
+
+
 def _with_enabled(settings: dict, result: dict) -> dict:
+    enabled = _connector_enabled(settings)
     disabled = _disabled_ids(settings)
     for device in result.get("devices") or []:
         if isinstance(device, dict):
-            device["enabled"] = str(device.get("id")) not in disabled
+            device["enabled"] = enabled and str(device.get("id")) not in disabled
     return result
 
 
@@ -898,6 +915,10 @@ def apply_state(connector_id: str, settings: dict, device_id, mode: str,
     if function is None:
         raise ValueError("Connecteur non pris en charge")
     settings = settings or {}
+    if not _connector_enabled(settings):
+        raise ValueError(
+            "Connecteur désactivé : réactive-le avant d'envoyer une consigne."
+        )
     if str(device_id) in _disabled_ids(settings):
         raise ValueError(
             "Appareil désactivé : réactive son pilotage avant d'envoyer une consigne."

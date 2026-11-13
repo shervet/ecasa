@@ -2459,6 +2459,21 @@ svg {
   flex: none;
 }
 
+/* Résumé de panneau : titre à gauche, interrupteur de marque à droite. */
+.summary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summary-row .summary-switch {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .sr-title.is-off {
   color: var(--muted);
   font-weight: 550;
