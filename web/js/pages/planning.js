@@ -627,7 +627,7 @@ function paintRooms() {
     html += '<div class="room-plan-head">';
     html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
     html += deviceSelect;
-    html += '<button class="btn btn-sm btn-danger" type="button" data-clear-room="' + t.id + '">' + icon("trash", 14) + ' Vider cette pièce</button>';
+    html += '<button class="btn btn-sm btn-danger btn-icon" type="button" data-clear-room="' + t.id + '" title="Vider cette pièce" aria-label="Vider cette pièce">' + icon("trash", 14) + '</button>';
     html += '</div>';
     html += '<div class="room-plan-model-row">';
     html += modelSelect;

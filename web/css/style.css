@@ -2478,6 +2478,30 @@ svg {
   cursor: not-allowed;
 }
 
+/* Marque / système désactivé : tous ses réglages sont grisés et inertes. */
+details.is-locked > :not(summary) {
+  opacity: .45;
+  filter: grayscale(.85);
+  pointer-events: none;
+  user-select: none;
+}
+
+.room-target[data-goto-room] {
+  cursor: pointer;
+  border-radius: var(--r-xs);
+}
+
+.room-target[data-goto-room]:hover,
+.room-target[data-goto-room]:focus-visible {
+  background: var(--surface-2);
+}
+
+.btn-icon {
+  padding: 0;
+  width: 32px;
+  justify-content: center;
+}
+
 /* Résumé de panneau : titre à gauche, interrupteur de marque à droite. */
 .summary-row {
   display: flex;

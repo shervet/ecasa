@@ -187,11 +187,18 @@ class DisabledDeviceTests(unittest.TestCase):
             connectors.apply_state("daikin", settings, "aa:bb:cc", "heat", 20)
         self.assertIn("désactivé", str(ctx.exception).lower())
 
-    def test_snapshot_marks_every_device_disabled_for_a_disabled_brand(self):
+    def test_disabled_brand_makes_no_network_call(self):
         settings = {"host": "1.2.3.4", "enabled": "0"}
-        with mock.patch.object(connectors, "_http", fake_http(DAIKIN_ROUTES)):
+
+        def boom(*args, **kwargs):
+            raise AssertionError("aucun appel API attendu")
+
+        with mock.patch.object(connectors, "_http", boom):
             result = connectors.snapshot("daikin", settings)
-        self.assertFalse(result["devices"][0]["enabled"])
+            test = connectors.test_connector("daikin", {"daikin": settings})
+        self.assertEqual(result["devices"], [])
+        self.assertFalse(test["ok"])
+        self.assertIn("désactivé", test["error"])
 
     def test_apply_refuses_disabled_brand(self):
         settings = {"host": "1.2.3.4", "enabled": "0"}

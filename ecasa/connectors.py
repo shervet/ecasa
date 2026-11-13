@@ -885,6 +885,8 @@ def test_connector(connector_id: str, settings: dict) -> dict:
     if connector_id not in SNAPSHOTS:
         return {"ok": False, "error": "Connecteur non pris en charge"}
     values = (settings or {}).get(connector_id) or {}
+    if not _connector_enabled(values):
+        return {"ok": False, "error": f"{item['label']} est désactivé : réactive-le pour le tester."}
     try:
         result = snapshot(connector_id, values)
     except ValueError as err:
@@ -905,6 +907,9 @@ def snapshot(connector_id: str, settings: dict) -> dict:
     if function is None:
         raise ValueError("Connecteur non pris en charge")
     settings = settings or {}
+    if not _connector_enabled(settings):
+        # Système désactivé : aucun appel vers son API.
+        return {"ok": True, "devices": [], "disabled": True}
     return _with_enabled(settings, function(settings))
 
 

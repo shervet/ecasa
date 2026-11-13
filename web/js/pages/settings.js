@@ -1250,12 +1250,12 @@ function bind() {
         const devicesHost = root.querySelector(
           `[data-connector-devices="${input.dataset.connectorEnabled}"]`
         );
-        devicesHost?.querySelectorAll("[data-device-row]").forEach((rowEl) => {
-          rowEl.classList.toggle("is-off-row", !enabled);
-          rowEl.querySelectorAll("input, select, button").forEach((node) => {
-            node.disabled = !enabled;
-          });
-        });
+        if (devicesHost) {
+          devicesHost.innerHTML = enabled
+            ? '<p class="hint">Clique sur Synchroniser pour lister les appareils.</p>'
+            : '<p class="hint">Système désactivé : eCasa n\'interroge plus ce système.</p>';
+        }
+        syncBrandLocks();
         toast(enabled ? "Système activé." : "Système désactivé.");
       } catch (err) {
         toastError(err);
@@ -2313,6 +2313,38 @@ function renderDevices() {
   if (wiserSwitch) {
     wiserSwitch.checked =
       wiserDevices.length > 0 && wiserDevices.every((d) => Number(d.enabled) !== 0);
+  }
+  syncBrandLocks();
+}
+
+/** Ferme une marque/un système : ses réglages (URL, identifiants…) ne sont plus accessibles. */
+function setPanelLocked(details, locked) {
+  if (!details) return;
+  details.classList.toggle("is-locked", locked);
+  for (const child of details.children) {
+    if (child.tagName === "SUMMARY") continue;
+    child.inert = locked;
+  }
+}
+
+function syncBrandLocks() {
+  const devices = store.state?.devices || [];
+  const allOff = (list) => list.length > 0 && list.every((d) => Number(d.enabled) === 0);
+  setPanelLocked(
+    root?.querySelector("#sec-atlantic")?.closest("details"),
+    allOff(devices.filter((d) => d.device_type !== "wiser"))
+  );
+  setPanelLocked(
+    root?.querySelector("#sec-wiser")?.closest("details"),
+    allOff(devices.filter((d) => d.device_type === "wiser"))
+  );
+  for (const item of store.meta?.connectors || []) {
+    const values = (store.config?.connectors || {})[item.id] || {};
+    const off = String(values.enabled ?? "1") === "0";
+    setPanelLocked(
+      root?.querySelector(`[data-connector-devices="${item.id}"]`)?.closest("details"),
+      off
+    );
   }
 }
 

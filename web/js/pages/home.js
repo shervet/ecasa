@@ -2,6 +2,7 @@
 
 import { icon, modeIcon, weatherIconName } from "../icons.js";
 import { openDeviceSheet } from "../components/device-sheet.js";
+import { setPendingPlanningRoom } from "./planning.js";
 import { applyNow, refreshState, roomSummary, store } from "../state.js";
 
 let weather = null;
@@ -273,7 +274,7 @@ function paintRooms() {
           <div class="room-temp">
             <span class="value">${fmtTemp(summary.ambient)}</span><span class="unit">°C</span>
           </div>
-          <div class="room-target">
+          <div class="room-target" data-goto-room="${room.id}" role="button" tabindex="0" title="Ouvrir le planning de cette pièce">
             Consigne
             <strong>${fmtTemp(summary.target)} °C</strong>
             ${summary.until ? `jusqu'à ${fmtTime(summary.until)}` : next ? `${inWords(next.in_minutes)} → ${fmtTemp(next.temp)} °C` : "planning"}
@@ -304,6 +305,21 @@ function paintRooms() {
 
   host.querySelectorAll("[data-device]").forEach((button) => {
     button.addEventListener("click", () => openDeviceSheet(button.dataset.device));
+  });
+
+  host.querySelectorAll("[data-goto-room]").forEach((target) => {
+    const go = () => {
+      const roomId = Number(target.dataset.gotoRoom);
+      setPendingPlanningRoom(roomId);
+      location.hash = `#/planning/room:${roomId}`;
+    };
+    target.addEventListener("click", go);
+    target.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        go();
+      }
+    });
   });
 }
 
