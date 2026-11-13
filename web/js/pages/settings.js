@@ -486,7 +486,7 @@ function connectorPanels(c) {
       const badge = badgeLabel
         ? ` <span class="${badgeClass}" style="margin-left:6px">${badgeLabel}</span>`
         : "";
-      return `<details class="stack" style="margin-top:18px">
+      return `<details class="stack brand-panel" style="margin-top:18px">
         <summary class="card-title summary-row" style="cursor:pointer">${icon("hub", 16)} ${escapeHtml(item.label)}${badge}<span class="summary-switch">${deviceSwitch(`data-connector-enabled="${escapeHtml(item.id)}"`, enabled, enabled ? "Désactiver ce système" : "Activer ce système")}</span></summary>
         <p class="hint" style="margin-top:8px">${escapeHtml(item.description || "")}</p>
         ${fields}
@@ -612,7 +612,7 @@ function devicesSection() {
     "thermometer",
     `<p class="hint">Les appareils sont découverts depuis Atlantic (Cozytouch) ou le Hub Wiser. Tu peux les renommer, les affecter à une pièce et couper leur pilotage. Chaque système garde ses propres réglages et sa liste d'appareils.</p>
 
-    <details class="stack" style="gap:14px" open>
+    <details class="stack brand-panel" style="gap:14px" open>
       <summary class="card-title summary-row" style="cursor:pointer">${icon("thermometer", 16)} Cozytouch / Atlantic<span class="summary-switch">${deviceSwitch('data-brand-toggle="atlantic"', true, "Désactiver tout Atlantic")}</span></summary>
       <div id="sec-atlantic" class="stack" style="gap:14px;margin-top:8px">
         <h3 class="card-title" style="margin-top:6px;display:none">Cozytouch / Atlantic</h3>
@@ -680,7 +680,7 @@ function devicesSection() {
       </div>
     </details>
 
-    <details class="stack" style="margin-top:18px">
+    <details class="stack brand-panel" style="margin-top:18px">
       <summary class="card-title summary-row" style="cursor:pointer">${icon("hub", 16)} Schneider Wiser<span class="summary-switch">${deviceSwitch('data-brand-toggle="wiser"', true, "Désactiver tout Wiser")}</span></summary>
       <div id="sec-wiser" class="stack" style="gap:14px;margin-top:8px">
         <div class="row-between" style="align-items:center;gap:8px">

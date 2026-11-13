@@ -2478,10 +2478,19 @@ svg {
   cursor: not-allowed;
 }
 
-/* Marque / système désactivé : tous ses réglages sont grisés et inertes. */
-details.is-locked > :not(summary) {
+/* Marque / système désactivé : tout le panneau (titre compris) est grisé et
+   inerte, sauf l'interrupteur de réactivation. */
+details.brand-panel.is-locked {
   opacity: .45;
   filter: grayscale(.85);
+}
+
+details.brand-panel.is-locked .summary-switch {
+  opacity: 1;
+  filter: none;
+}
+
+details.brand-panel.is-locked > :not(summary) {
   pointer-events: none;
   user-select: none;
 }
