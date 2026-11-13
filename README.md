@@ -3,12 +3,14 @@
 **Le chauffage et la climatisation de la maison, pilotés localement, sans cloud et sans usure de carte SD.**
 
 eCasa est une application web auto-hébergée qui gère le chauffage (Atlantic / Cozytouch,
-Schneider Wiser) et la climatisation, avec un planning hebdomadaire, des semaines A/B,
-un import **Pronote** natif et un moteur qui applique tout seul les bonnes consignes.
+Schneider Wiser) et la climatisation, ainsi que des thermostats et climatiseurs tiers
+(Daikin, Bosch Smart Home, Netatmo, Mitsubishi MELCloud), avec un planning hebdomadaire,
+des semaines A/B, un import **Pronote** natif et un moteur qui applique tout seul les
+bonnes consignes.
 
 [![Licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](https://www.python.org/)
-[![Sans dépendance](https://img.shields.io/badge/d%C3%A9pendances-biblioth%C3%A8que%20standard-success.svg)](requirements.txt)
+[![Sans dépendance](https://img.shields.io/badge/d%C3%A9pendances-stdlib%20%2B%202%20optionnelles-success.svg)](requirements.txt)
 [![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8.svg)](docs/installation.md)
 
 > **Essayer en 2 minutes, sans matériel.** Windows : double-clique sur **`run.bat`**.
@@ -24,7 +26,8 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 
 ## Pourquoi eCasa ?
 
-- **Léger** : un seul processus Python, bibliothèque standard uniquement. Pas de Docker,
+- **Léger** : un seul processus Python, bibliothèque standard (deux paquets
+  *optionnels* : Pronote et génération du certificat Bosch). Pas de Docker,
   pas de base de données, pas de npm. Tourne très bien sur un Raspberry Pi zéro/3/4.
 - **Écrit pour durer** : tout l'état vit en RAM, le disque n'est écrit que par lots
   (snapshot débouncé + historique horaire append-only). La carte SD ne s'use pas.
@@ -34,7 +37,7 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 - **Sobre et sûr** : aucune télémétrie, aucun compte en ligne, CSP stricte, secrets
   jamais renvoyés au navigateur, administration limitée à la machine locale par défaut.
 - **Utilisable au quotidien** : interface mobile-first installable (PWA), thème clair/sombre,
-  application Android en préparation.
+  application Android native (coque WebView + VPN Tailscale intégré).
 - **Simple à installer et à prendre en main** : deux commandes, aucune dépendance à
   installer, aucun build, aucun compte à créer. L'interface se comprend en quelques
   minutes, sans jargon ni formation.
@@ -53,7 +56,7 @@ un import **Pronote** natif et un moteur qui applique tout seul les bonnes consi
 | **Statistiques** | Ambiance / consigne / extérieur, consommation électrique Enedis multi-années. |
 | **Journal** | Événements filtrables, recherche, export JSON. |
 | **Sauvegarde** | Export/import complet de l'état et des réglages. |
-| **Accès distant** | Tailscale intégré (HTTPS, MagicDNS) et application Android (à venir). |
+| **Accès distant** | Tailscale intégré (HTTPS, MagicDNS) et application Android (APK signé, accès direct avec VPN Tailscale). |
 
 ## eCasa, Home Assistant et Jeedom
 
@@ -65,7 +68,7 @@ web, sans rapport avec le pilotage thermique.)
 | --- | --- | --- | --- |
 | Installation | Python + `python -m ecasa.main` | OS/Docker, assistant complet | LAMP/Docker + plugins |
 | Empreinte | Quelques dizaines de Mo de RAM | 1 à 2 Go de RAM | Plusieurs centaines de Mo |
-| Dépendances | Bibliothèque standard | Nombreuses intégrations | Plugins tiers (parfois payants) |
+| Dépendances | Standard + 2 paquets optionnels | Nombreuses intégrations | Plugins tiers (parfois payants) |
 | Pronote | **Natif** (planning → chauffage) | Intégration communautaire | Plugin tiers |
 | Semaines A/B + garde alternée | **Natif** | À construire soi-même | À construire soi-même |
 | Wiser / Atlantic | **Natif** (hub local + Cozytouch) | Intégrations | Plugins |
@@ -113,10 +116,9 @@ finir en contribution.
 
 ## Feuille de route
 
-- **Application Android** : une application native d'**accès direct à l'app**, en
-  complément de la PWA actuelle — ouverture instantanée de eCasa, notification
-  quand le planning Pronote a été mis à jour, forçage du chauffage en un geste,
-  alertes de l'état de la maison.
+- **Application Android** : APK signé (coque WebView + VPN Tailscale intégré) —
+  distribution des mises à jour, notification quand le planning Pronote a changé et
+  forçage du chauffage depuis une notification.
 - **Nouveaux connecteurs** d'appareils et de systèmes (voir les suggestions ci-dessus).
 - **Export du planning** au format iCal/ICS pour les agendas du téléphone.
 - **Mode hors ligne** de l'interface (consultation du planning sans réseau).
@@ -208,8 +210,8 @@ Voir [SECURITY.md](SECURITY.md) pour signaler une vulnérabilité.
 Les contributions sont bienvenues : corrections, traductions, documentation, tests sur
 matériel réel. Lire [CONTRIBUTING.md](CONTRIBUTING.md) avant d'ouvrir une pull request.
 
-Tu as une idée d'évolution — nouvel appareil, nouvelle intégration, application
-Android, encore plus de simplicité ? **Ouvre une discussion** : les suggestions sont
+Tu as une idée d'évolution — nouvel appareil, nouvelle intégration,
+encore plus de simplicité ? **Ouvre une discussion** : les suggestions sont
 les bienvenues, et chaque proposition est étudiée avant d'être codée.
 
 ```bash
