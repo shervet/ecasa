@@ -3074,6 +3074,7 @@ class Handler(BaseHTTPRequestHandler):
                 with _config_lock:
                     _config_cache = dict(config)
                 app.engine.tick(force=True)
+            app.store.flush(force=True)
             self._json(200, {"settings": settings})
             return
 
@@ -3087,6 +3088,7 @@ class Handler(BaseHTTPRequestHandler):
             if not device:
                 self._json(404, {"error": "Appareil inconnu"})
                 return
+            app.store.flush(force=True)
             self._json(200, {"device": device})
             return
 
@@ -3096,6 +3098,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             app.store.delete_device(int(match.group(1)))
             app.store.log("info", "Appareil retiré")
+            app.store.flush(force=True)
             self._json(200, {"ok": True})
             return
 
