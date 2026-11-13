@@ -1,7 +1,7 @@
-"""Relance des services externes au redémarrage de MeCasa.
+"""Relance des services externes au redémarrage de eCasa.
 
-MeCasa ne sait pas ce qui tourne à côté de lui. Au redémarrage, on tente donc
-de relancer, sans jamais bloquer ni faire échouer MeCasa :
+eCasa ne sait pas ce qui tourne à côté de lui. Au redémarrage, on tente donc
+de relancer, sans jamais bloquer ni faire échouer eCasa :
 
 - les processus gérés par pm2 (``pm2 restart all``) ;
 - les unités systemd dont la commande est un binaire Node ;
@@ -125,7 +125,7 @@ def find_node_units(dirs: list[Path] | None = None) -> list[dict]:
             if not is_node:
                 continue
             name = path.name
-            if name == "mecasa.service" or name in units:
+            if name == "ecasa.service" or name in units:
                 continue
             units[name] = {"unit": name, "user": base == user_dir}
     return list(units.values())

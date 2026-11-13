@@ -1,5 +1,5 @@
 /* ==========================================================================
-   MeCasa — design system
+   eCasa — design system
    Palette chaleureuse, mobile-first, clair/sombre, sans dépendance externe.
    ========================================================================== */
 
@@ -2429,6 +2429,37 @@ svg {
   gap: 16px;
   padding: 12px 0;
   border-bottom: 1px solid var(--line);
+}
+
+/* Bouton Activer/Désactiver collé au nom de l'appareil. */
+.device-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.device-toggle {
+  flex: none;
+  font-weight: 650;
+}
+
+.device-toggle.is-on {
+  color: var(--muted);
+}
+
+.device-toggle:disabled {
+  opacity: .6;
+}
+
+.sr-title.is-off {
+  color: var(--muted);
+  font-weight: 550;
+}
+
+.li-title.is-off {
+  color: var(--muted);
+  font-weight: 550;
 }
 
 .settings-row:last-child {

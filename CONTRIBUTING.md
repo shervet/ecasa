@@ -1,4 +1,4 @@
-# Contribuer à MeCasa
+# Contribuer à eCasa
 
 Merci ! Les contributions sont bienvenues : corrections de bugs, documentation,
 traductions, tests sur matériel réel, nouvelles ressources.
@@ -12,7 +12,7 @@ traductions, tests sur matériel réel, nouvelles ressources.
 
 ## Ce projet est écrit avec l'aide d'une IA
 
-Le code, les tests et la documentation de MeCasa sont produits avec l'aide d'une
+Le code, les tests et la documentation de eCasa sont produits avec l'aide d'une
 intelligence artificielle, sous la supervision d'un humain. Les contributions sont
 relues et testées comme n'importe quelle autre : **lisibilité, tests et simplicité
 d'usage** sont les trois critères de validation.
@@ -29,14 +29,14 @@ Ouvre une discussion : la proposition est étudiée avant d'être codée.
 ## Environnement
 
 ```bash
-git clone https://github.com/shervet/mecasa.git
-cd mecasa
+git clone https://github.com/shervet/ecasa.git
+cd ecasa
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m mecasa.main
+.venv/bin/python -m ecasa.main
 ```
 
-Sans identifiants Atlantic, MeCasa démarre en simulation : pas besoin de matériel
+Sans identifiants Atlantic, eCasa démarre en simulation : pas besoin de matériel
 pour développer l'interface.
 
 ## Tests

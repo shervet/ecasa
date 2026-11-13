@@ -1,6 +1,6 @@
 # Équipements
 
-MeCasa pilote deux familles d'appareils, regroupés en **pièces** :
+eCasa pilote deux familles d'appareils, regroupés en **pièces** :
 
 - **Atlantic / Cozytouch** : chauffage et climatisation via le cloud Atlantic.
 - **Schneider Wiser** : thermostats via la passerelle locale.
@@ -15,7 +15,7 @@ entière. Plusieurs appareils peuvent être associés à la même pièce.
 Renseigner dans **Réglages → Serveur** (ou `config.json`) l'email et le mot de passe
 du compte Cozytouch, puis **Tester la connexion**.
 
-Sans identifiants, MeCasa démarre en **simulation** : appareils fictifs, interface
+Sans identifiants, eCasa démarre en **simulation** : appareils fictifs, interface
 complète, aucune écriture réelle. Pratique pour découvrir l'outil ou développer.
 
 ### Modes et consignes
@@ -31,7 +31,7 @@ Selon les capacités exposées par l'appareil :
 | `fan` | Ventilation seule. |
 | `auto` | Régulation automatique si l'appareil le permet. |
 
-MeCasa applique la consigne du créneau de planning en cours (confort ou réduit) et
+eCasa applique la consigne du créneau de planning en cours (confort ou réduit) et
 respecte les capacités réelles de l'appareil : une consigne hors plage est bornée.
 
 ### Climatisation : soufflerie et orientation
@@ -50,13 +50,13 @@ de mode (certaines télécommandes les réinitialisent).
 ### Forçages temporaires
 
 Depuis l'accueil ou la feuille d'un appareil : choisir un mode et une consigne, puis
-une durée. MeCasa applique le forçage immédiatement et **reprend le planning
+une durée. eCasa applique le forçage immédiatement et **reprend le planning
 automatiquement** à l'échéance. Un forçage peut être annulé à tout moment.
 
 ### Confirmation des ordres
 
 Les ordres Atlantic passent par le cloud : la confirmation peut prendre de quelques
-secondes à une minute. Si elle n'arrive pas dans la fenêtre d'attente, MeCasa conserve
+secondes à une minute. Si elle n'arrive pas dans la fenêtre d'attente, eCasa conserve
 l'état demandé et journalise un **avertissement** (niveau `avertissement`, pas une
 erreur) : l'ordre est généralement appliqué avec du retard.
 
@@ -69,8 +69,8 @@ erreur) : l'ordre est généralement appliqué avec du retard.
 
 ### Import des plannings
 
-MeCasa lit les plannings Wiser (par pièce et par jour) et peut les importer dans son
-propre planning. L'import convertit les points de consigne Wiser en créneaux MeCasa et
+eCasa lit les plannings Wiser (par pièce et par jour) et peut les importer dans son
+propre planning. L'import convertit les points de consigne Wiser en créneaux eCasa et
 **remplace le planning de l'appareil pour les semaines choisies** (A, B ou les deux).
 
 ## Autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi)

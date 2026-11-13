@@ -187,7 +187,7 @@ class EnergyService:
         headers = {
             "Authorization": token,
             "Accept": "application/json",
-            "User-Agent": "MeCasa/1.0 (consommation electrique locale)",
+            "User-Agent": "eCasa/1.0 (consommation electrique locale)",
         }
         quoted_pdl = urllib.parse.quote(pdl, safe="")
         url = (

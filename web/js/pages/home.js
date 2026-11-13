@@ -122,7 +122,7 @@ function paintHero() {
     .sort((a, b) => Number(a.next.in_minutes) - Number(b.next.in_minutes));
   const next = nextChanges[0];
 
-  const title = average !== null ? `La maison est à ${fmtTemp(average)} °C` : "Bienvenue dans MeCasa";
+  const title = average !== null ? `La maison est à ${fmtTemp(average)} °C` : "Bienvenue dans eCasa";
   const subtitle = next
     ? `Prochain changement ${inWords(next.next.in_minutes)} pour ${next.name} : ${next.next.describe || "—"}.`
     : "Aucun changement prévu dans les prochaines heures. Le planning veille.";
@@ -235,7 +235,7 @@ function paintStrip() {
     host.innerHTML = `${icon("check", 17)}<span>${escapeHtml(action)}</span>`;
     return;
   }
-  host.innerHTML = `${icon("info", 17)}<span>MeCasa applique le planning automatiquement. Dernière synchronisation ${state.status?.last_poll ? fmtTime(state.status.last_poll) : "à venir"}.</span>`;
+  host.innerHTML = `${icon("info", 17)}<span>eCasa applique le planning automatiquement. Dernière synchronisation ${state.status?.last_poll ? fmtTime(state.status.last_poll) : "à venir"}.</span>`;
 }
 
 function paintRooms() {
@@ -333,7 +333,7 @@ function paintOther() {
         .map(
           (device) => `<div class="list-row">
             <div class="li-main">
-              <div class="li-title">${escapeHtml(device.name)}</div>
+              <div class="li-title${Number(device.enabled) === 0 ? " is-off" : ""}">${escapeHtml(device.name)}</div>
               <div class="li-sub">${fmtTemp(device.current?.ambient)} °C · ${escapeHtml(modeLabel(device.desired?.mode || device.current?.mode, store.meta))}</div>
             </div>
             <button class="btn btn-sm" type="button" data-device="${device.device_id}">${icon("sliders", 15)} Régler</button>

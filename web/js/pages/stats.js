@@ -207,7 +207,7 @@ async function load() {
     host.innerHTML = `<div class="empty card">
       <span class="empty-icon">${icon("chart", 24)}</span>
       <strong>Aucune donnée à afficher</strong>
-      <p>Ajoute un appareil à une pièce et laisse MeCasa relever les températures.</p>
+      <p>Ajoute un appareil à une pièce et laisse eCasa relever les températures.</p>
     </div>`;
     return;
   }

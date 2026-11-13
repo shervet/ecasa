@@ -15,7 +15,7 @@ mentionnant le problème dans une discussion privée.
 
 Elements à préciser :
 
-- version de MeCasa (`GET /api/system` → `app.version`) et plateforme ;
+- version de eCasa (`GET /api/system` → `app.version`) et plateforme ;
 - étapes de reproduction ;
 - impact attendu ;
 - journal anonymisé si utile (sans identifiant ni secret).
@@ -26,7 +26,7 @@ Advisory**.
 
 ## Périmètre de sécurité
 
-MeCasa est un serveur **local** : pas de compte, pas de cloud, pas de télémétrie.
+eCasa est un serveur **local** : pas de compte, pas de cloud, pas de télémétrie.
 
 - Les routes d'administration (`/api/config`, `/api/settings`, `/api/pronote/*`,
   `/api/control/*`, `/api/tailscale/*`, import/export) sont **refusées depuis le
@@ -39,7 +39,7 @@ MeCasa est un serveur **local** : pas de compte, pas de cloud, pas de télémét
 
 ## Bonnes pratiques côté déploiement
 
-- Ne pas exposer MeCasa directement sur Internet : passer par **Tailscale** ou un
+- Ne pas exposer eCasa directement sur Internet : passer par **Tailscale** ou un
   reverse proxy avec authentification.
 - Garder `allow_remote_admin` à `false` sauf réseau de confiance.
 - Mettre à jour régulièrement le système hôte et Python.

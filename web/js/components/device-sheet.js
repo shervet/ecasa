@@ -32,7 +32,7 @@ const DURATIONS = [
 
 function modelOptionsDevice() {
   try {
-    const saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]");
+    const saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]");
     if (!Array.isArray(saved)) return "";
     return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
   } catch {
@@ -272,7 +272,7 @@ export function openDeviceSheet(deviceId) {
     const idx = Number(select?.value);
     if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
     let saved = [];
-    try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+    try { saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { saved = []; }
     const m = saved[idx];
     if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
     if (!confirm(`Appliquer le modèle « ${m.name} » à ${device.name} ?`)) return;

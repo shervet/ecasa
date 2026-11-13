@@ -7,7 +7,7 @@ Toutes les routes renvoient du JSON. Le serveur écoute sur `http://<hôte>:<por
 
 - Les routes **sensibles** (réglages, Pronote, Tailscale, arrêt/redémarrage, import)
   sont réservées à la machine locale, sauf si `allow_remote_admin` est activé.
-- Aucune authentification par jeton : MeCasa est prévu pour un réseau de confiance
+- Aucune authentification par jeton : eCasa est prévu pour un réseau de confiance
   (maison) ou un accès via Tailscale.
 - Les secrets ne sont jamais renvoyés : seulement des booléens `*_set`.
 
@@ -59,7 +59,7 @@ résultat identique à l'aperçu.
 | GET | `/api/wiser/find` | Cherche le hub sur le réseau. |
 | GET | `/api/wiser/schedules` | Liste les plannings disponibles. |
 | GET | `/api/wiser/schedule/{id}` | Planning d'un appareil. |
-| POST | `/api/wiser/import` | Importe dans MeCasa. |
+| POST | `/api/wiser/import` | Importe dans eCasa. |
 
 ## Connecteurs (Daikin, Bosch, Netatmo, Mitsubishi)
 

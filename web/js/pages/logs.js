@@ -123,7 +123,7 @@ export default {
       try {
         const payload = await del("/api/logs");
         await refreshState({ silent: false });
-        try { localStorage.setItem("mecasa.seenErrorCount", "0"); } catch {}
+        try { localStorage.setItem("ecasa.seenErrorCount", "0"); } catch {}
         render();
         const cleared = Number(payload?.cleared ?? count);
         const clearedLabel = `évènement${cleared > 1 ? "s" : ""}`;
@@ -152,7 +152,7 @@ export default {
 function markErrorsSeen() {
   const errors = (store.state?.logs || []).filter((entry) => entry.level === "erreur").length;
   try {
-    localStorage.setItem("mecasa.seenErrorCount", String(errors));
+    localStorage.setItem("ecasa.seenErrorCount", String(errors));
   } catch {
     /* ignore */
   }
@@ -285,7 +285,7 @@ function download() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `mecasa-journal-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `ecasa-journal-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.append(link);
     link.click();
     link.remove();

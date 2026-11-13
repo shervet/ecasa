@@ -16,32 +16,32 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mecasa import main  # noqa: E402
+from ecasa import main  # noqa: E402
 
 
 STATUS_JSON = {
     "BackendState": "Running",
     "TailscaleIPs": ["100.64.0.10"],
     "Self": {
-        "DNSName": "mecasa.tailnet-abcd.ts.net.",
-        "HostName": "mecasa",
+        "DNSName": "ecasa.tailnet-abcd.ts.net.",
+        "HostName": "ecasa",
         "TailscaleIPs": ["100.64.0.10"],
     },
     "CurrentTailnet": {
         "MagicDNSSuffix": "tailnet-abcd.ts.net",
         "MagicDNSEnabled": True,
     },
-    "CertDomains": ["mecasa.tailnet-abcd.ts.net"],
+    "CertDomains": ["ecasa.tailnet-abcd.ts.net"],
     "Health": [],
 }
 
 SERVE_JSON = {
     "Web": {
-        "mecasa.tailnet-abcd.ts.net:443": {
+        "ecasa.tailnet-abcd.ts.net:443": {
             "Handlers": {"/": {"Proxy": "http://127.0.0.1:8780"}},
         },
     },
-    "AllowFunnel": {"mecasa.tailnet-abcd.ts.net:443": False},
+    "AllowFunnel": {"ecasa.tailnet-abcd.ts.net:443": False},
 }
 
 
@@ -73,12 +73,12 @@ class SummarizeServeTests(unittest.TestCase):
         self.assertEqual(result["serve_target"], "http://127.0.0.1:8780")
         self.assertEqual(result["serve_path"], "/")
         self.assertEqual(result["serve_https_port"], 443)
-        self.assertEqual(result["serve_url"], "https://mecasa.tailnet-abcd.ts.net/")
+        self.assertEqual(result["serve_url"], "https://ecasa.tailnet-abcd.ts.net/")
 
     def test_mauvaise_cible_signalee(self):
         payload = {
             "Web": {
-                "mecasa.tailnet-abcd.ts.net:443": {
+                "ecasa.tailnet-abcd.ts.net:443": {
                     "Handlers": {"/": {"Proxy": "http://127.0.0.1:9000"}},
                 },
             },
@@ -90,10 +90,10 @@ class SummarizeServeTests(unittest.TestCase):
     def test_prefere_racine_https_443(self):
         payload = {
             "Web": {
-                "mecasa.tailnet-abcd.ts.net:8443": {
+                "ecasa.tailnet-abcd.ts.net:8443": {
                     "Handlers": {"/": {"Proxy": "http://127.0.0.1:8780"}},
                 },
-                "mecasa.tailnet-abcd.ts.net:443": {
+                "ecasa.tailnet-abcd.ts.net:443": {
                     "Handlers": {"/": {"Proxy": "http://127.0.0.1:8780"}},
                 },
             },
@@ -121,12 +121,12 @@ class StatusTests(unittest.TestCase):
             "status --json": (0, json.dumps(STATUS_JSON), ""),
             "serve status --json": (0, json.dumps(SERVE_JSON), ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
         self.assertTrue(status["installed"])
         self.assertTrue(status["running"])
-        self.assertEqual(status["dns_name"], "mecasa.tailnet-abcd.ts.net")
-        self.assertEqual(status["https_url"], "https://mecasa.tailnet-abcd.ts.net/")
+        self.assertEqual(status["dns_name"], "ecasa.tailnet-abcd.ts.net")
+        self.assertEqual(status["https_url"], "https://ecasa.tailnet-abcd.ts.net/")
         self.assertTrue(status["magic_dns_enabled"])
         self.assertEqual(status["magic_dns_suffix"], "tailnet-abcd.ts.net")
         self.assertTrue(status["https_ready"])
@@ -142,7 +142,7 @@ class StatusTests(unittest.TestCase):
             "status --json": (0, json.dumps(data), ""),
             "serve status --json": (0, json.dumps(SERVE_JSON), ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
         self.assertFalse(status["https_ready"])
         self.assertFalse(status["serve_ok"])
@@ -156,7 +156,7 @@ class StatusTests(unittest.TestCase):
             "serve status --json": (0, "", ""),
             "serve status": (0, "No serve config", ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
         self.assertFalse(status["serve_active"])
         self.assertFalse(status["serve_ok"])
@@ -166,19 +166,19 @@ class StatusTests(unittest.TestCase):
         responses = {
             "status --json": (0, json.dumps(STATUS_JSON), ""),
             "serve status --json": (0, "", ""),
-            "serve status": (0, "https://mecasa.tailnet-abcd.ts.net (tailnet only)", ""),
+            "serve status": (0, "https://ecasa.tailnet-abcd.ts.net (tailnet only)", ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
         self.assertTrue(status["serve_active"])
-        self.assertEqual(status["serve_url"], "https://mecasa.tailnet-abcd.ts.net/")
+        self.assertEqual(status["serve_url"], "https://ecasa.tailnet-abcd.ts.net/")
 
     def test_hote_local_injoignable(self):
         responses = {
             "status --json": (0, json.dumps(STATUS_JSON), ""),
             "serve status --json": (0, json.dumps(SERVE_JSON), ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="192.168.1.10")
         self.assertIn("0.0.0.0", " | ".join(status["warnings"]))
 
@@ -190,7 +190,7 @@ class StatusTests(unittest.TestCase):
             "serve status --json": (127, "", ""),
             "serve status": (127, "", ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
         self.assertFalse(status["installed"])
         self.assertFalse(status["running"])
@@ -199,10 +199,10 @@ class StatusTests(unittest.TestCase):
 
     def test_conflit_de_nom_par_un_service(self):
         data = json.loads(json.dumps(STATUS_JSON))
-        data["Self"]["DNSName"] = "mecasa-1.tailnet-abcd.ts.net."
+        data["Self"]["DNSName"] = "ecasa-1.tailnet-abcd.ts.net."
         data["Self"]["CapMap"] = {
-            "services/mecasa": [{
-                "Name": "svc:mecasa",
+            "services/ecasa": [{
+                "Name": "svc:ecasa",
                 "Addrs": ["100.91.75.7"],
                 "Ports": ["tcp:8790"],
             }],
@@ -211,9 +211,9 @@ class StatusTests(unittest.TestCase):
             "status --json": (0, json.dumps(data), ""),
             "serve status --json": (0, json.dumps(SERVE_JSON), ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
-        self.assertEqual(status["services"][0]["name"], "svc:mecasa")
+        self.assertEqual(status["services"][0]["name"], "svc:ecasa")
         self.assertEqual(status["services"][0]["addrs"], ["100.91.75.7"])
         detail = " | ".join(status["warnings"])
         self.assertIn("Service Tailscale", detail)
@@ -224,14 +224,14 @@ class StatusTests(unittest.TestCase):
         data = {
             "BackendState": "NeedsLogin",
             "AuthURL": "https://login.tailscale.com/a/abc123",
-            "Self": {"HostName": "mecasa", "TailscaleIPs": []},
+            "Self": {"HostName": "ecasa", "TailscaleIPs": []},
         }
         responses = {
             "status --json": (0, json.dumps(data), ""),
             "serve status --json": (1, "", ""),
             "serve status": (1, "", ""),
         }
-        status = self.status(responses, port=8780, hostname="mecasa",
+        status = self.status(responses, port=8780, hostname="ecasa",
                              local_host="0.0.0.0")
         self.assertFalse(status["running"])
         self.assertEqual(status["auth_url"], "https://login.tailscale.com/a/abc123")
@@ -240,7 +240,7 @@ class StatusTests(unittest.TestCase):
 class BinaryTests(unittest.TestCase):
     def test_chemin_explicite(self):
         with mock.patch.dict(
-            main.os.environ, {"MECASA_TAILSCALE_BIN": r"C:\Tools\tailscale.exe"},
+            main.os.environ, {"ECASA_TAILSCALE_BIN": r"C:\Tools\tailscale.exe"},
         ), mock.patch.object(
             main, "load_config", return_value={},
         ), mock.patch.object(
@@ -254,7 +254,7 @@ class BinaryTests(unittest.TestCase):
 
     def test_detection_automatique_dans_le_path(self):
         with mock.patch.dict(
-            main.os.environ, {"MECASA_TAILSCALE_BIN": ""},
+            main.os.environ, {"ECASA_TAILSCALE_BIN": ""},
         ), mock.patch.object(
             main, "load_config", return_value={},
         ), mock.patch.object(
@@ -266,7 +266,7 @@ class BinaryTests(unittest.TestCase):
 
     def test_absent(self):
         with mock.patch.dict(
-            main.os.environ, {"MECASA_TAILSCALE_BIN": ""},
+            main.os.environ, {"ECASA_TAILSCALE_BIN": ""},
         ), mock.patch.object(
             main, "load_config", return_value={},
         ), mock.patch.object(
@@ -293,12 +293,12 @@ class StartupTests(unittest.TestCase):
         config = {
             "tailscale_enabled": True,
             "tailscale_auto_serve": True,
-            "tailscale_hostname": "mecasa",
+            "tailscale_hostname": "ecasa",
             "tailscale_authkey": "",
             "port": 8780,
             "host": "0.0.0.0",
         }
-        status = {"running": True, "https_url": "https://mecasa.ts.net/"}
+        status = {"running": True, "https_url": "https://ecasa.ts.net/"}
         with mock.patch.object(
             main, "get_tailscale_status", return_value=status,
         ), mock.patch.object(
@@ -307,14 +307,14 @@ class StartupTests(unittest.TestCase):
             result = main.apply_tailscale_startup(config)
         serve.assert_called_once_with(8780)
         self.assertTrue(result["attempted"])
-        self.assertEqual(result["url"], "https://mecasa.ts.net/")
+        self.assertEqual(result["url"], "https://ecasa.ts.net/")
         self.assertEqual(result["errors"], [])
 
     def test_renomme_noeud_connecte(self):
         config = {
             "tailscale_enabled": True,
             "tailscale_auto_serve": False,
-            "tailscale_hostname": "mecasa",
+            "tailscale_hostname": "ecasa",
             "tailscale_authkey": "",
             "port": 8780,
             "host": "0.0.0.0",
@@ -326,14 +326,14 @@ class StartupTests(unittest.TestCase):
             main, "tailscale_up", return_value={"ok": True},
         ) as up:
             result = main.apply_tailscale_startup(config)
-        up.assert_called_once_with("", hostname="mecasa")
+        up.assert_called_once_with("", hostname="ecasa")
         self.assertEqual(result["errors"], [])
 
     def test_connexion_sans_cle_signalee(self):
         config = {
             "tailscale_enabled": True,
             "tailscale_auto_serve": False,
-            "tailscale_hostname": "mecasa",
+            "tailscale_hostname": "ecasa",
             "tailscale_authkey": "",
             "port": 8780,
             "host": "0.0.0.0",
@@ -348,27 +348,27 @@ class StartupTests(unittest.TestCase):
 
 class UpTests(unittest.TestCase):
     def test_nom_deja_pris_signale(self):
-        responses = {"up --hostname=mecasa --accept-routes=false": (0, "", "")}
+        responses = {"up --hostname=ecasa --accept-routes=false": (0, "", "")}
         with mock.patch.object(
             main, "_tailscale_cmd", side_effect=fake_cmd(responses),
         ), mock.patch.object(
             main, "get_tailscale_status",
-            return_value={"dns_name": "mecasa-1.tailnet-abcd.ts.net"},
+            return_value={"dns_name": "ecasa-1.tailnet-abcd.ts.net"},
         ):
-            result = main.tailscale_up("", hostname="mecasa")
+            result = main.tailscale_up("", hostname="ecasa")
         self.assertTrue(result["ok"])
-        self.assertIn("mecasa-1", result["warning"])
+        self.assertIn("ecasa-1", result["warning"])
         self.assertIn("déjà pris", result["warning"])
 
     def test_nom_correct_sans_avertissement(self):
-        responses = {"up --hostname=mecasa --accept-routes=false": (0, "", "")}
+        responses = {"up --hostname=ecasa --accept-routes=false": (0, "", "")}
         with mock.patch.object(
             main, "_tailscale_cmd", side_effect=fake_cmd(responses),
         ), mock.patch.object(
             main, "get_tailscale_status",
-            return_value={"dns_name": "mecasa.tailnet-abcd.ts.net"},
+            return_value={"dns_name": "ecasa.tailnet-abcd.ts.net"},
         ):
-            result = main.tailscale_up("", hostname="mecasa")
+            result = main.tailscale_up("", hostname="ecasa")
         self.assertTrue(result["ok"])
         self.assertNotIn("warning", result)
 

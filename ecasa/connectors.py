@@ -112,7 +112,7 @@ CONNECTORS = [
     },
 ]
 
-# Modes MeCasa ⇄ modes natifs.
+# Modes eCasa ⇄ modes natifs.
 DAIKIN_MODES = {"auto": "0", "dry": "1", "cool": "2", "heat": "3", "fan": "4"}
 DAIKIN_MODES_REVERSE = {value: key for key, value in DAIKIN_MODES.items()}
 MELCLOUD_MODES = {"heat": 1, "dry": 2, "cool": 3, "fan": 7, "auto": 8}

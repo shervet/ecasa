@@ -1,10 +1,10 @@
-"""Stockage MeCasa : tout en mémoire, écritures disque minimales.
+"""Stockage eCasa : tout en mémoire, écritures disque minimales.
 
 Pourquoi ce module ?
 --------------------
 Le projet d'origine ouvrait SQLite à chaque opération. Sur une carte SD de
 Raspberry Pi, cela représente des milliers d'écritures par jour (mesures,
-journal, réglages). MeCasa renverse le modèle :
+journal, réglages). eCasa renverse le modèle :
 
 * l'état complet vit en RAM (dict Python) ;
 * les **réglages, pièces, appareils, plannings et événements** sont écrits dans
@@ -121,7 +121,7 @@ class MemoryStore:
 
         if self.state_path or self.history_dir:
             self._thread = threading.Thread(
-                target=self._writer_loop, name="mecasa-storage", daemon=True
+                target=self._writer_loop, name="ecasa-storage", daemon=True
             )
             self._thread.start()
 

@@ -1,6 +1,6 @@
-﻿/* Service worker MeCasa : coquille en cache, API toujours en rÃ©seau. */
+/* Service worker eCasa : coquille en cache, API toujours en réseau. */
 
-const VERSION = "mecasa-v77";
+const VERSION = "ecasa-v78";
 const SHELL = [
   "/",
   "/index.html",
@@ -52,12 +52,12 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // L'API ne doit jamais Ãªtre servie depuis le cache.
+  // L'API ne doit jamais être servie depuis le cache.
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(request).catch(
         () =>
-          new Response(JSON.stringify({ error: "Hors ligne : le serveur MeCasa est injoignable." }), {
+          new Response(JSON.stringify({ error: "Hors ligne : le serveur eCasa est injoignable." }), {
             status: 503,
             headers: { "Content-Type": "application/json; charset=utf-8" },
           })
@@ -66,7 +66,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation : rÃ©seau d'abord, coquille en secours.
+  // Navigation : réseau d'abord, coquille en secours.
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request)
@@ -80,7 +80,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Statique : rÃ©seau d'abord, cache en secours (Ã©vite de servir du JS pÃ©rimÃ©).
+  // Statique : réseau d'abord, cache en secours (évite de servir du JS périmé).
   event.respondWith(
     fetch(request)
       .then((response) => {

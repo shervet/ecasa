@@ -4,8 +4,8 @@
 
 | Symptôme | Cause | Solution |
 | --- | --- | --- |
-| « Serveur injoignable » | Le processus ne tourne pas | `python -m mecasa.main` et vérifier le port : `netstat -ano \| findstr 8780` (Windows), `ss -ltnp \| grep 8780` (Linux). |
-| Page blanche / interface absente | Fichiers web manquants | Vérifier que le dossier `web/` est présent à côté de `mecasa/`. |
+| « Serveur injoignable » | Le processus ne tourne pas | `python -m ecasa.main` et vérifier le port : `netstat -ano \| findstr 8780` (Windows), `ss -ltnp \| grep 8780` (Linux). |
+| Page blanche / interface absente | Fichiers web manquants | Vérifier que le dossier `web/` est présent à côté de `ecasa/`. |
 | Inaccessible depuis le téléphone | `host` sur `127.0.0.1` | Passer `host` à `0.0.0.0` dans Réglages → Serveur, puis redémarrer. |
 | 403 sur les routes de réglage depuis le réseau | Administration distante désactivée | Activer `allow_remote_admin` (réseau de confiance) ou passer par Tailscale. |
 | Port déjà utilisé | Autre service | Changer `port` et mettre à jour la publication Tailscale. |
@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | Mode simulation inattendu | Aucun identifiant Atlantic | Réglages → Serveur : saisir l'email et le mot de passe, puis redémarrer. |
 | « Authentification refusée » | Identifiants Atlantic | Vérifier sur l'application Atlantic officielle avant de réessayer. |
-| Appareil sans capabilities | Télécommande limitée | L'appareil n'expose pas la capacité : MeCasa ne force rien. |
+| Appareil sans capabilities | Télécommande limitée | L'appareil n'expose pas la capacité : eCasa ne force rien. |
 | Wiser introuvable | Hub hors réseau | Vérifier que le hub est joignable, puis « Chercher sur le réseau ». |
 | Wiser en erreur de clé | Clé locale expirée | Reprendre la clé dans l'application Wiser et la ressaisir. |
 
@@ -59,7 +59,7 @@
 | `HTTPS is not enabled in your tailnet` | Étape MagicDNS/HTTPS incomplète | Activer HTTPS Certificates, attendre 30 s, Actualiser, Publier. |
 | `502` / `connection refused` | Mauvaise adresse d'écoute | `host` = `0.0.0.0` ou `127.0.0.1`, republier avec le bon port. |
 | Le nom MagicDNS ne résout pas | MagicDNS désactivé | Activer MagicDNS dans la console Tailscale. |
-| `mecasa-1` au lieu de `mecasa` | Nom réservé | Supprimer l'ancien nœud ou le Service Tailscale, puis `tailscale up --hostname=mecasa`. |
+| `ecasa-1` au lieu de `ecasa` | Nom réservé | Supprimer l'ancien nœud ou le Service Tailscale, puis `tailscale up --hostname=ecasa`. |
 
 ## Consommation électrique
 
@@ -71,7 +71,7 @@
 
 ## Obtenir de l'aide
 
-1. Consulter la page **Journal** de MeCasa et exporter les événements (`/api/logs`).
+1. Consulter la page **Journal** de eCasa et exporter les événements (`/api/logs`).
 2. Vérifier la version : `GET /api/system` → `app.version`.
 3. Ouvrir une issue avec la version, la plateforme (Windows/Linux/Pi), l'extrait de
    journal **anonymisé** (aucun mot de passe, aucun identifiant).

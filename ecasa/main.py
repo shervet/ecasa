@@ -1,7 +1,7 @@
-"""Serveur HTTP local MeCasa + API JSON.
+"""Serveur HTTP local eCasa + API JSON.
 
 Lancement :
-    python -m mecasa.main
+    python -m ecasa.main
 
 L'interface est servie sur http://127.0.0.1:8780 par défaut. Tous les fichiers
 web sont chargés en mémoire au démarrage : une requête ne touche jamais la
@@ -61,7 +61,7 @@ from .storage import MemoryStore, dumps
 from .weather import WeatherError, WeatherService
 from .wiser import MockWiserClient, WiserClient, WiserError
 
-APP_NAME = "MeCasa"
+APP_NAME = "eCasa"
 START_TS = time.time()
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -129,8 +129,8 @@ DEFAULT_CONFIG = {
     "med_start": "",
     "tailscale_enabled": False,
     "tailscale_auto_serve": False,
-    # Nom du nœud dans le tailnet : l'app Android résout mecasa.<tailnet>.ts.net.
-    "tailscale_hostname": "mecasa",
+    # Nom du nœud dans le tailnet : l'app Android résout ecasa.<tailnet>.ts.net.
+    "tailscale_hostname": "ecasa",
     # Chemin du binaire si `tailscale` n'est pas dans le PATH (ex. Windows).
     "tailscale_bin": "",
     "tailscale_authkey": "",
@@ -398,7 +398,7 @@ def public_config(config: dict) -> dict:
         "med_token_set": bool(config.get("med_token")),
         "tailscale_enabled": bool(config.get("tailscale_enabled", False)),
         "tailscale_auto_serve": bool(config.get("tailscale_auto_serve", False)),
-        "tailscale_hostname": str(config.get("tailscale_hostname") or "mecasa"),
+        "tailscale_hostname": str(config.get("tailscale_hostname") or "ecasa"),
         "tailscale_bin": str(config.get("tailscale_bin") or ""),
         "tailscale_authkey_set": bool(config.get("tailscale_authkey")),
         "state_file": str(config.get("state_file", "data/state.json")),
@@ -704,7 +704,7 @@ def save_config(body: dict) -> tuple[dict, bool]:
     if "tailscale_hostname" in body:
         hostname = str(body.get("tailscale_hostname") or "").strip().lower()
         if not hostname:
-            hostname = "mecasa"
+            hostname = "ecasa"
         if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", hostname):
             raise ValueError(
                 "Nom Tailscale invalide (lettres minuscules, chiffres et tirets)"
@@ -1354,7 +1354,7 @@ class DailySync:
 
     L'électricité part à 3 h ; le planning Pronote à l'heure réglée dans
     Réglages → Pronote (3 h par défaut), et seulement si la mise à jour
-    automatique est activée. Si MeCasa démarre après l'heure prévue, le
+    automatique est activée. Si eCasa démarre après l'heure prévue, le
     rattrapage se fait immédiatement, sauf si la tâche a déjà été tentée ce
     jour-là (état persisté dans ``data/sync.json``). Il n'y a donc jamais deux
     synchros automatiques le même jour, même après plusieurs redémarrages.
@@ -1411,10 +1411,10 @@ def tailscale_binary() -> str | None:
 
     Sur Windows, l'installateur ne modifie pas le PATH : le binaire vit dans
     ``C:\\Program Files\\Tailscale``. On accepte aussi une valeur explicite
-    (variable ``MECASA_TAILSCALE_BIN`` ou réglage ``tailscale_bin``).
+    (variable ``ECASA_TAILSCALE_BIN`` ou réglage ``tailscale_bin``).
     """
     candidates: list[str] = []
-    env = os.environ.get("MECASA_TAILSCALE_BIN", "").strip()
+    env = os.environ.get("ECASA_TAILSCALE_BIN", "").strip()
     if env:
         candidates.append(env)
     try:
@@ -1617,10 +1617,10 @@ def tailscale_checks(status: dict, hostname: str | None = None,
     if local_host is not None:
         reachable = str(local_host) in ("0.0.0.0", "::", "", "127.0.0.1",
                                         "::1", "localhost")
-        add(reachable, "MeCasa écoute sur 127.0.0.1",
+        add(reachable, "eCasa écoute sur 127.0.0.1",
             "" if reachable
-            else "Règle « host » sur 0.0.0.0 pour que tailscale serve atteigne MeCasa")
-    add(bool(status.get("serve_ok")), "MeCasa publié en HTTPS",
+            else "Règle « host » sur 0.0.0.0 pour que tailscale serve atteigne eCasa")
+    add(bool(status.get("serve_ok")), "eCasa publié en HTTPS",
         "" if status.get("serve_ok")
         else "Publie avec le bouton « Publier » (tailscale serve)")
     return checks
@@ -1685,7 +1685,7 @@ def get_tailscale_status(port: int | None = None,
         auth_url = str(data.get("AuthURL") or "").strip()
         status["auth_url"] = auth_url or None
         # Services Tailscale dont ce nœud est proxy : leur nom MagicDNS peut
-        # réserver celui du nœud (ex. un Service « mecasa » bloque « mecasa »).
+        # réserver celui du nœud (ex. un Service « ecasa » bloque « ecasa »).
         services: list[dict] = []
         cap_map = self_info.get("CapMap") or {}
         if isinstance(cap_map, dict):
@@ -1836,9 +1836,9 @@ def tailscale_uninstall() -> dict:
 
 
 def apply_tailscale_startup(config: dict) -> dict:
-    """Au démarrage : connecte le nœud et publie MeCasa si demandé.
+    """Au démarrage : connecte le nœud et publie eCasa si demandé.
 
-    Ne lève jamais : une erreur Tailscale ne doit pas empêcher MeCasa de
+    Ne lève jamais : une erreur Tailscale ne doit pas empêcher eCasa de
     démarrer. Les messages sont renvoyés pour affichage dans la console.
     """
     result = {"attempted": False, "up": None, "serve": None,
@@ -1850,7 +1850,7 @@ def apply_tailscale_startup(config: dict) -> dict:
 
     result["attempted"] = True
     port = int(config.get("port", 8780))
-    hostname = str(config.get("tailscale_hostname") or "mecasa").strip() or "mecasa"
+    hostname = str(config.get("tailscale_hostname") or "ecasa").strip() or "ecasa"
     authkey = str(config.get("tailscale_authkey") or "").strip()
 
     try:
@@ -2199,9 +2199,9 @@ class Handler(BaseHTTPRequestHandler):
                 thread.join(timeout=20)
             if restart:
                 # Un redémarrage doit aussi remettre à jour les services qui
-                # tournent à côté de MeCasa (pm2, unités systemd Node,
+                # tournent à côté de eCasa (pm2, unités systemd Node,
                 # MyElectricalData local). Les erreurs sont seulement
-                # journalisées : MeCasa doit redémarrer dans tous les cas.
+                # journalisées : eCasa doit redémarrer dans tous les cas.
                 try:
                     results = restart_external_services(load_config())
                 except Exception as err:  # noqa: BLE001
@@ -2543,7 +2543,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/tailscale/status":
             try:
                 cfg = load_config()
-                hostname = str(cfg.get("tailscale_hostname") or "mecasa")
+                hostname = str(cfg.get("tailscale_hostname") or "ecasa")
                 status = get_tailscale_status(
                     int(cfg.get("port", 8780)), hostname, cfg.get("host"),
                 )
@@ -2561,7 +2561,7 @@ class Handler(BaseHTTPRequestHandler):
                 port = int(cfg.get("port", 8780))
                 result = tailscale_serve_enable(port)
                 status = get_tailscale_status(
-                    port, str(cfg.get("tailscale_hostname") or "mecasa"),
+                    port, str(cfg.get("tailscale_hostname") or "ecasa"),
                     cfg.get("host"),
                 )
                 result["url"] = status.get("https_url") or status.get("serve_url")
@@ -2595,7 +2595,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._body()
                 cfg = load_config()
                 authkey = str(body.get("authkey") or cfg.get("tailscale_authkey") or "").strip()
-                hostname = str(cfg.get("tailscale_hostname") or "mecasa")
+                hostname = str(cfg.get("tailscale_hostname") or "ecasa")
                 status = get_tailscale_status(
                     int(cfg.get("port", 8780)), hostname, cfg.get("host"),
                 )
@@ -3266,7 +3266,7 @@ def test_cozytouch_login(body: dict) -> dict:
 def spawn_restart() -> None:
     """Relance le serveur dans un processus détaché (Linux et Windows)."""
     env = dict(os.environ)
-    env["MECASA_START_DELAY"] = "3"
+    env["ECASA_START_DELAY"] = "3"
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     kwargs: dict = {"cwd": str(ROOT), "env": env, "close_fds": True}
     if os.name == "nt":
@@ -3282,7 +3282,7 @@ def spawn_restart() -> None:
         kwargs["stderr"] = subprocess.DEVNULL
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen([sys.executable, "-m", "mecasa.main"], **kwargs)
+    subprocess.Popen([sys.executable, "-m", "ecasa.main"], **kwargs)
 
 
 class Server(ThreadingHTTPServer):
@@ -3312,7 +3312,7 @@ def main() -> None:
         pass
 
     try:
-        start_delay = float(os.environ.get("MECASA_START_DELAY", "0") or 0)
+        start_delay = float(os.environ.get("ECASA_START_DELAY", "0") or 0)
     except ValueError:
         start_delay = 0.0
     if start_delay > 0:

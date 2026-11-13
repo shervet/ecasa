@@ -97,7 +97,7 @@ configurations.
 | --- | --- | --- |
 | `tailscale_enabled` | `false` | Connecte le nœud au démarrage. |
 | `tailscale_auto_serve` | `false` | Publie le service HTTPS au démarrage. |
-| `tailscale_hostname` | `mecasa` | Nom du nœud dans le tailnet. |
+| `tailscale_hostname` | `ecasa` | Nom du nœud dans le tailnet. |
 | `tailscale_bin` | vide | Chemin du binaire si absent du `PATH`. |
 | `tailscale_authkey` | vide | Clé d'authentification (optionnelle). |
 

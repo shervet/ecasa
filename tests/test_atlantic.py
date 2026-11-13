@@ -10,7 +10,7 @@ import json
 import unittest
 from unittest import mock
 
-from mecasa.atlantic import AtlanticClient, AtlanticError, ExecutionTimeout
+from ecasa.atlantic import AtlanticClient, AtlanticError, ExecutionTimeout
 
 
 def client_with_states(states, status=200):
@@ -67,7 +67,7 @@ class AwaitExecutionTests(unittest.TestCase):
 
         client._request = fake_request
         # On neutralise l'attente : seul le comportement compte ici.
-        with mock.patch("mecasa.atlantic.time.sleep"):
+        with mock.patch("ecasa.atlantic.time.sleep"):
             with self.assertRaises(ExecutionTimeout):
                 client.write_capability(1, 40, "19")
 

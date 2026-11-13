@@ -3,7 +3,7 @@
 import unittest
 from unittest import mock
 
-from mecasa.wiser import WiserClient
+from ecasa.wiser import WiserClient
 
 
 class WiserClientTests(unittest.TestCase):

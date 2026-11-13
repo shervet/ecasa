@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Installe MeCasa comme service systemd sur un Raspberry Pi (Debian/Raspbian).
+# Installe eCasa comme service systemd sur un Raspberry Pi (Debian/Raspbian).
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_USER="${SUDO_USER:-${USER}}"
-SERVICE_NAME="mecasa"
+SERVICE_NAME="ecasa"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Ce script a besoin de sudo : sudo ./install-pi.sh" >&2
@@ -39,13 +39,13 @@ if [ ! -f "$APP_DIR/config.json" ]; then
 fi
 
 sed -e "s|__USER__|$RUN_USER|g" -e "s|__DIR__|$APP_DIR|g" \
-    "$APP_DIR/systemd/mecasa.service" > "/etc/systemd/system/$SERVICE_NAME.service"
+    "$APP_DIR/systemd/ecasa.service" > "/etc/systemd/system/$SERVICE_NAME.service"
 
 systemctl daemon-reload
 systemctl enable --now "$SERVICE_NAME"
 
 echo ""
-echo "✓ MeCasa est démarré."
+echo "✓ eCasa est démarré."
 echo "  Journal    : sudo journalctl -u $SERVICE_NAME -f"
 echo "  Réglages   : http://$(hostname -I | awk '{print $1}'):8780"
 echo "  Config     : $APP_DIR/config.json"

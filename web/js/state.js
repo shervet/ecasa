@@ -37,7 +37,7 @@ function emit(reason) {
     try {
       fn(store, reason);
     } catch (err) {
-      console.error("[mecasa] listener", err);
+      console.error("[ecasa] listener", err);
     }
   }
 }

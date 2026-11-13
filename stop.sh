@@ -1,17 +1,17 @@
 #!/usr/bin/env sh
-# Arrete MeCasa et les services lies (Raspberry Pi, Linux, macOS).
+# Arrete eCasa et les services lies (Raspberry Pi, Linux, macOS).
 set -u
 cd "$(dirname "$0")"
 
-echo "Arret de MeCasa..."
+echo "Arret de eCasa..."
 # Service systemd
 if command -v systemctl >/dev/null 2>&1; then
-    sudo systemctl stop mecasa 2>/dev/null || true
+    sudo systemctl stop ecasa 2>/dev/null || true
 fi
 
-# Processus python mecasa.main restants
-pkill -f "mecasa.main" 2>/dev/null || true
-pkill -f "python.*mecasa" 2>/dev/null || true
+# Processus python ecasa.main restants
+pkill -f "ecasa.main" 2>/dev/null || true
+pkill -f "python.*ecasa" 2>/dev/null || true
 
 echo "Arret de pm2..."
 if command -v pm2 >/dev/null 2>&1; then

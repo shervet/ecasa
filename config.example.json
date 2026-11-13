@@ -39,7 +39,7 @@
   "med_start": "",
   "tailscale_enabled": false,
   "tailscale_auto_serve": false,
-  "tailscale_hostname": "mecasa",
+  "tailscale_hostname": "ecasa",
   "tailscale_bin": "",
   "tailscale_authkey": "",
   "state_file": "data/state.json",

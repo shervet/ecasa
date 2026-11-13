@@ -1,5 +1,5 @@
-# Arret de MeCasa et des services lies (Windows).
-$procs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*mecasa.main*' }
+# Arret de eCasa et des services lies (Windows).
+$procs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ecasa.main*' }
 foreach ($p in $procs) {
     Write-Host "Arret du processus $($p.ProcessId) ($($p.Name))"
     Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue

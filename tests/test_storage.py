@@ -1,4 +1,4 @@
-"""Tests du stockage MeCasa : persistance, rechargement, mesures, journal."""
+"""Tests du stockage eCasa : persistance, rechargement, mesures, journal."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mecasa.storage import MemoryStore  # noqa: E402
+from ecasa.storage import MemoryStore  # noqa: E402
 
 
 def week_days(template: dict | None = None, days=(0, 4)) -> list[list[dict]]:
@@ -62,7 +62,7 @@ class PersistenceTests(StoreTestCase):
         store.set_slots(device_id=42, week="B", days=week_days({"mode": "cool", "temp": 24}))
         store.set_week_override("2026-11-02", "B")
         store.set_override(42, "cool", 23.5, datetime(2026, 11, 6, 18, 0, 0))
-        store.log("info", "Démarrage MeCasa")
+        store.log("info", "Démarrage eCasa")
         store.close()
         self.assertTrue(os.path.isfile(self.state_path))
 
@@ -88,7 +88,7 @@ class PersistenceTests(StoreTestCase):
 
         events = reloaded.events()
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["message"], "Démarrage MeCasa")
+        self.assertEqual(events[0]["message"], "Démarrage eCasa")
 
     def test_state_written_only_when_dirty(self):
         store = self.make_store()

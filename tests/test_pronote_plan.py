@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mecasa import pronote  # noqa: E402
+from ecasa import pronote  # noqa: E402
 
 
 def lesson(weekday, start, end):

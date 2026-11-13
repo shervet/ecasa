@@ -271,7 +271,7 @@ export function describeSlot(slot, meta) {
 
 export function readPref(key, fallback = null) {
   try {
-    const raw = localStorage.getItem(`mecasa.${key}`);
+    const raw = localStorage.getItem(`ecasa.${key}`);
     return raw === null ? fallback : JSON.parse(raw);
   } catch {
     return fallback;
@@ -280,7 +280,7 @@ export function readPref(key, fallback = null) {
 
 export function writePref(key, value) {
   try {
-    localStorage.setItem(`mecasa.${key}`, JSON.stringify(value));
+    localStorage.setItem(`ecasa.${key}`, JSON.stringify(value));
   } catch {
     /* stockage plein ou navigation privée : on ignore */
   }

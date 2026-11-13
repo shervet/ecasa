@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mecasa import external_services, main  # noqa: E402
-from mecasa.energy import cache_ttl, next_sync_time  # noqa: E402
-from mecasa.storage import MemoryStore  # noqa: E402
+from ecasa import external_services, main  # noqa: E402
+from ecasa.energy import cache_ttl, next_sync_time  # noqa: E402
+from ecasa.storage import MemoryStore  # noqa: E402
 
 
 class SyncTimeTests(unittest.TestCase):
@@ -553,7 +553,7 @@ class ExternalServicesTests(unittest.TestCase):
         self.assertFalse(external_services.decide_node_exec(""))
 
     def test_med_container_matching(self):
-        names = ["myelectricaldata", "med", "med-api", "nginx", "mecasa"]
+        names = ["myelectricaldata", "med", "med-api", "nginx", "ecasa"]
         self.assertEqual(
             external_services.matching_med_containers(names),
             ["myelectricaldata", "med", "med-api"],

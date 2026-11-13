@@ -1,8 +1,8 @@
 @echo off
-rem Arrete MeCasa et les services lies (Windows).
+rem Arrete eCasa et les services lies (Windows).
 cd /d "%~dp0"
 
-echo Arret de MeCasa et des services lies...
+echo Arret de eCasa et des services lies...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop.ps1"
 
 echo.

@@ -1,6 +1,6 @@
 # Dons et financement
 
-MeCasa est gratuit, sans publicité, sans compte en ligne et sans télémétrie. Si l'outil
+eCasa est gratuit, sans publicité, sans compte en ligne et sans télémétrie. Si l'outil
 te rend service, un don ponctuel ou récurrent finance le matériel de test (Atlantic,
 Wiser, Pi) et le temps de développement.
 
@@ -91,14 +91,14 @@ les liens projet). Aucun code n'est à modifier ailleurs.
 2. Créer un **Payment Link** (montant libre ou fixe, paiement en une fois).
 3. Reporter l'URL dans `donateUrl`.
 4. Les frais sont ceux de Stripe (≈ 1,5 % + 0,25 € pour une carte UE) : aucun
-   pourcentage prélevé par MeCasa.
+   pourcentage prélevé par eCasa.
 
 ## Transparence
 
 - Annonce ce que les dons financent (matériel, impression 3D, nom de domaine, hébergement
   du dépôt, app Android).
 - Publie les comptes si tu les connais.
-- N'impose jamais un don : toutes les fonctions de MeCasa restent gratuites.
+- N'impose jamais un don : toutes les fonctions de eCasa restent gratuites.
 - Un don ne donne aucun accès privilégié à une fonctionnalité.
 
 ## Fiscalité et obligations (France)
@@ -113,7 +113,7 @@ les liens projet). Aucun code n'est à modifier ailleurs.
 
 ## Reçu et remerciement
 
-MeCasa n'émet pas de reçu. Le reçu est généré par la plateforme (HelloAsso pour une
+eCasa n'émet pas de reçu. Le reçu est généré par la plateforme (HelloAsso pour une
 association, sinon aucun reçu n'est fourni). Pour Thank You Pages (Ko-fi,
 Buy Me a Coffee), l'emoji de remerciement peut être personnalisé pour rappeler le
 projet.

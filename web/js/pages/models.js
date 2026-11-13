@@ -22,7 +22,7 @@ import {
 
 // Les modèles sont conservés dans le navigateur, au format historique
 // { name, days: { A: [7 × créneaux], B: [7 × créneaux] } }.
-const STORAGE_KEY = "mecasa.weekModels";
+const STORAGE_KEY = "ecasa.weekModels";
 const WEEKS = ["A", "B"];
 
 let root = null;

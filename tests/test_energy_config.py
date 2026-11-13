@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mecasa import main  # noqa: E402
-from mecasa.energy import MAX_HISTORY_DAYS  # noqa: E402
+from ecasa import main  # noqa: E402
+from ecasa.energy import MAX_HISTORY_DAYS  # noqa: E402
 
 TODAY = date.today()
 

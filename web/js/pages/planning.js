@@ -604,7 +604,7 @@ function paintRooms() {
 
     // model select
     let savedModels = [];
-    try { savedModels = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { savedModels = []; }
+    try { savedModels = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { savedModels = []; }
     let modelSelect = '<select class="select plan-model-select" data-target="' + t.id + '" style="width:auto;min-width:150px"><option value="">— modèle —</option>';
     for (let i = 0; i < savedModels.length; i++) {
       const sel = String(i) === String(selVal) ? " selected" : "";
@@ -730,7 +730,7 @@ function paintRooms() {
       const idx = Number(sel?.value);
       if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
       let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      try { saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { saved = []; }
       const m = saved[idx];
       if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
       if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;
@@ -1452,7 +1452,7 @@ function openWiserSheet() {
             )
             .join("")}
         </div>
-        <p class="hint">L'import remplace les créneaux MeCasa de la semaine ${week} pour cette zone.</p>
+        <p class="hint">L'import remplace les créneaux eCasa de la semaine ${week} pour cette zone.</p>
       `;
       importButton.disabled = false;
     } catch (err) {

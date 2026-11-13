@@ -9,14 +9,14 @@ Capacites Cozytouch utilisees :
 import unittest
 from datetime import datetime
 
-from mecasa.atlantic import AtlanticError, ExecutionTimeout
-from mecasa.engine import (
+from ecasa.atlantic import AtlanticError, ExecutionTimeout
+from ecasa.engine import (
     AIRFLOW_POSITIONS,
     FAN_VALUES,
     Engine,
     detect_caps,
 )
-from mecasa.storage import MemoryStore
+from ecasa.storage import MemoryStore
 
 DEVICE_ID = 28129468
 

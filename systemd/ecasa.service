@@ -1,5 +1,5 @@
 [Unit]
-Description=MeCasa — pilotage thermique local
+Description=eCasa — pilotage thermique local
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +10,7 @@ Group=__USER__
 WorkingDirectory=__DIR__
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=__DIR__/.venv/bin/python -m mecasa.main
+ExecStart=__DIR__/.venv/bin/python -m ecasa.main
 Restart=always
 RestartSec=5
 TimeoutStopSec=25

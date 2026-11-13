@@ -3,9 +3,9 @@
 // Laisser vide pour masquer le bouton (le reste du bloc reste affiché).
 
 export const SITE = {
-  repo: "https://github.com/shervet/mecasa",
-  docs: "https://github.com/shervet/mecasa/tree/main/docs",
-  issues: "https://github.com/shervet/mecasa/issues",
+  repo: "https://github.com/shervet/ecasa",
+  docs: "https://github.com/shervet/ecasa/tree/main/docs",
+  issues: "https://github.com/shervet/ecasa/issues",
   // Exemples : "https://github.com/sponsors/shervet",
   //            "https://liberapay.com/shervet",
   //            "https://donate.stripe.com/xxxxxxxx"

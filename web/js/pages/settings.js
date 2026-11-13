@@ -202,7 +202,7 @@ export default {
           ${energySection()}
           ${supportSection()}
           <p class="hint">
-            MeCasa ${escapeHtml(store.system?.app?.version || "")} · les secrets ne sont jamais renvoyés à l'interface.
+            eCasa ${escapeHtml(store.system?.app?.version || "")} · les secrets ne sont jamais renvoyés à l'interface.
           </p>
         </div>
       </div>
@@ -265,7 +265,7 @@ function appearanceSection() {
     )}
     ${row(
       "Installer sur l'écran d'accueil",
-      "MeCasa s'ajoute comme une application, sans passer par un store.",
+      "eCasa s'ajoute comme une application, sans passer par un store.",
       `<button class="btn btn-sm" type="button" id="installHelp">${icon("install", 15)} Comment faire</button>`
     )}
     ${row(
@@ -286,7 +286,7 @@ function engineSection() {
     "gauge",
     `${row(
       "Moteur actif",
-      "Quand il est en pause, MeCasa ne change plus les consignes tout seul.",
+      "Quand il est en pause, eCasa ne change plus les consignes tout seul.",
       toggle("engine_enabled", enabled)
     )}
     ${selectRow(
@@ -334,7 +334,7 @@ function climateSection() {
         ["high", "Haute"],
       ],
       {
-        sub: "Vitesse appliquée quand MeCasa pilote la clim. « Inchangée » laisse le réglage de la télécommande.",
+        sub: "Vitesse appliquée quand eCasa pilote la clim. « Inchangée » laisse le réglage de la télécommande.",
       }
     )}
     ${selectRow(
@@ -439,10 +439,15 @@ function connectorPanels(c) {
           );
         })
         .join("");
-      const badge = item.status === "beta" ? "pill pill-warn" : "pill pill-ghost";
-      const badgeLabel = item.status === "beta" ? "bêta" : "à venir";
+      // Le badge ne signale qu'un état transitoire : un connecteur « ready »
+      // fonctionne, il n'a donc rien à afficher.
+      const badgeLabel = item.status === "beta" ? "bêta" : item.status === "pairing" ? "à venir" : "";
+      const badgeClass = item.status === "beta" ? "pill pill-warn" : "pill pill-ghost";
+      const badge = badgeLabel
+        ? ` <span class="${badgeClass}" style="margin-left:6px">${badgeLabel}</span>`
+        : "";
       return `<details class="stack" style="margin-top:18px">
-        <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} ${escapeHtml(item.label)} <span class="${badge}" style="margin-left:6px">${badgeLabel}</span></summary>
+        <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} ${escapeHtml(item.label)}${badge}</summary>
         <p class="hint" style="margin-top:8px">${escapeHtml(item.description || "")}</p>
         ${fields}
         <div class="row wrap" style="gap:8px;margin-top:4px">
@@ -564,7 +569,7 @@ function devicesSection() {
               ["med", "Moyenne"],
               ["high", "Haute"],
             ],
-            { sub: "Vitesse appliquée quand MeCasa pilote la clim." }
+            { sub: "Vitesse appliquée quand eCasa pilote la clim." }
           )}
           ${selectRow(
             "Orientation du flux d'air",
@@ -927,7 +932,7 @@ function storageSection() {
     "storage",
     "Stockage basse consommation",
     "database",
-    `<div class="hint">MeCasa garde tout en mémoire et n'écrit sur la carte SD que par lots. C'est ce qui protège la carte du Raspberry Pi.</div>
+    `<div class="hint">eCasa garde tout en mémoire et n'écrit sur la carte SD que par lots. C'est ce qui protège la carte du Raspberry Pi.</div>
     ${textRow("Fichier d'état", "state_file", c.state_file, { sub: "Snapshot JSON complet, réécrit au plus toutes les quelques secondes." })}
     ${textRow("Dossier d'historique", "history_dir", c.history_dir, { sub: "Fichiers mensuels append-only, une ligne par heure." })}
     <div class="form-grid">
@@ -1028,17 +1033,17 @@ function tailscaleSection() {
     "tailscale",
     "Tailscale",
     "shield",
-    `<p class="hint">Accès à distance chiffré, sans ouvrir de port sur la box. MeCasa peut publier son interface sur ton tailnet.</p>
+    `<p class="hint">Accès à distance chiffré, sans ouvrir de port sur la box. eCasa peut publier son interface sur ton tailnet.</p>
     ${row(
       "Guide de configuration",
       "Installation, connexion et publication du service sur ton tailnet.",
       `<button class="btn btn-sm" type="button" id="tailscaleHelp">${icon("info", 15)} Ouvrir l'aide</button>`
     )}
-    ${row("Activer Tailscale", "Au démarrage, MeCasa peut connecter le nœud et publier le service.", toggle("tailscale_enabled", Boolean(c.tailscale_enabled)))}
+    ${row("Activer Tailscale", "Au démarrage, eCasa peut connecter le nœud et publier le service.", toggle("tailscale_enabled", Boolean(c.tailscale_enabled)))}
     ${row("Publier automatiquement", "Au démarrage, expose l'interface sur le tailnet en HTTPS via « tailscale serve ».", toggle("tailscale_auto_serve", Boolean(c.tailscale_auto_serve)))}
-    ${textRow("Nom du nœud", "tailscale_hostname", c.tailscale_hostname || "mecasa", {
-      sub: "Nom résolu par l'app Android : &lt;nom&gt;.&lt;tailnet&gt;.ts.net. Doit être « mecasa ».",
-      placeholder: "mecasa",
+    ${textRow("Nom du nœud", "tailscale_hostname", c.tailscale_hostname || "ecasa", {
+      sub: "Nom résolu par l'app Android : &lt;nom&gt;.&lt;tailnet&gt;.ts.net. Doit être « ecasa ».",
+      placeholder: "ecasa",
     })}
     ${textRow("Chemin de tailscale", "tailscale_bin", c.tailscale_bin || "", {
       sub: "Laisser vide pour la détection automatique (utile sur Windows : C:\\Program Files\\Tailscale\\tailscale.exe).",
@@ -1063,7 +1068,7 @@ function tailscaleSection() {
         <button class="btn btn-sm" type="button" id="tsServeOff">${icon("x", 14)} Dépublier</button>
         <button class="btn btn-sm" type="button" id="tsInstall">${icon("download", 14)} Installer / désinstaller</button>
       </div>
-      <p class="hint mt-2">« Dépublier » coupe l'accès via l'URL HTTPS : pour republier depuis un autre appareil, ouvre MeCasa sur le réseau local (port 8780).</p>
+      <p class="hint mt-2">« Dépublier » coupe l'accès via l'URL HTTPS : pour republier depuis un autre appareil, ouvre eCasa sur le réseau local (port 8780).</p>
     </div>`,
     `<button class="btn btn-primary" type="button" data-save="tailscale">${icon("save", 16)} Enregistrer</button>`
   );
@@ -1075,9 +1080,9 @@ function supportSection() {
     `<a class="btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon(iconName, 16)} ${label}</a>`;
   return section(
     "support",
-    "Soutenir MeCasa",
+    "Soutenir eCasa",
     "sparkles",
-    `<p class="hint" style="margin-top:0">MeCasa est libre, sans publicité, sans compte en ligne et sans télémétrie. Toutes les fonctions restent gratuites : un don finance le matériel de test et le temps de développement.</p>
+    `<p class="hint" style="margin-top:0">eCasa est libre, sans publicité, sans compte en ligne et sans télémétrie. Toutes les fonctions restent gratuites : un don finance le matériel de test et le temps de développement.</p>
      <div class="row wrap" style="gap:10px">
        ${
          donate
@@ -1168,7 +1173,7 @@ function bind() {
     button.addEventListener("click", () => {
       const theme = button.dataset.theme;
       setPref("theme", theme);
-      window.dispatchEvent(new CustomEvent("mecasa:theme", { detail: theme }));
+      window.dispatchEvent(new CustomEvent("ecasa:theme", { detail: theme }));
       root.querySelectorAll("[data-theme]").forEach((item) => item.classList.toggle("is-active", item === button));
     });
   });
@@ -1180,7 +1185,7 @@ function bind() {
 
   root.querySelector("#installHelp")?.addEventListener("click", () => {
     openSheet({
-      title: "Installer MeCasa",
+      title: "Installer eCasa",
       sub: "Une application, pas un onglet",
       body: `<div class="stack">
         <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Android / Chrome</div><div class="sr-sub">Menu ⋮ → « Installer l'application » ou « Ajouter à l'écran d'accueil ».</div></div></div>
@@ -1257,7 +1262,7 @@ function bind() {
               </div>`
             )
             .join("") || '<p class="hint">Aucun appareil. Vérifie les identifiants puis synchronise.</p>'
-        }</div><p class="hint mt-2">Utilise « Synchroniser » pour les ajouter à MeCasa.</p>`,
+        }</div><p class="hint mt-2">Utilise « Synchroniser » pour les ajouter à eCasa.</p>`,
       });
     } catch (err) {
       toastError(err);
@@ -1533,9 +1538,9 @@ async function testConnection(kind, button) {
 function openEnergyHelp() {
   openSheet({
     title: "Configurer MyElectricalData",
-    sub: "Consommation Enedis dans MeCasa",
+    sub: "Consommation Enedis dans eCasa",
     body: `<div class="stack">
-      <p class="hint">MyElectricalData est une passerelle gratuite entre Enedis et MeCasa. Il faut d'abord autoriser l'accès à tes données Enedis, puis récupérer un token à coller dans les réglages.</p>
+      <p class="hint">MyElectricalData est une passerelle gratuite entre Enedis et eCasa. Il faut d'abord autoriser l'accès à tes données Enedis, puis récupérer un token à coller dans les réglages.</p>
 
       <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">1. Autoriser l'accès à tes données Enedis</div><div class="sr-sub">Sur le site MyElectricalData, clique sur « Faire la demande de consentement » en bas de page, connecte-toi à ton espace Enedis et autorise la passerelle. Le consentement est valable 36 mois.</div></div></div>
       <a class="btn btn-sm" href="https://www.myelectricaldata.fr" target="_blank" rel="noreferrer">${icon("external", 14)} Ouvrir MyElectricalData</a>
@@ -1545,9 +1550,9 @@ function openEnergyHelp() {
 
       <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Récupérer le token</div><div class="sr-sub">Après le consentement, MyElectricalData affiche ton token : une chaîne de 54 caractères. Il est valable un an, puis il faut recommencer l'étape 1.</div></div></div>
 
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Renseigner MeCasa</div><div class="sr-sub">Colle le PDL (14 chiffres, visible sur ta facture ou dans l'espace Enedis) et le token dans les champs ci-dessus, puis clique sur « Tester la connexion » avant d'enregistrer.</div></div></div>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Renseigner eCasa</div><div class="sr-sub">Colle le PDL (14 chiffres, visible sur ta facture ou dans l'espace Enedis) et le token dans les champs ci-dessus, puis clique sur « Tester la connexion » avant d'enregistrer.</div></div></div>
 
-      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Bon à savoir</div><div class="sr-sub">Enedis limite chaque requête à 1095 jours : MeCasa découpe par année et affiche jusqu'à 3 ans d'historique. Les données sont mises en cache 6 h en mémoire, rien n'est écrit sur le disque.</div></div></div>
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Bon à savoir</div><div class="sr-sub">Enedis limite chaque requête à 1095 jours : eCasa découpe par année et affiche jusqu'à 3 ans d'historique. Les données sont mises en cache 6 h en mémoire, rien n'est écrit sur le disque.</div></div></div>
 
       <p class="hint mt-2">Liens utiles : <a href="https://www.myelectricaldata.fr/documentation/" target="_blank" rel="noreferrer">Documentation</a> · <a href="https://www.myelectricaldata.fr/faq/" target="_blank" rel="noreferrer">FAQ</a> · <a href="https://www.myelectricaldata.fr/error_code/" target="_blank" rel="noreferrer">Codes d'erreur</a></p>
     </div>`,
@@ -1623,7 +1628,7 @@ async function importWiserPrograms(event) {
 
     let models = [];
     try {
-      models = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]");
+      models = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]");
       if (!Array.isArray(models)) models = [];
     } catch {
       models = [];
@@ -1660,7 +1665,7 @@ async function importWiserPrograms(event) {
       }
     }
 
-    localStorage.setItem("mecasa.weekModels", JSON.stringify(models));
+    localStorage.setItem("ecasa.weekModels", JSON.stringify(models));
 
     if (created || updated) {
       toast(
@@ -1914,7 +1919,7 @@ function renderRooms() {
 
 function modelOptionsSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]");
+    const saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]");
     if (!Array.isArray(saved)) return "";
     return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
   } catch {
@@ -2000,7 +2005,7 @@ function openRoomEditor(room) {
       const idx = Number(select?.value);
       if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
       let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("mecasa.weekModels") || "[]"); } catch { saved = []; }
+      try { saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { saved = []; }
       const m = saved[idx];
       if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
       const deviceId = room.actuator_device_id || room.thermostat_device_id;
@@ -2109,15 +2114,20 @@ function renderDevices() {
     host.innerHTML = list
       .map((device) => {
         const isWiser = device.device_type === "wiser";
+        const isOn = Number(device.enabled) !== 0;
         const room = roomName(device.room_id);
         const ambient = device.current?.ambient ?? device.current?.wiser_ambient;
         return `<div class="settings-row">
           <div class="sr-main">
-            <div class="sr-title">${escapeHtml(device.name)} <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}" style="margin-left:6px">${isWiser ? "Wiser" : "Atlantic"}</span></div>
+            <div class="device-line">
+              <button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-toggle-device="${device.device_id}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${isOn ? "Désactiver" : "Activer"}</button>
+              <span class="sr-title${isOn ? "" : " is-off"}">${escapeHtml(device.name)}</span>
+              <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>
+            </div>
             <div class="sr-sub">
               ${escapeHtml(room || "Sans pièce")} · ${fmtTemp(ambient)} °C
               · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
-              ${Number(device.enabled) === 0 ? " · pilotage désactivé" : ""}
+              ${isOn ? "" : " · pilotage désactivé"}
               ${device.current?.available === false ? " · hors ligne" : ""}
             </div>
           </div>
@@ -2128,6 +2138,27 @@ function renderDevices() {
         </div>`;
       })
       .join("");
+
+    host.querySelectorAll("[data-toggle-device]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const id = Number(button.dataset.toggleDevice);
+        const device = (store.state?.devices || []).find((item) => Number(item.device_id) === id);
+        if (!device) return;
+        const next = Number(device.enabled) === 0 ? 1 : 0;
+        button.disabled = true;
+        try {
+          await put(`/api/devices/${id}`, { enabled: next });
+          await refreshState({ silent: true });
+          renderDevices();
+          renderRooms();
+          toast(next ? "Pilotage activé." : "Pilotage désactivé.");
+        } catch (err) {
+          toastError(err);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
 
     host.querySelectorAll("[data-edit-device]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -2322,7 +2353,7 @@ function renderSystem() {
     <div class="row-between"><span class="tiny muted">Système</span><span class="tiny mono">${escapeHtml(hostInfo.platform || "—")} ${escapeHtml(hostInfo.release || "")} · Python ${escapeHtml(hostInfo.python || "—")}</span></div>
     <div class="row-between"><span class="tiny muted">Processeur</span><span class="tiny mono">${hostInfo.cpu_count ?? "—"} cœur(s)</span></div>
     ${memory ? `<div class="row-between"><span class="tiny muted">Mémoire</span><span class="tiny mono">${bytes(memory.used)} / ${bytes(memory.total)} · ${memory.percent} %</span></div>` : ""}
-    ${system.process_rss ? `<div class="row-between"><span class="tiny muted">Mémoire MeCasa</span><span class="tiny mono">${bytes(system.process_rss)}</span></div>` : ""}
+    ${system.process_rss ? `<div class="row-between"><span class="tiny muted">Mémoire eCasa</span><span class="tiny mono">${bytes(system.process_rss)}</span></div>` : ""}
     ${disk ? `<div class="row-between"><span class="tiny muted">Carte SD</span><span class="tiny mono">${bytes(disk.free)} libres · ${disk.percent} % utilisé</span></div>` : ""}
   `;
 }
@@ -2338,7 +2369,7 @@ async function exportData(event) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `mecasa-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `ecasa-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.append(link);
     link.click();
     link.remove();
@@ -2378,7 +2409,7 @@ async function importData(event) {
 }
 
 async function restartServer(button) {
-  if (!confirm("Redémarrer MeCasa ? L'interface sera indisponible quelques secondes.")) return;
+  if (!confirm("Redémarrer eCasa ? L'interface sera indisponible quelques secondes.")) return;
   button.disabled = true;
   try {
     await post("/api/control/restart");
@@ -2391,7 +2422,7 @@ async function restartServer(button) {
 }
 
 async function stopServer(button) {
-  if (!confirm("Arrêter le serveur MeCasa ? Tu devras le relancer à la main.")) return;
+  if (!confirm("Arrêter le serveur eCasa ? Tu devras le relancer à la main.")) return;
   button.disabled = true;
   try {
     await post("/api/control/stop");
@@ -2412,7 +2443,7 @@ async function waitForServer() {
         await refreshState({ silent: true });
         await refreshConfig({ silent: true });
         await refreshSystem({ silent: true });
-        toast("MeCasa est de retour.");
+        toast("eCasa est de retour.");
         return;
       }
     } catch {
@@ -2430,7 +2461,7 @@ function openTailscaleHelp() {
     sub: "Guide local, étape par étape",
     footer: `<button class="btn btn-primary" type="button" data-help-refresh>${icon("refresh", 15)} Actualiser le diagnostic</button>`,
     body: `<div class="stack">
-      <p class="hint">Objectif : que l'app Android ouvre <strong>https://mecasa.&lt;tailnet&gt;.ts.net/</strong> (port 443). Toutes les commandes se lancent <strong>sur la machine qui fait tourner MeCasa</strong>. Chaque étape se termine par une vérification : passe à la suivante seulement quand elle est verte.</p>
+      <p class="hint">Objectif : que l'app Android ouvre <strong>https://ecasa.&lt;tailnet&gt;.ts.net/</strong> (port 443). Toutes les commandes se lancent <strong>sur la machine qui fait tourner eCasa</strong>. Chaque étape se termine par une vérification : passe à la suivante seulement quand elle est verte.</p>
 
       <div class="help-step">
         <div class="help-step-head">
@@ -2443,21 +2474,21 @@ function openTailscaleHelp() {
         <div><span class="help-os-label">Windows (PowerShell)</span><code class="help-code">winget install -e --id Tailscale.Tailscale</code></div>
         <div><span class="help-os-label">macOS</span><code class="help-code">brew install --cask tailscale</code></div>
         <div><span class="help-os-label">Linux / Raspberry Pi</span><code class="help-code">curl -fsSL https://tailscale.com/install.sh | sh</code></div>
-        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale version</code> affiche un numéro de version. Sur Windows, MeCasa détecte automatiquement <code>C:\\Program Files\\Tailscale\\tailscale.exe</code> même s'il n'est pas dans le PATH.</div>
+        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale version</code> affiche un numéro de version. Sur Windows, eCasa détecte automatiquement <code>C:\\Program Files\\Tailscale\\tailscale.exe</code> même s'il n'est pas dans le PATH.</div>
       </div>
 
       <div class="help-step">
         <div class="help-step-head">
           <span class="help-step-num">2</span>
           <div>
-            <div class="help-step-title">Connecter la machine avec le nom « mecasa »</div>
+            <div class="help-step-title">Connecter la machine avec le nom « ecasa »</div>
             <div class="help-step-sub">C'est ce nom que l'app Android résout. Si un lien d'autorisation s'affiche, ouvre-le et valide la machine dans ton compte Tailscale.</div>
           </div>
         </div>
-        <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale up --hostname=mecasa</code></div>
-        <div><span class="help-os-label">Windows</span><code class="help-code">tailscale up --hostname=mecasa</code></div>
-        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale status</code> montre une ligne avec <code>mecasa</code> et une adresse <code>100.x.y.z</code>. <code>tailscale ip -4</code> renvoie cette même adresse.</div>
-        <div class="help-warn"><strong>Nom déjà pris :</strong> si le nœud s'appelle <code>mecasa-1</code>, le nom <code>mecasa</code> est réservé ailleurs (autre machine ou <strong>Service Tailscale</strong>). La commande réussit sans rien changer : libère le nom dans la console → Machines (supprimer l'ancien nœud) ou → Services (supprimer le service), puis relance-la.</div>
+        <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale up --hostname=ecasa</code></div>
+        <div><span class="help-os-label">Windows</span><code class="help-code">tailscale up --hostname=ecasa</code></div>
+        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale status</code> montre une ligne avec <code>ecasa</code> et une adresse <code>100.x.y.z</code>. <code>tailscale ip -4</code> renvoie cette même adresse.</div>
+        <div class="help-warn"><strong>Nom déjà pris :</strong> si le nœud s'appelle <code>ecasa-1</code>, le nom <code>ecasa</code> est réservé ailleurs (autre machine ou <strong>Service Tailscale</strong>). La commande réussit sans rien changer : libère le nom dans la console → Machines (supprimer l'ancien nœud) ou → Services (supprimer le service), puis relance-la.</div>
       </div>
 
       <div class="help-step">
@@ -2470,21 +2501,21 @@ function openTailscaleHelp() {
         </div>
         <div class="help-faq-a">Ouvre <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">console → DNS</a>, puis :</div>
         <div class="help-faq-a">• <strong>MagicDNS</strong> → Enable MagicDNS<br>• <strong>HTTPS Certificates</strong> → Enable HTTPS…</div>
-        <div class="help-check"><strong>À vérifier :</strong> dans MeCasa, Réglages → Tailscale, les lignes <strong>MagicDNS</strong> et <strong>HTTPS Certificates</strong> passent au vert après <strong>Actualiser</strong>. Sinon, attends 30 s (émission du certificat) et réessaie.</div>
+        <div class="help-check"><strong>À vérifier :</strong> dans eCasa, Réglages → Tailscale, les lignes <strong>MagicDNS</strong> et <strong>HTTPS Certificates</strong> passent au vert après <strong>Actualiser</strong>. Sinon, attends 30 s (émission du certificat) et réessaie.</div>
       </div>
 
       <div class="help-step">
         <div class="help-step-head">
           <span class="help-step-num">4</span>
           <div>
-            <div class="help-step-title">Publier MeCasa en HTTPS sur le port 443</div>
-            <div class="help-step-sub">Expose la racine du tailnet vers MeCasa, qui écoute en local sur 8780.</div>
+            <div class="help-step-title">Publier eCasa en HTTPS sur le port 443</div>
+            <div class="help-step-sub">Expose la racine du tailnet vers eCasa, qui écoute en local sur 8780.</div>
           </div>
         </div>
         <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780</code></div>
         <div><span class="help-os-label">Windows</span><code class="help-code">tailscale serve --bg --set-path=/ http://127.0.0.1:8780</code></div>
-        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale serve status</code> affiche <code>https://mecasa.&lt;tailnet&gt;.ts.net (tailnet only)</code> puis <code>/ proxy http://127.0.0.1:8780</code>.</div>
-        <div class="help-warn"><strong>Prérequis :</strong> MeCasa doit écouter sur <code>127.0.0.1</code> ou <code>0.0.0.0</code> (Réglages → Réseau), jamais sur une IP LAN précise.</div>
+        <div class="help-check"><strong>À vérifier :</strong> <code>tailscale serve status</code> affiche <code>https://ecasa.&lt;tailnet&gt;.ts.net (tailnet only)</code> puis <code>/ proxy http://127.0.0.1:8780</code>.</div>
+        <div class="help-warn"><strong>Prérequis :</strong> eCasa doit écouter sur <code>127.0.0.1</code> ou <code>0.0.0.0</code> (Réglages → Réseau), jamais sur une IP LAN précise.</div>
       </div>
 
       <div class="help-step">
@@ -2495,8 +2526,8 @@ function openTailscaleHelp() {
             <div class="help-step-sub">Le téléphone doit avoir Tailscale installé et connecté au même compte.</div>
           </div>
         </div>
-        <div class="help-faq-a">Ouvre <code>https://mecasa.&lt;tailnet&gt;.ts.net/</code> — sans <code>:8780</code>, sans <code>http://</code>.</div>
-        <div class="help-check"><strong>À vérifier :</strong> la page MeCasa se charge et le cadenas HTTPS est valide. Si le nom ne résout pas, teste d'abord <code>https://100.x.y.z/</code> (adresse de l'étape 2).</div>
+        <div class="help-faq-a">Ouvre <code>https://ecasa.&lt;tailnet&gt;.ts.net/</code> — sans <code>:8780</code>, sans <code>http://</code>.</div>
+        <div class="help-check"><strong>À vérifier :</strong> la page eCasa se charge et le cadenas HTTPS est valide. Si le nom ne résout pas, teste d'abord <code>https://100.x.y.z/</code> (adresse de l'étape 2).</div>
       </div>
 
       <div class="help-step">
@@ -2507,8 +2538,8 @@ function openTailscaleHelp() {
             <div class="help-step-sub">Pour que tout revienne seul après un redémarrage.</div>
           </div>
         </div>
-        <div class="help-faq-a">• <code>--bg</code> conserve déjà la publication après un redémarrage du service Tailscale.<br>• Dans MeCasa : active <strong>Activer Tailscale</strong> et <strong>Publier automatiquement</strong>, puis <strong>Enregistrer</strong>.<br>• Optionnel : génère une <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">clé d'authentification</a> et colle-la dans le champ prévu.</div>
-        <div class="help-check"><strong>À vérifier :</strong> après redémarrage de la machine, <code>tailscale serve status</code> et <code>https://mecasa.&lt;tailnet&gt;.ts.net/</code> fonctionnent encore.</div>
+        <div class="help-faq-a">• <code>--bg</code> conserve déjà la publication après un redémarrage du service Tailscale.<br>• Dans eCasa : active <strong>Activer Tailscale</strong> et <strong>Publier automatiquement</strong>, puis <strong>Enregistrer</strong>.<br>• Optionnel : génère une <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">clé d'authentification</a> et colle-la dans le champ prévu.</div>
+        <div class="help-check"><strong>À vérifier :</strong> après redémarrage de la machine, <code>tailscale serve status</code> et <code>https://ecasa.&lt;tailnet&gt;.ts.net/</code> fonctionnent encore.</div>
       </div>
 
       <div class="help-step">
@@ -2522,11 +2553,11 @@ function openTailscaleHelp() {
         <div class="help-faq">
           <div><div class="help-faq-q">« Tailscale introuvable »</div><div class="help-faq-a">Le binaire n'est pas dans le PATH. Renseigne son chemin dans <strong>Chemin de tailscale</strong> (Windows : <code>C:\\Program Files\\Tailscale\\tailscale.exe</code>), puis Enregistrer.</div></div>
           <div><div class="help-faq-q">« HTTPS is not enabled in your tailnet »</div><div class="help-faq-a">Étape 3 incomplète : active <strong>HTTPS Certificates</strong> dans la console, attends 30 s, puis Actualiser et Publier.</div></div>
-          <div><div class="help-faq-q">La page répond 502 ou « connection refused »</div><div class="help-faq-a">MeCasa n'écoute pas sur l'adresse attendue, ou le port a changé. Vérifie <code>host</code>/<code>port</code> dans Réglages → Réseau, puis republie avec le bon port.</div></div>
+          <div><div class="help-faq-q">La page répond 502 ou « connection refused »</div><div class="help-faq-a">eCasa n'écoute pas sur l'adresse attendue, ou le port a changé. Vérifie <code>host</code>/<code>port</code> dans Réglages → Réseau, puis republie avec le bon port.</div></div>
           <div><div class="help-faq-q">La page répond 404 ou « Not Found »</div><div class="help-faq-a">La publication vise un sous-chemin. Republie avec <code>--set-path=/</code>.</div></div>
           <div><div class="help-faq-q">Le nom MagicDNS ne résout pas sur le téléphone</div><div class="help-faq-a">MagicDNS est désactivé sur le tailnet, ou le téléphone n'est pas connecté. En attendant, utilise l'adresse <code>100.x.y.z</code>.</div></div>
-          <div><div class="help-faq-q">Le nœud n'a pas le bon nom</div><div class="help-faq-a">Relance <code>tailscale up --hostname=mecasa</code>, ou renomme la machine dans la console → Machines.</div></div>
-          <div><div class="help-faq-q">Le nœud s'appelle « mecasa-1 »</div><div class="help-faq-a">Le nom <code>mecasa</code> est déjà pris : soit une ancienne machine, soit un <strong>Service Tailscale</strong> (visible dans le diagnostic, ligne « Service Tailscale »). Supprime-le dans <a href="https://login.tailscale.com/admin/services" target="_blank" rel="noreferrer">console → Services</a> (ou l'ancienne machine dans console → Machines), puis relance <code>tailscale up --hostname=mecasa</code>.</div></div>
+          <div><div class="help-faq-q">Le nœud n'a pas le bon nom</div><div class="help-faq-a">Relance <code>tailscale up --hostname=ecasa</code>, ou renomme la machine dans la console → Machines.</div></div>
+          <div><div class="help-faq-q">Le nœud s'appelle « ecasa-1 »</div><div class="help-faq-a">Le nom <code>ecasa</code> est déjà pris : soit une ancienne machine, soit un <strong>Service Tailscale</strong> (visible dans le diagnostic, ligne « Service Tailscale »). Supprime-le dans <a href="https://login.tailscale.com/admin/services" target="_blank" rel="noreferrer">console → Services</a> (ou l'ancienne machine dans console → Machines), puis relance <code>tailscale up --hostname=ecasa</code>.</div></div>
           <div><div class="help-faq-q">Retirer l'accès distant</div><div class="help-faq-a"><code>sudo tailscale serve reset</code> (sans <code>sudo</code> sur Windows). Le nœud reste connecté.</div></div>
         </div>
       </div>
@@ -2576,7 +2607,7 @@ function renderTailscale() {
     ? ""
     : failed.length
       ? `<p class="hint is-bad mt-1">${failed.length} point${failed.length > 1 ? "s" : ""} à corriger pour que l'app Android fonctionne.</p>`
-      : `<p class="hint is-ok mt-1">Tout est prêt : l'app peut charger ${escapeHtml(url || "https://mecasa.<tailnet>.ts.net/")}.</p>`;
+      : `<p class="hint is-ok mt-1">Tout est prêt : l'app peut charger ${escapeHtml(url || "https://ecasa.<tailnet>.ts.net/")}.</p>`;
   const pageHost = String(location.hostname || "").toLowerCase();
   const nodeDns = String(data.dns_name || "").toLowerCase();
   const nodeHost = nodeDns ? nodeDns.split(".")[0] : "";

@@ -1,7 +1,7 @@
 # Captures d'écran
 
 Images utilisées par le README, prises sur une instance de **simulation**
-(MeCasa lancé sans identifiants Atlantic) : les pièces, l'historique et la
+(eCasa lancé sans identifiants Atlantic) : les pièces, l'historique et la
 consommation sont fictifs, aucune donnée personnelle n'apparaît.
 
 | Fichier | Contenu | Taille |
@@ -15,7 +15,7 @@ consommation sont fictifs, aucune donnée personnelle n'apparaît.
 
 ## Refaire les captures
 
-1. Lancer MeCasa en simulation : `python -m mecasa.main` (sans identifiants Atlantic).
+1. Lancer eCasa en simulation : `python -m ecasa.main` (sans identifiants Atlantic).
 2. Vérifier que les données affichées ne contiennent rien de personnel.
 3. Capturer avec un navigateur (Chrome/Edge) en 1440 × 900, thème clair ou sombre.
 4. Recadrer si besoin (les images ci-dessus sont recadrées proprement).

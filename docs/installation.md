@@ -1,9 +1,9 @@
 # Installation
 
-MeCasa est une application Python sans dépendance obligatoire. Trois étapes :
+eCasa est une application Python sans dépendance obligatoire. Trois étapes :
 installer Python, récupérer le code, lancer le serveur.
 
-> **À propos** : MeCasa est un projet open source **développé avec l'aide d'une
+> **À propos** : eCasa est un projet open source **développé avec l'aide d'une
 > intelligence artificielle**, sous supervision humaine. Le code, les tests et la
 > documentation sont produits par l'IA ; les choix techniques et les essais sur
 > matériel réel restent humains. Les suggestions d'évolution (nouveaux systèmes,
@@ -24,12 +24,12 @@ installer Python, récupérer le code, lancer le serveur.
 ## Windows
 
 ```bat
-git clone https://github.com/shervet/mecasa.git
-cd mecasa
+git clone https://github.com/shervet/ecasa.git
+cd ecasa
 run.bat
 ```
 
-`run.bat` lance MeCasa (avec `.venv\Scripts\python.exe` s'il existe, sinon le Python
+`run.bat` lance eCasa (avec `.venv\Scripts\python.exe` s'il existe, sinon le Python
 du système) et garde la fenêtre ouverte en cas d'erreur. Pour arrêter proprement :
 double-cliquer sur **`stop.bat`** (arrête aussi pm2, les unités systemd Node et le
 conteneur MyElectricalData local s'ils tournent).
@@ -42,8 +42,8 @@ Ouvrir ensuite <http://127.0.0.1:8780>.
 ## Linux (général)
 
 ```bash
-git clone https://github.com/shervet/mecasa.git
-cd mecasa
+git clone https://github.com/shervet/ecasa.git
+cd ecasa
 ./run.sh
 ```
 
@@ -62,11 +62,11 @@ MyElectricalData local).
 ## Raspberry Pi (service systemd)
 
 ```bash
-git clone https://github.com/shervet/mecasa.git
-cd mecasa
+git clone https://github.com/shervet/ecasa.git
+cd ecasa
 sudo ./install-pi.sh
-sudo systemctl status mecasa
-sudo journalctl -u mecasa -f
+sudo systemctl status ecasa
+sudo journalctl -u ecasa -f
 ```
 
 `install-pi.sh` crée un environnement virtuel, installe l'unité `systemd` et active
@@ -75,14 +75,14 @@ le démarrage automatique. Le service survit aux coupures de courant et redémar
 Après une mise à jour du code :
 
 ```bash
-cd ~/mecasa
+cd ~/ecasa
 git pull
-sudo systemctl restart mecasa
+sudo systemctl restart ecasa
 ```
 
 ## Premier lancement
 
-1. MeCasa crée `config.json` à partir des valeurs par défaut.
+1. eCasa crée `config.json` à partir des valeurs par défaut.
 2. Sans identifiants Atlantic, il démarre en **simulation** (appareils fictifs).
 3. Ouvrir **Réglages** pour saisir les accès, puis redémarrer si demandé.
 
@@ -100,12 +100,12 @@ il ne doit **jamais** être versionné ni partagé.
 
 ## Installer la PWA
 
-Ouvrir MeCasa dans le navigateur du téléphone, puis :
+Ouvrir eCasa dans le navigateur du téléphone, puis :
 
 - **Android / Chrome** : menu ⋮ → « Installer l'application ».
 - **iPhone / Safari** : Partager → « Sur l'écran d'accueil ».
 
-L'application fonctionne alors en plein écran, avec l'icône MeCasa.
+L'application fonctionne alors en plein écran, avec l'icône eCasa.
 
 ## Accès distant avec Tailscale
 
@@ -113,11 +113,11 @@ Le guide pas à pas (nom du nœud, MagicDNS, HTTPS, `tailscale serve`) est dans
 **Réglages → Tailscale → Ouvrir l'aide**. En résumé :
 
 ```bash
-tailscale up --hostname=mecasa
+tailscale up --hostname=ecasa
 tailscale serve --bg --set-path=/ http://127.0.0.1:8780
 ```
 
-Puis ouvrir `https://mecasa.<tailnet>.ts.net/`.
+Puis ouvrir `https://ecasa.<tailnet>.ts.net/`.
 
 ## Sauvegarde et restauration
 
@@ -129,7 +129,7 @@ Une sauvegarde régulière du dossier complet suffit à tout restaurer.
 ## Mise à jour
 
 ```bash
-cd mecasa
+cd ecasa
 git pull
 ```
 
@@ -147,7 +147,7 @@ run.bat
 ./run.sh
 
 # Linux / Raspberry Pi (service systemd)
-sudo systemctl restart mecasa
+sudo systemctl restart ecasa
 ```
 
 Les migrations de configuration sont automatiques : les clés absentes prennent leur
@@ -164,11 +164,11 @@ stop.bat
 
 ```bash
 # Linux / Raspberry Pi (service installé)
-sudo systemctl disable --now mecasa
-sudo rm /etc/systemd/system/mecasa.service
+sudo systemctl disable --now ecasa
+sudo rm /etc/systemd/system/ecasa.service
 
 # puis supprimer le dossier du projet
-rm -rf ~/mecasa
+rm -rf ~/ecasa
 ```
 
 Aucune donnée n'est envoyée ailleurs : supprimer le dossier supprime tout.

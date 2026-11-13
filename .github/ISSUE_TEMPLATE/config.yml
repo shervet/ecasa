@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question ou idée (discussion)
-    url: https://github.com/shervet/mecasa/discussions
+    url: https://github.com/shervet/ecasa/discussions
     about: Pour une question, une idée ou une entraide, préférez les discussions.
   - name: Documentation
-    url: https://github.com/shervet/mecasa/tree/main/docs
+    url: https://github.com/shervet/ecasa/tree/main/docs
     about: Installation, Pronote, équipements, API et dépannage.
   - name: Soutenir le projet
     url: https://github.com/sponsors/shervet
-    about: MeCasa est gratuit : un don finance le matériel de test et le développement.
+    about: eCasa est gratuit : un don finance le matériel de test et le développement.

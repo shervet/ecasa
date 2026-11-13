@@ -1,6 +1,6 @@
 # Pronote
 
-MeCasa importe le planning Pronote de l'enfant et le transforme en consignes de
+eCasa importe le planning Pronote de l'enfant et le transforme en consignes de
 chauffage : confort quand l'enfant est là, réduit quand il est en cours ou absent.
 
 ## Mise en place
@@ -24,7 +24,7 @@ L'import nécessite le paquet optionnel `pronotepy` :
 .venv/bin/pip install -r requirements.txt
 ```
 
-## Ce que MeCasa génère
+## Ce que eCasa génère
 
 Pour chaque journée avec cours :
 
@@ -41,7 +41,7 @@ Cas particuliers :
   jusqu'à 13:30 (l'élève mange à la cantine avant de rentrer).
 - **Journée sans cours** : rien n'est écrit, le planning existant est conservé tel
   quel et reste modifiable.
-- **Cours annulés** : Pronote les signale, MeCasa les ignore.
+- **Cours annulés** : Pronote les signale, eCasa les ignore.
 
 ## Réglages par pièce (confort / réduit)
 
@@ -69,7 +69,7 @@ restent **modifiables à la main** dans le Planning : ils ne sont jamais verroui
 
 ### Journée qui se termine le matin
 
-Si le dernier cours se termine avant **13:30** (mercredi type), MeCasa n'écrit que le
+Si le dernier cours se termine avant **13:30** (mercredi type), eCasa n'écrit que le
 **début** de la journée (nuit, lever, cours, retour à la maison). L'après-midi reste
 ton planning.
 
@@ -80,7 +80,7 @@ Dans **Réglages → Pronote** :
 - **Mise à jour automatique** : activée par défaut.
 - **Heure de la mise à jour** : une heure pleine (03:00 par défaut).
 
-Chaque jour, MeCasa tente **une seule fois** l'import à l'heure choisie. Un échec est
+Chaque jour, eCasa tente **une seule fois** l'import à l'heure choisie. Un échec est
 journalisé et attend le lendemain, ou un import manuel. La consommation électrique,
 elle, reste synchronisée à 3 h.
 
@@ -92,7 +92,7 @@ Planning, sans aucune écriture automatique.
 1. Ouvrir **Planning** → bouton d'import Pronote.
 2. Vérifier les semaines et le jour d'alternance (modifiables ici).
 3. Choisir la **semaine à analyser** puis **Charger l'aperçu** : rien n'est écrit.
-4. Cliquer sur **Importer** : MeCasa enregistre les réglages s'ils ont changé (une
+4. Cliquer sur **Importer** : eCasa enregistre les réglages s'ils ont changé (une
    seule fois), puis écrit le planning dans les pièces liées.
 
 L'aperçu affiche les créneaux générés jour par jour. Les jours sans cours sont

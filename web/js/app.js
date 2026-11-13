@@ -160,7 +160,7 @@ async function mountRoute() {
 
   view.scrollTop = 0;
   window.scrollTo({ top: 0, behavior: "instant" });
-  document.title = `${activePage.title || "MeCasa"} · MeCasa`;
+  document.title = `${activePage.title || "eCasa"} · eCasa`;
 }
 
 function escapeText(value) {
@@ -214,7 +214,7 @@ function updateChrome() {
     const errors = (state?.logs || []).filter((entry) => entry.level === "erreur").length;
     // La pastille ne s'affiche que pour les erreurs *nouvelles* depuis la
     // dernière consultation du journal (vu → disparition jusqu'au prochain).
-    const seen = Number(localStorage.getItem("mecasa.seenErrorCount") || 0);
+    const seen = Number(localStorage.getItem("ecasa.seenErrorCount") || 0);
     const unseen = Math.max(0, errors - (Number.isFinite(seen) ? seen : 0));
     badge.hidden = unseen === 0;
     badge.textContent = String(unseen);
@@ -270,7 +270,7 @@ function setupInstall() {
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("/sw.js?v=58").catch((err) => {
-        console.warn("[mecasa] service worker", err);
+        console.warn("[ecasa] service worker", err);
       });
     });
   }
@@ -296,13 +296,13 @@ async function refreshWeather() {
   try {
     const data = await fetch("/api/weather").then((r) => r.json());
     if (data?.ok && data.temp !== null && data.temp !== undefined) {
-      window.mecasaWeather = data;
+      window.ecasaWeather = data;
     } else {
-      window.mecasaWeather = null;
+      window.ecasaWeather = null;
     }
   } catch (err) {
-    console.warn("[mecasa] weather", err);
-    window.mecasaWeather = null;
+    console.warn("[ecasa] weather", err);
+    window.ecasaWeather = null;
   }
 }
 
@@ -321,7 +321,7 @@ async function boot() {
   });
 
   applyTheme(store.prefs.theme || "auto");
-  window.addEventListener("mecasa:theme", (event) => applyTheme(event.detail || "auto"));
+  window.addEventListener("ecasa:theme", (event) => applyTheme(event.detail || "auto"));
   updateChrome();
   setInterval(updateChrome, 1000);
 
@@ -355,7 +355,7 @@ async function boot() {
     if (view) {
       view.innerHTML = `<div class="page"><div class="card card-pad">
         <h1 class="page-title">Serveur injoignable</h1>
-        <p class="page-sub">MeCasa n'arrive pas à joindre son serveur local. Vérifie qu'il est démarré, puis réessaie.</p>
+        <p class="page-sub">eCasa n'arrive pas à joindre son serveur local. Vérifie qu'il est démarré, puis réessaie.</p>
         <button class="btn btn-primary mt-2" type="button" id="bootRetry">${icon("refresh", 17)} Réessayer</button>
       </div></div>`;
       $("#bootRetry")?.addEventListener("click", async () => {
