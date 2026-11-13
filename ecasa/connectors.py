@@ -11,16 +11,20 @@ Protocoles :
 - **Daikin** : API HTTP locale du boîtier Wi-Fi (``/aircon/...``) ;
 - **Netatmo** : API cloud OAuth2 (refresh token) ;
 - **Mitsubishi** : MELCloud (login + ListDevices + SetAta) ;
-- **Bosch** : nécessite un appairage matériel (bouton sur le contrôleur + certificat
-  client) : le pilote est donc le seul encore en attente.
+- **Bosch** : API locale du contrôleur Smart Home (HTTPS + certificat client).
+  L'appairage se fait par un POST sur ``/smarthome/clients`` avec le mot de passe
+  du contrôleur et le bouton physique maintenu enfoncé.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 MELCLOUD_URL = "https://app.melcloud.com/Mitsubishi.Wifi.Client"
 NETATMO_URL = "https://api.netatmo.com"
@@ -52,10 +56,11 @@ CONNECTORS = [
         "id": "bosch",
         "label": "Bosch",
         "kind": "local",
-        "status": "pairing",
+        "status": "ready",
         "description": (
-            "Thermostats Bosch Smart Home. L'appairage exige un appui sur le "
-            "bouton du contrôleur et un certificat client : le pilote est en attente."
+            "Thermostats Bosch Smart Home via l'API locale du contrôleur. "
+            "Le premier accès demande le mot de passe du contrôleur et un appui "
+            "sur son bouton (certificat client généré automatiquement)."
         ),
         "fields": [
             {
@@ -65,10 +70,30 @@ CONNECTORS = [
                 "placeholder": "192.168.1.20",
             },
             {
-                "key": "token",
-                "label": "Jeton d'accès",
+                "key": "port",
+                "label": "Port de l'API",
+                "type": "text",
+                "placeholder": "8444",
+            },
+            {
+                "key": "password",
+                "label": "Mot de passe du contrôleur",
                 "type": "password",
                 "secret": True,
+            },
+            {
+                "key": "client_cert",
+                "label": "Certificat client (facultatif)",
+                "type": "password",
+                "secret": True,
+                "placeholder": "généré automatiquement",
+            },
+            {
+                "key": "client_key",
+                "label": "Clé privée client (facultatif)",
+                "type": "password",
+                "secret": True,
+                "placeholder": "généré automatiquement",
             },
         ],
     },
@@ -392,16 +417,326 @@ def netatmo_apply(settings: dict, device_id, mode: str, temp: float) -> dict:
 
 # ------------------------------------------------------------------ Bosch
 
+BOSCH_DEFAULT_PORT = 8444
+BOSCH_PAIRING_ID = "oss_ecasa"
+BOSCH_SERVICE = "RoomClimateControl"
+BOSCH_MODELS = ("TRV", "THB", "BWTH", "RTH2", "ROOM_CLIMATE_CONTROL")
 
-def bosch_snapshot(settings: dict) -> dict:
-    raise ValueError(
-        "Bosch : appairage matériel requis (bouton du contrôleur + certificat client). "
-        "Renseigne l'adresse et le jeton, puis relance l'appairage."
+
+def _http_tls(method: str, url: str, headers: dict | None = None,
+              body: bytes | None = None, timeout: int = 10, context=None):
+    """Requête HTTPS avec certificat client (mTLS), injectable dans les tests."""
+    request = urllib.request.Request(
+        url, data=body, headers=headers or {}, method=method
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as err:
+        return err.code, err.read()
+
+
+def _bosch_target(settings: dict) -> tuple[str, int]:
+    raw = str(settings.get("host") or "").strip().rstrip("/")
+    if not raw:
+        raise ValueError("Adresse du contrôleur Bosch manquante.")
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    port = int(_float(settings.get("port"), BOSCH_DEFAULT_PORT) or BOSCH_DEFAULT_PORT)
+    host = raw
+    candidate_host, _, candidate_port = raw.rpartition(":")
+    if candidate_port.isdigit() and candidate_host:
+        host, port = candidate_host, int(candidate_port)
+    if not 0 < port < 65536:
+        raise ValueError("Port du contrôleur Bosch invalide.")
+    return host, port
+
+
+def _bosch_data_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "data" / "bosch"
+
+
+def _bosch_generate_certificate(cert_path: Path, key_path: Path) -> None:
+    """Génère un certificat client auto-signé 2048 bits (paquet cryptography)."""
+    try:
+        import datetime as _datetime
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except ImportError as err:  # pragma: no cover - dépendance facultative
+        raise ValueError(
+            "Certificat client Bosch manquant : renseigne les champs « Certificat "
+            "client » et « Clé privée client », ou installe le paquet "
+            "« cryptography » pour les générer automatiquement."
+        ) from err
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "eCasa")])
+    now = _datetime.datetime.now(_datetime.timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - _datetime.timedelta(days=1))
+        .not_valid_after(now + _datetime.timedelta(days=9999))
+        .sign(key, hashes.SHA256())
+    )
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
     )
 
 
+def _bosch_credentials(settings: dict) -> tuple[str, str]:
+    """Chemins des PEM client : fournis dans les réglages ou générés/cachés."""
+    directory = _bosch_data_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    cert_path = directory / "client-cert.pem"
+    key_path = directory / "client-key.pem"
+    for key_name, path in (("client_cert", cert_path), ("client_key", key_path)):
+        value = str(settings.get(key_name) or "").strip()
+        if value:
+            path.write_text(value if value.endswith("\n") else value + "\n",
+                            encoding="utf-8")
+    if not (cert_path.exists() and key_path.exists()):
+        _bosch_generate_certificate(cert_path, key_path)
+    return str(cert_path), str(key_path)
+
+
+def _bosch_certificate(cert_path) -> str:
+    return Path(cert_path).read_text(encoding="utf-8")
+
+
+def _bosch_ssl_context(cert_path, key_path):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+    return context
+
+
+def _bosch_call(method: str, url: str, *, headers: dict | None = None,
+                payload=None, context=None, timeout: int = 15):
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    head = {"Content-Type": "application/json", "api-version": "3.12"}
+    head.update(headers or {})
+    status, raw = _http_tls(method, url, head, body, timeout, context)
+    try:
+        data = json.loads(raw.decode("utf-8", "replace") or "{}")
+    except ValueError:
+        data = {}
+    return status, data
+
+
+def _bosch_password(settings: dict) -> str:
+    password = str(settings.get("password") or "")
+    if not password:
+        raise ValueError("Mot de passe du contrôleur Bosch manquant.")
+    return password
+
+
+def _bosch_pairing_ports(port: int) -> list[int]:
+    ports = [port - 1] if port > 1 else []
+    ports.append(port)
+    return ports
+
+
+def _bosch_flatten_certificate(pem: str) -> str:
+    """Format exigé par le contrôleur : PEM sur une ligne, CR autour des bornes."""
+    text = str(pem or "").replace("\r", "").replace("\n", "")
+    return (
+        text.replace("-----BEGIN CERTIFICATE-----", "-----BEGIN CERTIFICATE-----\r")
+        .replace("-----END CERTIFICATE-----", "\r-----END CERTIFICATE-----")
+    )
+
+
+def _bosch_pair(settings: dict, host: str, port: int, cert_path, context) -> None:
+    """Déclare le client auprès du contrôleur (bouton physique maintenu)."""
+    payload = {
+        "@type": "client",
+        "id": BOSCH_PAIRING_ID,
+        "name": BOSCH_PAIRING_ID,
+        "primaryRole": "ROLE_RESTRICTED_CLIENT",
+        "certificate": _bosch_flatten_certificate(_bosch_certificate(cert_path)),
+    }
+    headers = {
+        "Systempassword": base64.b64encode(
+            _bosch_password(settings).encode("utf-8")
+        ).decode("ascii"),
+    }
+    ports = _bosch_pairing_ports(port)
+    for candidate in ports:
+        url = f"https://{host}:{candidate}/smarthome/clients"
+        try:
+            status, data = _bosch_call(
+                "POST", url, headers=headers, payload=payload,
+                context=context, timeout=20,
+            )
+        except OSError:
+            continue
+        if status < 400:
+            return
+        message = ""
+        if isinstance(data, dict):
+            message = str(data.get("message") or data.get("error") or "")
+        if status == 401:
+            raise ValueError("Contrôleur Bosch : mot de passe refusé.")
+        if status in (400, 403):
+            raise ValueError(
+                "Contrôleur Bosch : appairage refusé. Maintiens le bouton du "
+                "contrôleur enfoncé pendant toute la durée de l'appairage, "
+                "puis relance le test."
+            )
+        raise ValueError(
+            f"Contrôleur Bosch : appairage impossible (HTTP {status}"
+            + (f" : {message}" if message else "") + ")."
+        )
+    raise ValueError(
+        "Contrôleur Bosch injoignable en HTTPS pour l'appairage (ports essayés : "
+        + ", ".join(str(item) for item in ports)
+        + "). Vérifie l'adresse et que le contrôleur est allumé."
+    )
+
+
+def _bosch_session(settings: dict):
+    """Ouvre une session mTLS et renvoie (base, contexte, appareils)."""
+    _bosch_password(settings)
+    host, port = _bosch_target(settings)
+    cert_path, key_path = _bosch_credentials(settings)
+    context = _bosch_ssl_context(cert_path, key_path)
+    base = f"https://{host}:{port}/smarthome"
+    status, data = _bosch_call("GET", f"{base}/devices", context=context)
+    if status in (401, 403):
+        _bosch_pair(settings, host, port, cert_path, context)
+        status, data = _bosch_call("GET", f"{base}/devices", context=context)
+    if status in (401, 403):
+        raise ValueError(
+            "Contrôleur Bosch : client non appairé. Maintiens le bouton du "
+            "contrôleur enfoncé, puis relance le test."
+        )
+    if status == 404:
+        raise ValueError(
+            f"Contrôleur Bosch introuvable sur le port {port} "
+            "(l'API locale est en général sur 8444)."
+        )
+    if status >= 400:
+        raise ValueError(f"Contrôleur Bosch : HTTP {status}")
+    devices = data if isinstance(data, list) else (data or {}).get("devices") or []
+    return base, context, devices
+
+
+def _bosch_service_ids(device: dict) -> list[str]:
+    services = device.get("deviceServiceIds") or device.get("services") or []
+    result = []
+    for item in services:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict):
+            value = item.get("id") or item.get("@type")
+            if value:
+                result.append(str(value))
+    return result
+
+
+def _bosch_state(base: str, context, device_id, service_id: str) -> dict:
+    path = urllib.parse.quote(str(device_id), safe="")
+    status, data = _bosch_call(
+        "GET", f"{base}/devices/{path}/services/{service_id}",
+        context=context, timeout=10,
+    )
+    if status >= 400 or not isinstance(data, dict):
+        return {}
+    state = data.get("state")
+    return state if isinstance(state, dict) else data
+
+
+def bosch_snapshot(settings: dict) -> dict:
+    base, context, devices = _bosch_session(settings)
+    result = []
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        services = _bosch_service_ids(device)
+        model = str(device.get("deviceModel") or device.get("productId") or "")
+        if BOSCH_SERVICE not in services and not model.startswith(BOSCH_MODELS):
+            continue
+        device_id = device.get("id") or device.get("deviceId")
+        if not device_id:
+            continue
+        climate = (
+            _bosch_state(base, context, device_id, BOSCH_SERVICE)
+            if BOSCH_SERVICE in services else {}
+        )
+        thermal = _bosch_state(base, context, device_id, "TemperatureLevel")
+        ambient = _float(thermal.get("temperature"))
+        temp = _float(climate.get("setpointTemperature"), ambient if ambient is not None else 20.0)
+        result.append(
+            {
+                "id": str(device_id),
+                "name": str(device.get("name") or "Appareil Bosch"),
+                "mode": (
+                    "cool"
+                    if str(climate.get("roomControlMode") or "").upper() == "COOLING"
+                    else "heat"
+                ),
+                "temp": temp,
+                "ambient": ambient,
+                "outside": None,
+                "online": (
+                    str(device.get("status") or "AVAILABLE").upper() == "AVAILABLE"
+                ),
+            }
+        )
+    if not result:
+        raise ValueError(
+            "Aucun thermostat Bosch pilotable détecté. Vérifie que le "
+            "contrôleur expose bien des thermostats (TRV, THB, RTH2…)."
+        )
+    return {"ok": True, "devices": result}
+
+
 def bosch_apply(settings: dict, device_id, mode: str, temp: float) -> dict:
-    raise ValueError("Bosch : appairage matériel requis avant tout pilotage.")
+    base, context, devices = _bosch_session(settings)
+    target = None
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        if str(device.get("id") or device.get("deviceId") or "") == str(device_id):
+            target = device
+            break
+    if target is None:
+        raise ValueError("Appareil Bosch inconnu sur ce contrôleur.")
+    if BOSCH_SERVICE not in _bosch_service_ids(target):
+        raise ValueError("Cet appareil Bosch n'accepte pas de consigne de température.")
+    state = _bosch_state(base, context, device_id, BOSCH_SERVICE)
+    payload = {"@type": state.get("@type") or "climateControlState"}
+    if mode == "off":
+        payload["setpointTemperature"] = 5.0
+        payload["operationMode"] = "MANUAL"
+        payload["roomControlMode"] = "HEATING"
+    else:
+        payload["setpointTemperature"] = min(30.0, max(5.0, _float(temp, 20.0)))
+        payload["operationMode"] = "MANUAL"
+        payload["roomControlMode"] = "COOLING" if mode == "cool" else "HEATING"
+    path = urllib.parse.quote(str(device_id), safe="")
+    status, data = _bosch_call(
+        "PUT", f"{base}/devices/{path}/services/{BOSCH_SERVICE}/state",
+        payload=payload, context=context, timeout=20,
+    )
+    if status >= 400:
+        message = str((data or {}).get("message") or "") if isinstance(data, dict) else ""
+        raise ValueError(
+            "Contrôleur Bosch : commande refusée"
+            + (f" ({message})" if message else f" (HTTP {status})")
+        )
+    return {"ok": True, "applied": payload}
 
 
 SNAPSHOTS = {

@@ -34,6 +34,25 @@ def fake_http(routes):
     return handler
 
 
+def fake_tls(routes):
+    """Faux ``_http_tls`` : route (fragment d'URL) -> (status, corps)."""
+
+    def handler(method, url, headers=None, body=None, timeout=10, context=None):
+        for fragment, response in routes.items():
+            if fragment in url:
+                value = response(method, url, body) if callable(response) else response
+                if isinstance(value, bytes):
+                    return 200, value
+                if isinstance(value, str):
+                    return 200, value.encode("utf-8")
+                if isinstance(value, tuple):
+                    return value
+                return 200, json.dumps(value).encode("utf-8")
+        return 404, b"{}"
+
+    return handler
+
+
 DAIKIN_ROUTES = {
     "common/basic_info": "ret=OK,type=aircon,name=Salon,mac=aa:bb:cc",
     "aircon/get_control_info": (
@@ -58,10 +77,9 @@ class CatalogTests(unittest.TestCase):
                 self.assertIn("label", field)
                 self.assertNotIn("value", field)
 
-    def test_only_bosch_is_waiting_for_pairing(self):
+    def test_every_connector_is_ready(self):
         statuses = {item["id"]: item["status"] for item in connectors.CONNECTORS}
-        self.assertEqual(statuses["bosch"], "pairing")
-        for cid in ("daikin", "netatmo", "mitsubishi"):
+        for cid in ("daikin", "bosch", "netatmo", "mitsubishi"):
             self.assertEqual(statuses[cid], "ready")
 
 
@@ -82,7 +100,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(public["mitsubishi"]["email"], "a@b.c")
         self.assertTrue(public["mitsubishi"]["password_set"])
         self.assertNotIn("password", public["mitsubishi"])
-        self.assertFalse(public["bosch"]["token_set"])
+        self.assertFalse(public["bosch"]["password_set"])
 
     def test_merge_keeps_secret_when_left_empty(self):
         current = {"mitsubishi": {"email": "a@b.c", "password": "s3cret"}}
@@ -94,7 +112,7 @@ class SettingsTests(unittest.TestCase):
     def test_merge_drops_empty_and_unknown_entries(self):
         self.assertEqual(connectors.merge_settings({"nope": {"x": "1"}}, {}), {})
         self.assertEqual(
-            connectors.merge_settings({"bosch": {"host": "", "token": ""}}, {}), {}
+            connectors.merge_settings({"bosch": {"host": "", "password": ""}}, {}), {}
         )
 
     def test_merge_rejects_non_dict(self):
@@ -255,6 +273,188 @@ class NetatmoTests(unittest.TestCase):
             connectors.netatmo_snapshot({})
 
 
+BOSCH_DEVICES = [
+    {
+        "@type": "device",
+        "id": "roomClimateControl_hz_1",
+        "name": "Salon",
+        "deviceModel": "ROOM_CLIMATE_CONTROL",
+        "status": "AVAILABLE",
+        "deviceServiceIds": ["RoomClimateControl", "TemperatureLevel"],
+    },
+    {
+        "@type": "device",
+        "id": "hdm:ZigBee:00aa",
+        "name": "Détecteur porte",
+        "deviceModel": "SWD",
+        "status": "AVAILABLE",
+        "deviceServiceIds": ["TemperatureLevel"],
+    },
+]
+BOSCH_CLIMATE = {
+    "@type": "DeviceServiceData",
+    "state": {
+        "@type": "climateControlState",
+        "setpointTemperature": 21.0,
+        "roomControlMode": "HEATING",
+        "operationMode": "AUTOMATIC",
+    },
+}
+BOSCH_THERMAL = {"@type": "DeviceServiceData", "state": {"temperature": 20.5}}
+
+
+class BoschTests(unittest.TestCase):
+    settings = {"host": "192.168.1.20", "port": "8444", "password": "secret"}
+
+    def setUp(self):
+        patches = [
+            mock.patch.object(
+                connectors, "_bosch_credentials",
+                lambda settings: ("cert.pem", "key.pem"),
+            ),
+            mock.patch.object(
+                connectors, "_bosch_certificate",
+                lambda path: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+            ),
+            mock.patch.object(
+                connectors, "_bosch_ssl_context", lambda cert, key: None
+            ),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def routes(self):
+        return {
+            "/devices/roomClimateControl_hz_1/services/RoomClimateControl": BOSCH_CLIMATE,
+            "/devices/roomClimateControl_hz_1/services/TemperatureLevel": BOSCH_THERMAL,
+            "/devices": BOSCH_DEVICES,
+        }
+
+    def test_snapshot_reads_setpoint_and_ambient(self):
+        with mock.patch.object(connectors, "_http_tls", fake_tls(self.routes())):
+            result = connectors.bosch_snapshot(self.settings)
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["devices"]), 1)
+        device = result["devices"][0]
+        self.assertEqual(device["id"], "roomClimateControl_hz_1")
+        self.assertEqual(device["name"], "Salon")
+        self.assertEqual(device["temp"], 21.0)
+        self.assertEqual(device["ambient"], 20.5)
+        self.assertEqual(device["mode"], "heat")
+        self.assertTrue(device["online"])
+
+    def test_snapshot_pairs_client_when_unknown(self):
+        state = {"reads": 0}
+        routes = self.routes()
+
+        def devices(method, url, body):
+            state["reads"] += 1
+            return (403, b'{"message":"unauthorized"}') if state["reads"] == 1 else BOSCH_DEVICES
+
+        routes["/devices"] = devices
+        routes["/clients"] = (201, b"")
+        with mock.patch.object(connectors, "_http_tls", fake_tls(routes)):
+            result = connectors.bosch_snapshot(self.settings)
+        self.assertTrue(result["ok"])
+        self.assertEqual(state["reads"], 2)
+
+    def test_pairing_sends_credentials_on_neighbour_port(self):
+        seen = {}
+        routes = self.routes()
+
+        def clients(method, url, body):
+            seen["url"] = url
+            seen["payload"] = json.loads(body.decode("utf-8"))
+            return 201, b""
+
+        calls = {"reads": 0}
+
+        def devices(method, url, body):
+            calls["reads"] += 1
+            return (403, b"{}") if calls["reads"] == 1 else BOSCH_DEVICES
+
+        routes["/devices"] = devices
+        routes["/clients"] = clients
+        with mock.patch.object(connectors, "_http_tls", fake_tls(routes)):
+            connectors.bosch_snapshot(self.settings)
+        self.assertIn(":8443/smarthome/clients", seen["url"])
+        self.assertEqual(seen["payload"]["id"], "oss_ecasa")
+        self.assertEqual(seen["payload"]["primaryRole"], "ROLE_RESTRICTED_CLIENT")
+        self.assertTrue(
+            seen["payload"]["certificate"].startswith("-----BEGIN CERTIFICATE-----\r")
+        )
+
+    def test_pairing_reports_wrong_password(self):
+        routes = self.routes()
+        routes["/devices"] = lambda method, url, body: (403, b"{}")
+        routes["/clients"] = (401, b'{"message":"unauthorized"}')
+        with mock.patch.object(connectors, "_http_tls", fake_tls(routes)):
+            with self.assertRaises(ValueError) as ctx:
+                connectors.bosch_snapshot(self.settings)
+        self.assertIn("mot de passe", str(ctx.exception).lower())
+
+    def test_pairing_asks_for_the_hardware_button(self):
+        routes = self.routes()
+        routes["/devices"] = lambda method, url, body: (403, b"{}")
+        routes["/clients"] = (400, b'{"message":"button not pressed"}')
+        with mock.patch.object(connectors, "_http_tls", fake_tls(routes)):
+            with self.assertRaises(ValueError) as ctx:
+                connectors.bosch_snapshot(self.settings)
+        self.assertIn("bouton", str(ctx.exception).lower())
+
+    def test_missing_password_is_reported(self):
+        with self.assertRaises(ValueError) as ctx:
+            connectors.bosch_snapshot({"host": "192.168.1.20"})
+        self.assertIn("mot de passe", str(ctx.exception).lower())
+
+    def test_missing_host_is_reported(self):
+        with self.assertRaises(ValueError) as ctx:
+            connectors.bosch_snapshot({"password": "secret"})
+        self.assertIn("adresse", str(ctx.exception).lower())
+
+    def _apply(self, mode, temp, device_id="roomClimateControl_hz_1"):
+        captured = {}
+        routes = self.routes()
+
+        def climate(method, url, body):
+            if method == "PUT":
+                captured["body"] = json.loads(body.decode("utf-8"))
+                return {"ok": True}
+            return BOSCH_CLIMATE
+
+        routes["/devices/roomClimateControl_hz_1/services/RoomClimateControl"] = climate
+        with mock.patch.object(connectors, "_http_tls", fake_tls(routes)):
+            connectors.bosch_apply(self.settings, device_id, mode, temp)
+        return captured["body"]
+
+    def test_apply_sends_setpoint_and_mode(self):
+        body = self._apply("heat", 20.5)
+        self.assertEqual(body["setpointTemperature"], 20.5)
+        self.assertEqual(body["operationMode"], "MANUAL")
+        self.assertEqual(body["roomControlMode"], "HEATING")
+        self.assertEqual(body["@type"], "climateControlState")
+
+    def test_apply_cooling_mode(self):
+        self.assertEqual(self._apply("cool", 23)["roomControlMode"], "COOLING")
+
+    def test_apply_off_uses_frost_protection(self):
+        self.assertEqual(self._apply("off", 20)[ "setpointTemperature"], 5.0)
+
+    def test_apply_clamps_temperature(self):
+        self.assertEqual(self._apply("heat", 35)["setpointTemperature"], 30.0)
+
+    def test_apply_rejects_unknown_device(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._apply("heat", 20, device_id="absent")
+        self.assertIn("inconnu", str(ctx.exception).lower())
+
+    def test_apply_rejects_device_without_climate_service(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._apply("heat", 20, device_id="hdm:ZigBee:00aa")
+        self.assertIn("consigne", str(ctx.exception).lower())
+
+
 class TestConnectorTests(unittest.TestCase):
     def test_unknown_connector(self):
         result = connectors.test_connector("nope", {})
@@ -276,10 +476,10 @@ class TestConnectorTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("injoignable", result["error"])
 
-    def test_bosch_requires_hardware_pairing(self):
+    def test_bosch_requires_a_password(self):
         result = connectors.test_connector("bosch", {"bosch": {"host": "1.2.3.4"}})
         self.assertFalse(result["ok"])
-        self.assertIn("appairage", result["error"].lower())
+        self.assertIn("mot de passe", result["error"].lower())
 
 
 if __name__ == "__main__":

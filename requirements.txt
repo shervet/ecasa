@@ -1,3 +1,7 @@
 # Dépendance facultative : uniquement nécessaire pour le planning Pronote.
 # Le reste du planificateur fonctionne avec la bibliothèque standard Python.
 pronotepy>=2.0.0
+
+# Facultatif : génération automatique du certificat client Bosch Smart Home.
+# Sans ce paquet, renseigner les champs « Certificat client » et « Clé privée ».
+cryptography>=42

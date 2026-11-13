@@ -85,7 +85,7 @@ la consigne, puis **Appliquer** (commande envoyée immédiatement).
 | **Daikin** | Local (boîtier Wi-Fi, API HTTP) | **Opérationnel** : lecture (mode, consigne, ambiances) et écriture (`/aircon/set_control_info`). |
 | **Netatmo** | Cloud (OAuth2, compte développeur) | **Opérationnel** : lecture des pièces et écriture des consignes manuelles. |
 | **Mitsubishi** | Cloud (MELCloud) | **Opérationnel** : lecture (ListDevices) et écriture (SetAta). |
-| **Bosch** | Local (contrôleur) | **Appairage matériel requis** : bouton sur le contrôleur + certificat client, impossible à automatiser sans l'appareil. |
+| **Bosch** | Local (contrôleur Smart Home, API HTTPS) | **Opérationnel** : appairage automatique au premier accès (`POST /smarthome/clients`), lecture des thermostats et écriture des consignes (`RoomClimateControl`). Au premier test, maintenir le bouton du contrôleur enfoncé ; le certificat client est généré et conservé dans `data/bosch/`. |
 
 Boutons disponibles par panneau :
 
