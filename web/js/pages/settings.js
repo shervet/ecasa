@@ -593,7 +593,8 @@ function devicesSection() {
         </div>
       </details>` : ""}
 
-      <!-- Liste des appareils Atlantic retirée : gérée ailleurs. -->
+      <!-- Liste des appareils Atlantic (Cozytouch). -->
+      <div class="stack" id="atlanticDevicesList" style="margin-top:8px"></div>
       <div class="row wrap" style="gap:8px;margin-top:4px">
         <button class="btn" type="button" data-test="atlantic">${icon("shield", 16)} Tester</button>
         <button class="btn btn-primary" type="button" data-save="atlantic">${icon("save", 16)} Enregistrer</button>
@@ -2120,7 +2121,7 @@ function renderDevices() {
         return `<div class="settings-row">
           <div class="sr-main">
             <div class="device-line">
-              <button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-toggle-device="${device.device_id}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${isOn ? "Désactiver" : "Activer"}</button>
+              <button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-toggle-device="${device.device_id}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${icon("power", 14)}<span>${isOn ? "Désactiver" : "Activer"}</span></button>
               <span class="sr-title${isOn ? "" : " is-off"}">${escapeHtml(device.name)}</span>
               <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>
             </div>

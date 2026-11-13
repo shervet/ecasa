@@ -269,9 +269,19 @@ function setupInstall() {
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js?v=58").catch((err) => {
-        console.warn("[ecasa] service worker", err);
-      });
+      navigator.serviceWorker
+        .register("/sw.js?v=82", { updateViaCache: "none" })
+        .catch((err) => {
+          console.warn("[ecasa] service worker", err);
+        });
+    });
+    // Un nouveau service worker prend la main : on recharge une seule fois
+    // pour charger les fichiers à jour au lieu de l'ancienne coquille.
+    let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloading) return;
+      reloading = true;
+      location.reload();
     });
   }
 }
