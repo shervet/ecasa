@@ -266,7 +266,16 @@ export default {
   onState() {
     if (!root) return;
     const active = document.activeElement;
-    if (active && root.contains(active)) return;
+    // Ne pas réécrire la page pendant une saisie de texte, mais laisser passer
+    // les interrupteurs (sinon le grisage ne se rafraîchit jamais).
+    const tag = (active?.tagName || "").toLowerCase();
+    const type = (active?.getAttribute?.("type") || "").toLowerCase();
+    const typing =
+      tag === "textarea" ||
+      tag === "select" ||
+      (tag === "input" &&
+        !["checkbox", "radio", "range", "button", "submit"].includes(type));
+    if (active && root.contains(active) && typing) return;
     renderRooms();
     renderDevices();
     renderStorage();
@@ -1214,10 +1223,13 @@ function bind() {
         for (const device of devices) {
           if ((Number(device.enabled) !== 0) === enable) continue;
           await put(`/api/devices/${device.device_id}`, { enabled: enable ? 1 : 0 });
+          // Mise à jour locale immédiate : le grisage ne doit pas attendre le
+          // prochain cycle de rafraîchissement (qui peut être en vol).
+          device.enabled = enable ? 1 : 0;
         }
-        await refreshState({ silent: true });
         renderDevices();
         renderRooms();
+        refreshState({ silent: true });
         toast(`${label} ${enable ? "activé" : "désactivé"}.`);
       } catch (err) {
         toastError(err);
