@@ -2459,6 +2459,18 @@ svg {
   flex: none;
 }
 
+/* Ligne d'appareil dont le système est désactivé : grisée, non modifiable. */
+.settings-row.is-off-row {
+  opacity: .55;
+}
+
+.settings-row.is-off-row .icon-btn,
+.settings-row.is-off-row .input,
+.settings-row.is-off-row .select,
+.settings-row.is-off-row .btn {
+  cursor: not-allowed;
+}
+
 /* Résumé de panneau : titre à gauche, interrupteur de marque à droite. */
 .summary-row {
   display: flex;

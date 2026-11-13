@@ -83,8 +83,8 @@ function bindSummarySwitch(input) {
   });
 }
 
-function row(title, sub, control, stack = false) {
-  return `<div class="settings-row${stack ? " is-stack" : ""}">
+function row(title, sub, control, stack = false, extraClass = "") {
+  return `<div class="settings-row${stack ? " is-stack" : ""}${extraClass ? ` ${extraClass}` : ""}">
     <div class="sr-main">
       <div class="sr-title">${title}</div>
       ${sub ? `<div class="sr-sub">${sub}</div>` : ""}
@@ -498,7 +498,7 @@ function connectorDeviceRow(connectorId, device) {
   const modes = ["off", "heat", "cool", "dry", "fan", "auto"];
   const currentMode = modes.includes(device.mode) ? device.mode : "heat";
   const isOn = device.enabled !== false;
-  return `<div class="settings-row" data-device-row>
+  return `<div class="settings-row${isOn ? "" : " is-off-row"}" data-device-row>
     <div class="sr-main">
       <div class="sr-title${isOn ? "" : " is-off"}">${escapeHtml(device.name || "Appareil")}</div>
       <div class="sr-sub" style="display:block">${escapeHtml(modeLabel(device.mode, store.meta))} · ${fmtTemp(device.temp)} °C${
@@ -1208,6 +1208,15 @@ function bind() {
       input.disabled = true;
       try {
         await setConnectorEnabled(input.dataset.connectorEnabled, enabled);
+        const devicesHost = root.querySelector(
+          `[data-connector-devices="${input.dataset.connectorEnabled}"]`
+        );
+        devicesHost?.querySelectorAll("[data-device-row]").forEach((rowEl) => {
+          rowEl.classList.toggle("is-off-row", !enabled);
+          rowEl.querySelectorAll("input, select, button").forEach((node) => {
+            node.disabled = !enabled;
+          });
+        });
         toast(enabled ? "Système activé." : "Système désactivé.");
       } catch (err) {
         toastError(err);
@@ -2201,6 +2210,7 @@ function renderDevices() {
       .map((device) => {
         const isWiser = device.device_type === "wiser";
         const isOn = Number(device.enabled) !== 0;
+        const disabled = !isOn;
         const room = roomName(device.room_id);
         const ambient = device.current?.ambient ?? device.current?.wiser_ambient;
         return row(
@@ -2209,8 +2219,10 @@ function renderDevices() {
             · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
             ${isOn ? "" : " · pilotage désactivé"}
             ${device.current?.available === false ? " · hors ligne" : ""}`,
-          `<button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}">${icon("edit", 18)}</button>
-           <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}">${icon("trash", 18)}</button>`
+          `<button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}"${disabled ? " disabled" : ""}>${icon("edit", 18)}</button>
+           <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}"${disabled ? " disabled" : ""}>${icon("trash", 18)}</button>`,
+          false,
+          disabled ? "is-off-row" : ""
         );
       })
       .join("");

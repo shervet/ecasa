@@ -58,6 +58,12 @@ export function openDeviceSheet(deviceId) {
     toast("Appareil introuvable.", { type: "error" });
     return;
   }
+  if (Number(device.enabled) === 0) {
+    toast("Pilotage désactivé : réactive la marque dans Réglages → Appareils.", {
+      type: "info",
+    });
+    return;
+  }
 
   const current = device.current || {};
   const desired = device.desired || {};
