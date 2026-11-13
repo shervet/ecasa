@@ -535,7 +535,7 @@ function devicesSection() {
     "thermometer",
     `<p class="hint">Les appareils sont découverts depuis Atlantic (Cozytouch) ou le Hub Wiser. Tu peux les renommer, les affecter à une pièce et couper leur pilotage. Chaque système garde ses propres réglages et sa liste d'appareils.</p>
 
-    <details class="stack" style="gap:14px">
+    <details class="stack" style="gap:14px" open>
       <summary class="card-title" style="cursor:pointer">${icon("thermometer", 16)} Cozytouch / Atlantic</summary>
       <div id="sec-atlantic" class="stack" style="gap:14px;margin-top:8px">
         <h3 class="card-title" style="margin-top:6px;display:none">Cozytouch / Atlantic</h3>
@@ -618,7 +618,7 @@ function devicesSection() {
       )}
       ${row("Effacer le secret", "Nécessaire si le Hub a été réinitialisé.", toggle("wiser_secret_clear", false))}
       <div class="stack" id="wiserResults"></div>
-      <details class="stack" style="margin-top:8px">
+      <details class="stack" style="margin-top:8px" open>
         <summary class="card-title" style="cursor:pointer">${icon("hub", 16)} Appareils Wiser</summary>
         <div class="stack" id="wiserDevicesList" style="margin-top:8px"></div>
       </details>
