@@ -54,6 +54,15 @@ function toggle(key, checked, label = "") {
   </label>`;
 }
 
+/** Interrupteur d'un appareil : icône puissance + switch (comme « Moteur actif »). */
+function deviceSwitch(attrs, isOn, title) {
+  return `<span class="device-power${isOn ? " is-on" : ""}" aria-hidden="true">${icon("power", 14)}</span>
+    <label class="switch" title="${title}">
+      <input type="checkbox" ${attrs}${isOn ? " checked" : ""}>
+      <span class="track"></span>
+    </label>`;
+}
+
 function row(title, sub, control, stack = false) {
   return `<div class="settings-row${stack ? " is-stack" : ""}">
     <div class="sr-main">
@@ -463,20 +472,21 @@ function connectorPanels(c) {
     .join("");
 }
 
-/** Ligne d'un appareil découvert sur un connecteur (mode + consigne + appliquer). */
+/** Ligne d'un appareil découvert sur un connecteur (interrupteur + mode + consigne). */
 function connectorDeviceRow(connectorId, device) {
   const modes = ["off", "heat", "cool", "dry", "fan", "auto"];
   const currentMode = modes.includes(device.mode) ? device.mode : "heat";
   const isOn = device.enabled !== false;
-  return `<div class="list-row" data-device-row>
-    <div class="li-main">
-      <span class="li-title${isOn ? "" : " is-off"}">${escapeHtml(device.name || "Appareil")}</span>
-      <span class="li-sub">${escapeHtml(modeLabel(device.mode, store.meta))} · ${fmtTemp(device.temp)} °C${
+  const attrs = `data-connector-toggle data-connector-id="${escapeHtml(connectorId)}" data-device-id="${escapeHtml(String(device.id))}"`;
+  return `<div class="settings-row" data-device-row>
+    <div class="sr-main">
+      <div class="sr-title${isOn ? "" : " is-off"}">${escapeHtml(device.name || "Appareil")}</div>
+      <div class="sr-sub" style="display:block">${escapeHtml(modeLabel(device.mode, store.meta))} · ${fmtTemp(device.temp)} °C${
         device.ambient != null ? ` · ambiance ${fmtTemp(device.ambient)} °C` : ""
-      }${device.online === false ? " · hors ligne" : ""}${isOn ? "" : " · pilotage désactivé"}</span>
+      }${device.online === false ? " · hors ligne" : ""}${isOn ? "" : " · pilotage désactivé"}</div>
     </div>
-    <div class="row wrap" style="gap:6px;align-items:center;justify-content:flex-end">
-      <button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-connector-toggle data-connector-id="${escapeHtml(connectorId)}" data-device-id="${escapeHtml(String(device.id))}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${icon("power", 14)}<span>${isOn ? "Désactiver" : "Activer"}</span></button>
+    <div class="sr-control">
+      ${deviceSwitch(attrs, isOn, isOn ? "Désactiver le pilotage" : "Activer le pilotage")}
       <select class="select" data-device-mode style="width:auto"${isOn ? "" : " disabled"}>
         ${modes
           .map(
@@ -527,22 +537,22 @@ async function loadConnectorDevices(connectorId, button = null) {
     host.innerHTML = devices.length
       ? devices.map((device) => connectorDeviceRow(connectorId, device)).join("")
       : '<p class="hint">Aucun appareil détecté sur ce connecteur.</p>';
-    host.querySelectorAll("[data-connector-toggle]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const isOn = button.getAttribute("aria-pressed") === "true";
-        button.disabled = true;
+    host.querySelectorAll("[data-connector-toggle]").forEach((input) => {
+      input.addEventListener("change", async () => {
+        const enabled = Boolean(input.checked);
+        input.disabled = true;
         try {
           await setConnectorDeviceEnabled(
-            button.dataset.connectorId,
-            button.dataset.deviceId,
-            !isOn
+            input.dataset.connectorId,
+            input.dataset.deviceId,
+            enabled
           );
           await loadConnectorDevices(connectorId);
-          toast(!isOn ? "Pilotage activé." : "Pilotage désactivé.");
+          toast(enabled ? "Pilotage activé." : "Pilotage désactivé.");
         } catch (err) {
           toastError(err);
         } finally {
-          button.disabled = false;
+          input.disabled = false;
         }
       });
     });
@@ -2165,38 +2175,34 @@ function renderDevices() {
         const isOn = Number(device.enabled) !== 0;
         const room = roomName(device.room_id);
         const ambient = device.current?.ambient ?? device.current?.wiser_ambient;
-        const toggle = withToggle
-          ? `<button class="btn btn-sm device-toggle${isOn ? " is-on" : ""}" type="button" data-toggle-device="${device.device_id}" aria-pressed="${isOn}" title="${isOn ? "Désactiver le pilotage" : "Activer le pilotage"}">${icon("power", 14)}<span>${isOn ? "Désactiver" : "Activer"}</span></button>`
-          : "";
-        return `<div class="settings-row">
-          <div class="sr-main">
-            <div class="device-line">
-              <span class="sr-title${isOn ? "" : " is-off"}">${escapeHtml(device.name)}</span>
-              <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>
-            </div>
-            <div class="sr-sub">
-              ${escapeHtml(room || "Sans pièce")} · ${fmtTemp(ambient)} °C
-              · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
-              ${isOn ? "" : " · pilotage désactivé"}
-              ${device.current?.available === false ? " · hors ligne" : ""}
-            </div>
-          </div>
-          <div class="sr-control">
-            ${toggle}
+        const control = withToggle
+          ? `${deviceSwitch(
+              `data-toggle-device="${device.device_id}"`,
+              isOn,
+              isOn ? "Désactiver le pilotage" : "Activer le pilotage"
+            )}
             <button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}">${icon("edit", 18)}</button>
-            <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}">${icon("trash", 18)}</button>
-          </div>
-        </div>`;
+            <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}">${icon("trash", 18)}</button>`
+          : `<button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}">${icon("edit", 18)}</button>
+            <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}">${icon("trash", 18)}</button>`;
+        return row(
+          `${escapeHtml(device.name)} <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>`,
+          `${escapeHtml(room || "Sans pièce")} · ${fmtTemp(ambient)} °C
+            · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
+            ${isOn ? "" : " · pilotage désactivé"}
+            ${device.current?.available === false ? " · hors ligne" : ""}`,
+          control
+        );
       })
       .join("");
 
-    host.querySelectorAll("[data-toggle-device]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const id = Number(button.dataset.toggleDevice);
+    host.querySelectorAll("[data-toggle-device]").forEach((input) => {
+      input.addEventListener("change", async () => {
+        const id = Number(input.dataset.toggleDevice);
         const device = (store.state?.devices || []).find((item) => Number(item.device_id) === id);
         if (!device) return;
-        const next = Number(device.enabled) === 0 ? 1 : 0;
-        button.disabled = true;
+        const next = input.checked ? 1 : 0;
+        input.disabled = true;
         try {
           await put(`/api/devices/${id}`, { enabled: next });
           await refreshState({ silent: true });
@@ -2205,8 +2211,9 @@ function renderDevices() {
           toast(next ? "Pilotage activé." : "Pilotage désactivé.");
         } catch (err) {
           toastError(err);
+          input.checked = !input.checked;
         } finally {
-          button.disabled = false;
+          input.disabled = false;
         }
       });
     });
@@ -2249,28 +2256,25 @@ function renderDevices() {
   // appareils à piloter séparément).
   const wiserOn = wiserDevices.length > 0 && wiserDevices.every((d) => Number(d.enabled) !== 0);
   const wiserHeader = wiserDevices.length
-    ? `<div class="settings-row">
-        <div class="sr-main">
-          <div class="device-line">
-            <span class="sr-title${wiserOn ? "" : " is-off"}">Wiser (toutes les pièces)</span>
-            <span class="pill pill-accent">Wiser</span>
-          </div>
-          <div class="sr-sub">${wiserDevices.length} zone${wiserDevices.length > 1 ? "s" : ""} · ${wiserOn ? "pilotage actif" : "pilotage désactivé"}</div>
-        </div>
-        <div class="sr-control">
-          <button class="btn btn-sm device-toggle${wiserOn ? " is-on" : ""}" type="button" data-toggle-wiser aria-pressed="${wiserOn}" title="${wiserOn ? "Désactiver tout Wiser" : "Activer tout Wiser"}">${icon("power", 14)}<span>${wiserOn ? "Désactiver" : "Activer"}</span></button>
-        </div>
-      </div>`
+    ? row(
+        `Wiser (toutes les pièces) <span class="pill pill-accent">Wiser</span>`,
+        `${wiserDevices.length} zone${wiserDevices.length > 1 ? "s" : ""} · ${wiserOn ? "pilotage actif" : "pilotage désactivé"}`,
+        deviceSwitch(
+          "data-toggle-wiser",
+          wiserOn,
+          wiserOn ? "Désactiver tout Wiser" : "Activer tout Wiser"
+        )
+      )
     : "";
   renderOne(wiserHost, wiserDevices, "Configure le Hub Wiser puis synchronise pour découvrir les zones.", {
     withToggle: false,
     header: wiserHeader,
   });
 
-  wiserHost.querySelectorAll("[data-toggle-wiser]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const enable = button.getAttribute("aria-pressed") !== "true";
-      button.disabled = true;
+  wiserHost.querySelectorAll("[data-toggle-wiser]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const enable = Boolean(input.checked);
+      input.disabled = true;
       try {
         for (const device of wiserDevices) {
           if ((Number(device.enabled) !== 0) === enable) continue;
@@ -2282,8 +2286,9 @@ function renderDevices() {
         toast(enable ? "Wiser activé." : "Wiser désactivé.");
       } catch (err) {
         toastError(err);
+        input.checked = !input.checked;
       } finally {
-        button.disabled = false;
+        input.disabled = false;
       }
     });
   });

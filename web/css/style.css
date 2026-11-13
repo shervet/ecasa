@@ -2431,7 +2431,7 @@ svg {
   border-bottom: 1px solid var(--line);
 }
 
-/* Bouton Activer/Désactiver collé au nom de l'appareil. */
+/* Interrupteur d'appareil : icône puissance + switch, aligné à droite. */
 .device-line {
   display: flex;
   align-items: center;
@@ -2439,25 +2439,24 @@ svg {
   flex-wrap: wrap;
 }
 
-.device-toggle {
-  flex: none;
-  font-weight: 650;
+.device-power {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface-2);
-  color: var(--text);
+  flex: none;
+  color: var(--muted);
 }
 
-.device-toggle.is-on {
+.device-power.is-on {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  background: var(--accent-soft);
 }
 
-.device-toggle:disabled {
-  opacity: .6;
+.device-power svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-row .sr-control .switch {
+  flex: none;
 }
 
 .sr-title.is-off {
