@@ -24,6 +24,8 @@ Toutes les routes renvoient du JSON. Le serveur écoute sur `http://<hôte>:<por
 | PUT | `/api/settings` | Moteur, alternance A/B, défauts climatisation. |
 | GET | `/api/weeks` | Surcharges de semaine A/B. |
 | PUT | `/api/weeks` | Enregistre les surcharges. |
+| GET | `/api/models` | Liste les modèles de planning (persistés côté serveur). |
+| PUT | `/api/models` | Enregistre l'ensemble des modèles (`{"models":[...]}`). |
 
 ## Pièces, appareils, planning
 
@@ -81,7 +83,7 @@ Le catalogue (libellés, champs, état) est exposé par `GET /api/meta` (clé
 | GET | `/api/stats?range=day\|week\|month&date=…&room_id=…` | Statistiques thermiques. |
 | GET | `/api/weather` | Météo et température extérieure. |
 | GET | `/api/weather/search?q=…` | Recherche de ville. |
-| GET | `/api/energy?view=day\|week\|month\|year&month=…&refresh=1` | Consommation électrique. |
+| GET | `/api/energy?view=day\|week\|month\|year&month=…&refresh=1` | Consommation électrique (cache local `data/energy.json`, repli sur les données locales avec `warning` si MED indisponible). |
 | POST | `/api/energy/test` | Teste le jeton et le PDL. |
 
 ## Journal, sauvegarde, exploitation

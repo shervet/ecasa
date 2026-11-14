@@ -50,12 +50,12 @@ bonnes consignes.
 | **Climatisation Atlantic** | Modes chaud/froid/déshumidification/ventilation, soufflerie et orientation du flux appliquées à chaque cycle. |
 | **Schneider Wiser** | Découverte du hub sur le réseau local, lecture des plannings, import dans eCasa. |
 | **Autres systèmes** | Daikin (local), Bosch (contrôleur Smart Home), Netatmo et Mitsubishi (MELCloud) : lecture des appareils et envoi de consignes depuis Réglages → Appareils. |
-| **Planning** | Agenda 24 h par pièce, créneaux tactiles, modèles de semaine, copie A↔B, surcharges. |
+| **Planning** | Agenda 24 h par pièce, créneaux tactiles, modèles de semaine (enregistrés sur le serveur), copie A↔B, surcharges. |
 | **Pronote** | Import des semaines A et B, mise à jour quotidienne à l'heure choisie (ou désactivée), gestion de la garde alternée. |
 | **Météo** | Température extérieure Open-Meteo, sans clé d'API. |
 | **Statistiques** | Ambiance / consigne / extérieur, consommation électrique Enedis multi-années. |
 | **Journal** | Événements filtrables, recherche, export JSON. |
-| **Sauvegarde** | Export/import complet de l'état et des réglages. |
+| **Sauvegarde** | Export/import complet de l'état et des réglages (interface et scripts). |
 | **Accès distant** | Tailscale intégré (HTTPS, MagicDNS) et application Android (APK signé, accès direct avec VPN Tailscale). |
 
 ## eCasa, Home Assistant et Jeedom
@@ -177,7 +177,7 @@ Guide détaillé : [docs/installation.md](docs/installation.md).
 | ![Accueil](docs/screenshots/home.png) | ![Planning](docs/screenshots/planning.png) | ![Statistiques](docs/screenshots/stats.png) |
 
 **Consommation électrique** — comparaison des mêmes périodes d'une année sur l'autre,
-via MyElectricalData (Enedis) :
+via MyElectricalData (Enedis) : Les données sont mises en cache localement (`data/energy.json`) et, en cas d'indisponibilité MyElectricalData/Enedis, les dernières mesures connues restent affichées avec un avertissement.
 
 ![Consommation électrique](docs/screenshots/stats-consommation.png)
 

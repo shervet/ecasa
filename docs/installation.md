@@ -121,10 +121,14 @@ Puis ouvrir `https://ecasa.<tailnet>.ts.net/`.
 
 ## Sauvegarde et restauration
 
-- **Réglages → Stockage** : export JSON complet (état + réglages), import pour restaurer.
-- À sauvegarder également : `config.json` et le dossier `data/` (état + historique).
+- **Réglages → Stockage** : export/import JSON complet (état + réglages) depuis l'interface.
+- **Scripts en ligne de commande** (sauvegarde de `config.json`, `data/state.json`, `data/history/` et `data/energy.json` dans un zip) :
+  - Linux : `./export-config.sh [archive.zip]` / `./import-config.sh <archive.zip>`
+  - Windows : `export-config.bat [archive.zip]` / `import-config.bat <archive.zip>`
+  - L'import sauvegarde les fichiers remplacés dans `config-backup-YYYYMMDD-HHMMSS/`.
+- À sauvegarder également, au besoin, l'ensemble du dossier `data/` (état, historique, synchronisation).
 
-Une sauvegarde régulière du dossier complet suffit à tout restaurer.
+Une sauvegarde régulière suffit à tout restaurer (y compris les modèles de planning et le cache de consommation).
 
 ## Mise à jour
 

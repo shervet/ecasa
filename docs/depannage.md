@@ -28,6 +28,7 @@
 | Consigne non appliquée | Appareil en forçage | Annuler le forçage (il expire tout seul). |
 | Créneaux verrouillés dans le Planning | Jour géré par Pronote | Import partiel : seuls les créneaux Pronote sont verrouillés ; le reste est modifiable. |
 | La semaine A ne change pas | Mode d'alternance | Réglages → Semaines A/B : parité ISO ou « Pas d'alternance ». |
+| Modèles disparus après nettoyage navigateur | Anciens modèles stockés localement | Les modèles sont désormais enregistrés côté serveur (`data/state.json`) via le bouton « Enregistrer » de la page Modèles ; ils sont migrés automatiquement au premier chargement si présents sur l'appareil. |
 | « La consigne n'a pas été confirmée » | Ordre Atlantic lent | C'est un **avertissement**, pas une erreur : l'ordre est généralement appliqué avec du retard. |
 
 ## Pronote
@@ -66,7 +67,7 @@
 | Symptôme | Cause | Solution |
 | --- | --- | --- |
 | Aucune donnée Enedis | Jeton ou PDL invalide | Réglages → Électricité → « Tester la connexion ». |
-| Quota dépassé | Trop d'appels | Les appels sont mis en cache 24 h ; ne pas utiliser `refresh=1` en boucle. |
+| Quota dépassé / erreur MyElectricalData | Quota ou indisponibilité amont | Les mesures sont mises en cache localement (`data/energy.json`) et seules les dates manquantes/la semaine récente sont redemandées. En cas d'erreur, eCasa affiche les données locales connues avec un avertissement. |
 | Historique vide au début | Date de début | Laisser « Début de l'historique » vide pour 3 ans. |
 
 ## Obtenir de l'aide

@@ -15,6 +15,7 @@ source de vérité au démarrage et reste modifiable à la main si besoin.
 | `data/state.json` | Snapshot de l'état (pièces, appareils, plannings, journal) | Non |
 | `data/history/` | Historique horaire append-only | Non |
 | `data/sync.json` | État de la synchro quotidienne | Non |
+| `data/energy.json` | Cache local de la consommation électrique (MyElectricalData) | Non |
 
 ## Clés de `config.json`
 
@@ -85,6 +86,7 @@ configurations.
 | `med_token` | vide | Jeton personnel (validité un an). |
 | `med_pdl` | vide | Numéro de PDL (14 chiffres). |
 | `med_start` | vide | Début d'historique (`AAAA-MM-JJ`), vide = 3 ans. |
+| `energy_file` | `data/energy.json` | Cache local des mesures journalières. |
 
 ### Connecteurs d'autres systèmes
 

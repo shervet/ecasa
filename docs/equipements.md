@@ -108,7 +108,7 @@ Le planning est un agenda 24 h par pièce, sur deux semaines (**A** et **B**) :
 - créer, déplacer, supprimer un créneau ;
 - dupliquer un jour ou une semaine ;
 - copier la semaine A vers B (et inversement) ;
-- enregistrer des **modèles** de semaine réutilisables ;
+- enregistrer des **modèles** de semaine réutilisables (persistés côté serveur dans `data/state.json`, bouton « Enregistrer » sur la page Modèles pour sauvegarder l'ensemble des modifications) ;
 - appliquer des **surcharges** ponctuelles sans modifier le planning de base.
 
 Un créneau définit une heure de début, un mode et une consigne. Le créneau s'applique
