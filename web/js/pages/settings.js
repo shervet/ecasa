@@ -41,6 +41,7 @@ const STUDENT_STATUSES = [
 let root = null;
 let weeks = {};
 let tailscale = null;
+let updateInfo = null;
 let pronoteResults = null;
 
 /* --------------------------------------------------------------- helpers */
@@ -226,6 +227,7 @@ export default {
           ${devicesSection()}
           ${pronoteSection()}
           ${serverSection()}
+          ${updateSection()}
           ${tailscaleSection()}
           ${storageSection()}
           ${energySection()}
@@ -244,6 +246,7 @@ export default {
     renderSystem();
     await loadWeeks();
     await loadTailscale();
+    await loadUpdate();
 
     // Lien profond depuis le Planning : #/settings/pronote ouvre la section.
     const parts = location.hash.replace(/^#\/?/, "").split("/");
@@ -1151,6 +1154,44 @@ function tailscaleSection() {
   );
 }
 
+function updateSection() {
+  const data = updateInfo;
+  const current = store.system?.app?.version || "";
+  const commit = data?.current || "";
+  const isGit = data ? data.is_git !== false : true;
+  const checking = data === null;
+  const available = Boolean(data?.available);
+  const behind = data?.behind || 0;
+  const remote = data?.remote || "";
+  const disabled = checking || !available;
+  return section(
+    "update",
+    "Mise à jour",
+    "refresh",
+    `<p class="hint">Met à jour eCasa depuis le dépôt Git (git pull), puis redémarre le serveur. Réservé à la machine locale.</p>
+    ${row("Version actuelle", "", `<span class="tiny mono">${escapeHtml(current)}${commit ? " (" + escapeHtml(commit) + ")" : ""}</span>`)}
+    ${row(
+      "État",
+      "",
+      checking
+        ? '<span class="hint">Vérification en cours…</span>'
+        : !isGit
+          ? '<span class="hint is-bad">eCasa n\'est pas installé depuis Git : mise à jour automatique indisponible.</span>'
+          : data?.error
+            ? `<span class="hint is-bad">${escapeHtml(data.error)}</span>`
+            : available
+              ? `<span class="hint is-ok">${behind} commit${behind > 1 ? "s" : ""} en attente${remote ? " (cible " + escapeHtml(remote) + ")" : ""}.</span>`
+              : '<span class="hint is-ok">À jour : aucune mise à jour disponible.</span>'
+    )}
+    <div class="row wrap mt-2" style="gap:8px">
+      <button class="btn btn-sm" type="button" id="updateCheck">${icon("refresh", 14)} Vérifier</button>
+      <button class="btn btn-primary" type="button" id="updateApply" ${disabled ? "disabled" : ""}>${icon("download", 14)} Mettre à jour</button>
+    </div>
+    ${available ? '<p class="hint mt-1">La mise à jour télécharge le code, installe les dépendances, puis redémarre le serveur (quelques secondes d\'interruption).</p>' : '<p class="hint mt-1">Le bouton est désactivé tant qu\'aucune mise à jour n\'est disponible.</p>'}`,
+    ""
+  );
+}
+
 function supportSection() {
   const donate = String(SITE.donateUrl || "").trim();
   const link = (url, iconName, label) =>
@@ -1448,6 +1489,8 @@ function bind() {
   root.querySelector("#importFile")?.addEventListener("change", importData);
 
   root.querySelector("#tailscaleRefresh")?.addEventListener("click", loadTailscale);
+  root.querySelector("#updateCheck")?.addEventListener("click", loadUpdate);
+  root.querySelector("#updateApply")?.addEventListener("click", updateAction);
   root.querySelector("#tailscaleHelp")?.addEventListener("click", openTailscaleHelp);
   root.querySelector("#energyHelp")?.addEventListener("click", openEnergyHelp);
   root.querySelector("#tsUp")?.addEventListener("click", () => tailscaleAction("up"));
@@ -1576,6 +1619,7 @@ async function saveSection(name, button) {
       toast("Réglages enregistrés.");
       if (name === "weather") window.refreshWeather?.();
       if (name === "tailscale") await loadTailscale();
+      if (name === "update") await loadUpdate();
       if (name === "pronote") await refreshState({ silent: true });
       if (payload.restart_required) showRestartBanner();
     }
@@ -2721,6 +2765,43 @@ function openTailscaleHelp() {
     sheet.close();
     loadTailscale();
   });
+}
+
+async function loadUpdate() {
+  const sec = root?.querySelector("#sec-update");
+  try {
+    updateInfo = await get("/api/update/check");
+  } catch (err) {
+    updateInfo = { is_git: false, error: err.message || String(err), available: false };
+  }
+  if (sec) {
+    sec.outerHTML = updateSection();
+    root.querySelector("#updateCheck")?.addEventListener("click", loadUpdate);
+    root.querySelector("#updateApply")?.addEventListener("click", updateAction);
+  }
+}
+
+async function updateAction() {
+  const button = root?.querySelector("#updateApply");
+  if (button) button.disabled = true;
+  let failure = null;
+  try {
+    const payload = await post("/api/update/apply");
+    const message = payload.detail || payload.output || "Terminé.";
+    toast(message, { type: payload.ok ? "info" : "error", timeout: 10000 });
+    if (payload.command && !payload.ok) {
+      toast(`Commande : ${payload.command}`, { type: "info", timeout: 12000 });
+    }
+    if (payload.ok) {
+      toast("Redémarrage du serveur en cours… la page va se recharger.", { type: "info", timeout: 8000 });
+      setTimeout(() => location.reload(), 4000);
+    }
+  } catch (err) {
+    failure = err;
+    toast(err.message || String(err), { type: "error", timeout: 10000 });
+  }
+  if (button) button.disabled = false;
+  await loadUpdate();
 }
 
 async function loadTailscale() {

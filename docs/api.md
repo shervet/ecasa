@@ -110,6 +110,13 @@ l'interface le lit depuis l'état temps réel, sans route dédiée.
 | POST | `/api/tailscale/install` | Installe / désinstalle le client. |
 | POST | `/api/tailscale/uninstall` | Désinstalle le client. |
 
+## Mise à jour
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/update/check` | Vérifie si une mise à jour est disponible sur origin (git fetch + comparaison). |
+| POST | `/api/update/apply` | Applique la mise à jour (git pull + dépendances) puis redémarre le serveur. |
+
 ## Exemples
 
 ```bash

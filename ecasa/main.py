@@ -320,7 +320,7 @@ def requires_local_admin(path: str) -> bool:
         (
             "/api/config", "/api/control/", "/api/pronote/", "/api/tailscale/",
             "/api/storage/", "/api/wiser/find", "/api/system",
-            "/api/energy/test",
+            "/api/energy/test", "/api/update/",
         )
     ) or path in ("/api/import", "/api/export")
 
@@ -1844,6 +1844,112 @@ def tailscale_uninstall() -> dict:
     return {"ok": False, "detail": "Systeme non pris en charge.", "command": ""}
 
 
+# ------------------------------------------------------------------ mise à jour (git)
+def ecasa_git_root() -> Path | None:
+    """Racine du dépôt git d'eCasa, ou None si installé hors git (archive)."""
+    try:
+        if (ROOT / ".git").exists():
+            return ROOT
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _git(args: list[str], timeout: int = 60) -> tuple[int, str]:
+    root = ecasa_git_root()
+    if root is None:
+        return 1, "Dépôt git introuvable (installation hors git)."
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as err:
+        return 1, str(err)
+    detail = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return proc.returncode, detail
+
+
+def ecasa_current_commit() -> str:
+    code, out = _git(["rev-parse", "--short", "HEAD"], timeout=10)
+    return out.strip() if code == 0 else ""
+
+
+def ecasa_update_branch() -> str:
+    code, out = _git(["symbolic-ref", "refs/remotes/origin/HEAD"], timeout=10)
+    if code == 0 and out.strip():
+        return out.strip().rsplit("/", 1)[-1]
+    return "main"
+
+
+def ecasa_update_check() -> dict:
+    """Vérifie si une mise à jour est disponible sur origin (sans l'appliquer)."""
+    result: dict = {
+        "available": False,
+        "current": ecasa_current_commit(),
+        "remote": "",
+        "behind": 0,
+        "branch": "",
+        "is_git": ecasa_git_root() is not None,
+        "error": None,
+    }
+    if not result["is_git"]:
+        result["error"] = (
+            "eCasa n'est pas installé depuis git : mise à jour automatique indisponible."
+        )
+        return result
+    branch = ecasa_update_branch()
+    result["branch"] = branch
+    code, out = _git(["fetch", "origin", "--quiet"], timeout=30)
+    if code != 0:
+        result["error"] = out or "Échec du git fetch (réseau ?)."
+        return result
+    code, out = _git(["rev-parse", "--short", f"origin/{branch}"], timeout=10)
+    if code == 0:
+        result["remote"] = out.strip()
+    code, out = _git(["rev-list", "--count", f"HEAD..origin/{branch}"], timeout=10)
+    if code == 0:
+        try:
+            result["behind"] = int(out.strip())
+        except ValueError:
+            result["behind"] = 0
+    result["available"] = result["behind"] > 0
+    return result
+
+
+def ecasa_update_apply() -> dict:
+    """Applique la mise à jour (git pull) + dépendances, sans redémarrer."""
+    root = ecasa_git_root()
+    if root is None:
+        return {"ok": False, "detail": "Dépôt git introuvable.", "command": ""}
+    branch = ecasa_update_branch()
+    code, detail = _git(["pull", "--ff-only", "origin", branch], timeout=180)
+    if code != 0:
+        return {
+            "ok": False,
+            "detail": detail or ("code %d" % code),
+            "command": f"git pull --ff-only origin {branch}",
+        }
+    req = root / "requirements.txt"
+    if req.exists():
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-r", str(req)],
+                cwd=str(root), capture_output=True, text=True, timeout=180, check=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "ok": True,
+        "detail": detail or "Mise à jour appliquée.",
+        "command": f"git pull --ff-only origin {branch}",
+    }
+
+
 def apply_tailscale_startup(config: dict) -> dict:
     """Au démarrage : connecte le nœud et publie eCasa si demandé.
 
@@ -2636,6 +2742,23 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 result = tailscale_uninstall()
                 self._json(200, result)
+            except Exception as err:  # noqa: BLE001
+                self._json(500, {"error": str(err)})
+            return
+
+        if method == "GET" and path == "/api/update/check":
+            try:
+                self._json(200, ecasa_update_check())
+            except Exception as err:  # noqa: BLE001
+                self._json(500, {"error": str(err)})
+            return
+
+        if method == "POST" and path == "/api/update/apply":
+            try:
+                result = ecasa_update_apply()
+                self._json(200, result)
+                if result.get("ok"):
+                    self._schedule_shutdown(restart=True)
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
             return
