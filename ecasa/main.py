@@ -44,7 +44,7 @@ from .energy import (
     test_energy,
 )
 from .engine import Engine, _caps, _mode_value, device_name
-from .external_services import restart_external_services
+from .external_services import _run, restart_external_services
 from .find_wiser import scan_network
 from .pronote import (
     STUDENT_STATUSES,
@@ -1788,12 +1788,18 @@ def tailscale_install() -> dict:
     import platform as _platform
     system = _platform.system().lower()
     if system == "linux":
-        code, detail = _run(
-            ["sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
-            timeout=300,
-        )
+        command = "curl -fsSL https://tailscale.com/install.sh | sh"
+        args = ["sh", "-c", command]
+        # Le script d'installation requiert root : en dev (SSH/terminal),
+        # on relève via sudo ; sous le service systemd (sans privilèges),
+        # l'échec est renvoyé avec un message clair.
+        if os.geteuid() != 0:
+            if not shutil.which("sudo"):
+                return {"ok": False, "detail": "Droits root requis : lance eCasa avec sudo ou installe Tailscale manuellement.", "command": f"sudo {command}"}
+            args = ["sudo", "sh", "-c", command]
+        code, detail = _run(args, timeout=300)
         if code != 0:
-            return {"ok": False, "detail": detail or ("code %d" % code), "command": "curl -fsSL https://tailscale.com/install.sh | sh"}
+            return {"ok": False, "detail": detail or ("code %d" % code), "command": command}
         return {"ok": True, "detail": detail or "Tailscale installe"}
     if system == "darwin":
         return {"ok": False, "detail": "Installation manuelle requise sur macOS.", "command": "brew install --cask tailscale"}
@@ -1814,12 +1820,15 @@ def tailscale_uninstall() -> dict:
     import platform as _platform
     system = _platform.system().lower()
     if system == "linux":
-        code, detail = _run(
-            ["sh", "-c", "apt-get remove -y tailscale || dnf remove -y tailscale"],
-            timeout=300,
-        )
+        command = "apt-get remove -y tailscale || dnf remove -y tailscale"
+        args = ["sh", "-c", command]
+        if os.geteuid() != 0:
+            if not shutil.which("sudo"):
+                return {"ok": False, "detail": "Droits root requis pour désinstaller Tailscale.", "command": f"sudo {command}"}
+            args = ["sudo", "sh", "-c", command]
+        code, detail = _run(args, timeout=300)
         if code != 0:
-            return {"ok": False, "detail": detail or ("code %d" % code), "command": "sudo apt-get remove -y tailscale"}
+            return {"ok": False, "detail": detail or ("code %d" % code), "command": f"sudo {command}"}
         return {"ok": True, "detail": detail or "Tailscale desinstalle"}
     if system == "darwin":
         return {"ok": False, "detail": "Desinstallation manuelle requise sur macOS.", "command": "brew uninstall --cask tailscale"}

@@ -21,6 +21,18 @@ fi
 apt-get update
 apt-get install -y python3-venv python3-pip
 
+# Tailscale (facultatif) : installe le client si absent, sans bloquer l'installation.
+# On le fait ici (root) car le service eCasa tourne sans privilèges : le bouton
+# « Installer » de l'interface ne peut pas passer les droits sur un Pi.
+if ! command -v tailscale >/dev/null 2>&1; then
+    if curl -fsSL https://tailscale.com/install.sh | sh; then
+        echo "→ Tailscale installé."
+    else
+        echo "⚠ Tailscale non installé (réseau indisponible ?). Réessaie plus tard avec :"
+        echo "  curl -fsSL https://tailscale.com/install.sh | sh"
+    fi
+fi
+
 if [ ! -d "$APP_DIR/.venv" ]; then
     sudo -u "$RUN_USER" python3 -m venv "$APP_DIR/.venv"
 fi
