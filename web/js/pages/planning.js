@@ -533,16 +533,40 @@ function paintPlanNav() {
       const next = button.dataset.week;
       if (!next || next === week) return;
       if (dirty && !confirm("Des modifications ne sont pas enregistrées. Changer de semaine ?")) return;
+
+      const navEl = root?.querySelector("#planNav");
+      const offset =
+        (document.querySelector(".topbar")?.offsetHeight || 64) +
+        (navEl?.offsetHeight || 0) +
+        8;
+      let anchorId = null;
+      root?.querySelectorAll("[data-room-anchor]").forEach((el) => {
+        if (anchorId) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > offset + 1) anchorId = el.dataset.roomAnchor;
+      });
+      const scrollY = window.scrollY;
+
       week = next;
       setPref("week", week);
       rebuildModels();
       dirty = false;
-      const scrollY = window.scrollY;
       paintWeekSwitch();
       paintRooms();
       paintDirty();
       paintSub();
-      requestAnimationFrame(() => window.scrollTo(0, scrollY));
+
+      requestAnimationFrame(() => {
+        if (anchorId) {
+          const el = root?.querySelector(`[data-room-anchor="${anchorId}"]`);
+          if (el) {
+            const top = el.getBoundingClientRect().top + window.scrollY - offset;
+            window.scrollTo(0, top);
+            return;
+          }
+        }
+        window.scrollTo(0, scrollY);
+      });
     });
   });
 
