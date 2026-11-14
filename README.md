@@ -61,8 +61,7 @@ bonnes consignes.
 ## eCasa, Home Assistant et Jeedom
 
 eCasa n'est **pas** une plateforme domotique généraliste : c'est un outil spécialisé,
-volontairement petit, pour le chauffage/clim et le planning familial. (Joomla est un CMS
-web, sans rapport avec le pilotage thermique.)
+volontairement petit, pour le chauffage/clim et le planning familial. 
 
 | Critère | **eCasa** | Home Assistant | Jeedom |
 | --- | --- | --- | --- |
