@@ -97,6 +97,11 @@ il ne doit **jamais** être versionné ni partagé.
 - `host: "0.0.0.0"` : accessible depuis le réseau local (recommandé pour téléphone/tablette).
 - `allow_remote_admin: false` : les routes sensibles (réglages, Pronote, arrêt) restent
   réservées à la machine locale. À n'activer que sur un réseau de confiance.
+- Le serveur parle **HTTP**. Pour un accès sécurisé — et pour les fonctions PWA
+  (service worker, mode hors ligne, rafraîchissement complet) — passer par l'adresse
+  **HTTPS** Tailscale `https://ecasa.<tailnet>.ts.net/`, même à la maison. En
+  `http://192.168.x.x:8780`, le navigateur considère la page comme un contexte non
+  sécurisé et désactive le service worker.
 
 ## Installer la PWA
 
@@ -118,6 +123,22 @@ tailscale serve --bg --set-path=/ http://127.0.0.1:8780
 ```
 
 Puis ouvrir `https://ecasa.<tailnet>.ts.net/`.
+
+Le certificat est émis automatiquement par Tailscale (Let's Encrypt) pour
+`<nœud>.<tailnet>.ts.net` : rien à acheter ni à installer, et le service n'est
+joignable que depuis le tailnet (aucune exposition sur Internet). Dans eCasa,
+`tailscale_auto_serve: true` (Réglages → Tailscale → **Publier**) republie ce proxy
+à chaque démarrage.
+
+Après un renommage du nœud, l'ancienne adresse peut rester publiée. Pour repartir
+propre :
+
+```bash
+tailscale serve reset
+tailscale serve --bg --set-path=/ http://127.0.0.1:8780
+```
+
+Vérifier ensuite que seule l'adresse courante apparaît : `tailscale serve status`.
 
 ## Sauvegarde et restauration
 

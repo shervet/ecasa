@@ -103,6 +103,10 @@ configurations.
 | `tailscale_bin` | vide | Chemin du binaire si absent du `PATH`. |
 | `tailscale_authkey` | vide | Clé d'authentification (optionnelle). |
 
+> Le serveur écoute en **HTTP** ; `tailscale_auto_serve` publie un proxy **HTTPS**
+> (certificat Let's Encrypt de `*.ts.net`) accessible uniquement depuis le tailnet.
+> Détails : [installation.md](installation.md).
+
 ### Stockage basse consommation
 
 | Clé | Défaut | Rôle |

@@ -201,6 +201,9 @@ Et l'application installée sur téléphone (PWA, installable depuis le navigate
   (`allow_remote_admin: false`).
 - Les mots de passe et jetons ne sont jamais renvoyés à l'interface.
 - Pour l'accès distant, préférer **Tailscale** à l'ouverture d'un port sur la box.
+- Le serveur écoute en **HTTP** sur le réseau local ; l'accès distant est en **HTTPS**
+  via Tailscale (`https://ecasa.<tailnet>.ts.net/`, certificat Let's Encrypt émis
+  automatiquement, trafic limité au tailnet). C'est l'adresse par défaut de l'APK.
 
 Voir [SECURITY.md](SECURITY.md) pour signaler une vulnérabilité.
 
