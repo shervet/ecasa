@@ -249,10 +249,6 @@ export default {
 
         <div class="planning-toolbar">
           <div class="row wrap" style="gap:10px;align-items:center">
-            <div class="week-switch" id="planWeekSwitch">
-              <button type="button" data-week="A">Semaine A</button>
-              <button type="button" data-week="B">Semaine B</button>
-            </div>
             <span class="pill pill-ghost" id="planDirty">À jour</span>
             <button class="btn btn-sm" type="button" id="planCopy">${icon("copy", 15)} Copier vers l'autre semaine</button>
           </div>
@@ -306,11 +302,11 @@ export default {
       return;
     }
 
-    paintPlanNav();
+    // Par défaut : semaine courante.
+    week = store.state?.week || "A";
+    setPref("week", week);
 
-    week = defaultPlanningWeek();
-    // N'écrase la préférence utilisateur que si elle n'est pas encore définie.
-    if (!store.prefs.week) setPref("week", week);
+    paintPlanNav();
 
     if (!targets.length) return;
     target = pickTarget();
@@ -337,21 +333,6 @@ export default {
     const roomOptions = targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("");
     if (presetRoomSelect) presetRoomSelect.innerHTML = roomOptions;
 
-    view.querySelectorAll("[data-week]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const next = button.dataset.week;
-        if (next === week) return;
-        if (dirty && !confirm("Des modifications ne sont pas enregistrées. Changer de semaine ?")) return;
-        week = next;
-        setPref("week", week);
-        rebuildModels();
-        dirty = false;
-        paintWeekSwitch();
-        paintRooms();
-        paintDirty();
-        paintSub();
-      });
-    });
 
     view.querySelector("#planSave").addEventListener("click", save);
     view.querySelector("#planCopy").addEventListener("click", copyToOtherWeek);
@@ -535,9 +516,33 @@ function keepLockedDays(t, weekKey, previous, next) {
 function paintPlanNav() {
   const nav = root?.querySelector("#planNav");
   if (!nav) return;
-  let html = targets.map((t) => `<button type="button" class="plan-nav-btn" data-jump-room="${t.id}">${escapeHtml(t.label)}</button>`).join("");
+  const weekSwitch = `
+    <div class="week-switch" id="planWeekSwitch" style="flex:none">
+      <button type="button" data-week="A">Semaine A</button>
+      <button type="button" data-week="B">Semaine B</button>
+    </div>`;
+  let html = weekSwitch;
+  html += targets
+    .map((t) => `<button type="button" class="plan-nav-btn" data-jump-room="${t.id}">${escapeHtml(t.label)}</button>`)
+    .join("");
   html += `<button type="button" class="plan-nav-btn" data-jump-models>Modèles</button>`;
   nav.innerHTML = html;
+
+  nav.querySelectorAll("[data-week]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = button.dataset.week;
+      if (!next || next === week) return;
+      if (dirty && !confirm("Des modifications ne sont pas enregistrées. Changer de semaine ?")) return;
+      week = next;
+      setPref("week", week);
+      rebuildModels();
+      dirty = false;
+      paintWeekSwitch();
+      paintRooms();
+      paintDirty();
+      paintSub();
+    });
+  });
 
   nav.querySelectorAll("[data-jump-room]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -559,6 +564,8 @@ function paintPlanNav() {
       window.scrollTo({ top, behavior: "smooth" });
     });
   });
+
+  paintWeekSwitch();
 }
 
 function paintSub() {
