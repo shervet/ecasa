@@ -162,6 +162,7 @@ MIME_OVERRIDES = {
 
 _config_cache: dict | None = None
 _config_lock = threading.Lock()
+_config_write_lock = threading.Lock()  # sérialise les écritures de config.json
 
 
 # --------------------------------------------------------------------- config
@@ -453,9 +454,24 @@ def validate_med_values(body: dict) -> dict:
     return values
 
 
+def _write_config_locked(config: dict) -> dict:
+    CONFIG_PATH.write_text(
+        json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    global _config_cache
+    with _config_lock:
+        _config_cache = dict(config)
+    return config
+
+
 def save_config(body: dict) -> tuple[dict, bool]:
     """Applique les changements et indique si un redémarrage est requis."""
-    current = load_config()
+    with _config_write_lock:
+        return _save_config_locked(body)
+
+
+def _save_config_locked(body: dict) -> tuple[dict, bool]:
+    current = load_config(force=True)
     updated = dict(current)
 
     if "email" in body:
@@ -752,13 +768,7 @@ def save_config(body: dict) -> tuple[dict, bool]:
         )
     )
 
-    CONFIG_PATH.write_text(
-        json.dumps(updated, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    global _config_cache
-    with _config_lock:
-        _config_cache = dict(updated)
-    return updated, restart
+    return _write_config_locked(updated), restart
 
 
 def merge_pronote_config(current: dict, body: dict) -> dict:
@@ -1230,12 +1240,10 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
             app.store.log("warn", f"Synchronisation Pronote échouée pour la pièce {rid} : {err}")
     if not all_starts:
         return {"ok": False, "skipped": "error"}
-    CONFIG_PATH.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    global _config_cache
-    with _config_lock:
-        _config_cache = dict(config)
+    with _config_write_lock:
+        fresh = load_config(force=True)
+        fresh["pronote_school_days"] = config.get("pronote_school_days") or {}
+        _write_config_locked(fresh)
     app.store.log(
         "info",
         "Planning Pronote synchronisé automatiquement.",
@@ -3008,13 +3016,11 @@ class Handler(BaseHTTPRequestHandler):
                 # Les semaines non importées doivent redevenir modifiables :
                 # on efface leurs jours « Pronote » enregistrés.
                 _sync_pronote_links(config, target_id, linked)
-                CONFIG_PATH.write_text(
-                    json.dumps(config, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-                global _config_cache
-                with _config_lock:
-                    _config_cache = dict(config)
+                with _config_write_lock:
+                    fresh = load_config(force=True)
+                    fresh["pronote_weeks"] = config.get("pronote_weeks") or []
+                    fresh["pronote_school_days"] = config.get("pronote_school_days") or {}
+                    _write_config_locked(fresh)
 
             detail = ", ".join(
                 f"semaine {target} (du {start})"
@@ -3192,19 +3198,15 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             settings = app.store.set_settings(body)
             if "week_switch_day" in body:
-                config = load_config()
-                config["pronote_switch_day"] = (
-                    "friday"
-                    if str(settings.get("week_switch_day")).strip().lower()
-                    == "friday"
-                    else "monday"
-                )
-                CONFIG_PATH.write_text(
-                    json.dumps(config, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-                with _config_lock:
-                    _config_cache = dict(config)
+                with _config_write_lock:
+                    config = load_config(force=True)
+                    config["pronote_switch_day"] = (
+                        "friday"
+                        if str(settings.get("week_switch_day")).strip().lower()
+                        == "friday"
+                        else "monday"
+                    )
+                    _write_config_locked(config)
                 app.engine.tick(force=True)
             app.store.flush(force=True)
             self._json(200, {"settings": settings})

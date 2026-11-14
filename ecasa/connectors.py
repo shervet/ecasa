@@ -853,27 +853,52 @@ def public_settings(config: dict) -> dict:
 
 
 def merge_settings(body, current: dict) -> dict:
-    """Valide les réglages reçus et conserve les secrets laissés vides."""
+    """Valide les réglages reçus **sans écraser les autres connecteurs**.
+
+    L'interface n'envoie souvent qu'un seul connecteur (activation/désactivation).
+    On repart de l'existant, puis on n'applique que les champs fournis pour les
+    connecteurs présents dans ``body``.
+    """
     if not isinstance(body, dict):
         raise ValueError("Réglages de connecteur invalides")
     current = current if isinstance(current, dict) else {}
+
     cleaned: dict[str, dict] = {}
+    for raw_id, values in current.items():
+        item = connector(str(raw_id))
+        if not item or not isinstance(values, dict):
+            continue
+        entry = {
+            field["key"]: str(values.get(field["key"]) or "").strip()
+            for field in item["fields"]
+        }
+        if any(entry.values()):
+            cleaned[str(raw_id)] = entry
+
     for raw_id, values in body.items():
         item = connector(str(raw_id))
         if not item:
             continue
         values = values if isinstance(values, dict) else {}
         previous = current.get(str(raw_id)) or {}
-        entry: dict[str, str] = {}
+        entry = cleaned.setdefault(str(raw_id), {})
         for field in item["fields"]:
             key = field["key"]
+            if key not in values:
+                continue
             raw = values.get(key)
             value = "" if raw is None else str(raw).strip()
             if not value and field.get("secret"):
                 value = str(previous.get(key) or "")
             entry[key] = value
+        entry = {
+            field["key"]: str(entry.get(field["key"]) or "")
+            for field in item["fields"]
+        }
         if any(entry.values()):
             cleaned[str(raw_id)] = entry
+        else:
+            cleaned.pop(str(raw_id), None)
     return cleaned
 
 
