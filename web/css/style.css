@@ -3358,3 +3358,30 @@ details.brand-panel.is-locked > :not(summary) {
   opacity: 1;
   filter: none;
 }
+
+
+/* Sous-sections repliables dans Connexion & serveur : un seul titre (le summary) + cadre autour. */
+details.sub-section {
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border-radius: var(--r, 10px);
+  padding: 8px 12px;
+  background: var(--surface, #fff);
+  margin-top: 14px;
+}
+details.sub-section > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details.sub-section > summary::-webkit-details-marker {
+  display: none;
+}
+details.sub-section > div > .settings-section.card {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  margin-top: 6px;
+}
+details.sub-section > div > .settings-section.card > .card-head {
+  display: none;
+}
+

@@ -175,7 +175,6 @@ export default {
 
     const navItems = [
       ["appearance", "Apparence"],
-      ["engine", "Moteur"],
       ["weeks", "Semaines A/B"],
       ["rooms", "Pièces"],
       ["weather", "Météo"],
@@ -183,8 +182,6 @@ export default {
       /* Clim fusionné dans Appareils : plus de section séparée. */
       ["pronote", "Pronote"],
       ["server", "Serveur"],
-      ["tailscale", "Tailscale"],
-      ["storage", "Stockage"],
       ["energy", "Électricité"],
       ["support", "Soutenir"],
     ];
@@ -1099,19 +1096,19 @@ function serverSection() {
       <input id="importFile" type="file" accept="application/json,.json" hidden>
       <button class="btn btn-danger" type="button" data-stop>${icon("power", 15)} Arrêter le serveur</button>
     </div>
-    <details class="stack brand-panel" style="margin-top:18px">
+    <details class="stack sub-section" style="margin-top:18px">
       <summary class="card-title summary-row" style="cursor:pointer">${icon("sliders", 16)} Moteur de planning</summary>
       <div style="margin-top:8px">${engineSection()}</div>
     </details>
-    <details class="stack brand-panel" style="margin-top:18px">
+    <details class="stack sub-section" style="margin-top:18px">
       <summary class="card-title summary-row" style="cursor:pointer">${icon("database", 16)} Stockage basse consommation</summary>
       <div style="margin-top:8px">${storageSection()}</div>
     </details>
-    <details class="stack brand-panel" style="margin-top:18px">
+    <details class="stack sub-section" style="margin-top:18px">
       <summary class="card-title summary-row" style="cursor:pointer">${icon("shield", 16)} Tailscale</summary>
       <div style="margin-top:8px">${tailscaleSection()}</div>
     </details>
-    <details class="stack brand-panel" style="margin-top:18px">
+    <details class="stack sub-section" style="margin-top:18px">
       <summary class="card-title summary-row" style="cursor:pointer">${icon("refresh", 16)} Mise à jour</summary>
       <div style="margin-top:8px">${updateSection()}</div>
     </details>
