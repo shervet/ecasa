@@ -1,6 +1,6 @@
 // Feuille de réglage d'un appareil : thermostat, mode, forçage temporaire.
 
-import { post, del, put } from "../api.js";
+import { get, post, del, put } from "../api.js";
 import { icon, modeIcon } from "../icons.js";
 import { openSheet, closeSheet } from "../sheet.js";
 import { setPendingPlanningRoom } from "../pages/planning.js";
@@ -30,14 +30,21 @@ const DURATIONS = [
   [480, "8 h"],
 ];
 
-function modelOptionsDevice() {
+let cachedModels = null;
+
+async function loadDeviceModels() {
   try {
-    const saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]");
-    if (!Array.isArray(saved)) return "";
-    return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
+    const payload = await get("/api/models");
+    cachedModels = Array.isArray(payload?.models) ? payload.models : [];
   } catch {
-    return "";
+    cachedModels = cachedModels || [];
   }
+  return cachedModels;
+}
+
+function modelOptionsDevice() {
+  const saved = Array.isArray(cachedModels) ? cachedModels : [];
+  return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
 }
 
 function cloneDaysDevice(days) {
@@ -52,7 +59,8 @@ function cloneDaysDevice(days) {
   });
 }
 
-export function openDeviceSheet(deviceId) {
+export async function openDeviceSheet(deviceId) {
+  await loadDeviceModels();
   const device = store.state?.devices?.find((item) => Number(item.device_id) === Number(deviceId));
   if (!device) {
     toast("Appareil introuvable.", { type: "error" });
@@ -277,8 +285,7 @@ export function openDeviceSheet(deviceId) {
     const select = body.querySelector("[data-model]");
     const idx = Number(select?.value);
     if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-    let saved = [];
-    try { saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { saved = []; }
+    const saved = Array.isArray(cachedModels) ? cachedModels : [];
     const m = saved[idx];
     if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
     if (!confirm(`Appliquer le modèle « ${m.name} » à ${device.name} ?`)) return;

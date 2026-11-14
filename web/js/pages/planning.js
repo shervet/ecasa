@@ -29,6 +29,17 @@ import {
 } from "../utils.js";
 
 const HOUR_PX = 56;
+
+let allModels = [];
+
+async function loadAllModels() {
+  try {
+    const payload = await get("/api/models");
+    allModels = Array.isArray(payload?.models) ? payload.models : [];
+  } catch {
+    allModels = [];
+  }
+}
 const PRESETS = {
   Matin: [
     { time: "06:30", mode: "heat", temp: 20 },
@@ -228,6 +239,7 @@ export default {
 
   async mount(view) {
     root = view;
+    await loadAllModels();
     dirty = false;
     day = Number.isInteger(store.prefs.day) ? store.prefs.day : todayIndex();
 
@@ -636,8 +648,7 @@ function paintRooms() {
     }
 
     // model select
-    let savedModels = [];
-    try { savedModels = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { savedModels = []; }
+    const savedModels = allModels;
     let modelSelect = '<select class="select plan-model-select" data-target="' + t.id + '" style="width:auto;min-width:150px"><option value="">— modèle —</option>';
     for (let i = 0; i < savedModels.length; i++) {
       const sel = String(i) === String(selVal) ? " selected" : "";
@@ -762,8 +773,7 @@ function paintRooms() {
       const sel = host.querySelector(`.plan-model-select[data-target="${tid}"]`);
       const idx = Number(sel?.value);
       if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { saved = []; }
+      const saved = allModels;
       const m = saved[idx];
       if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
       if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;

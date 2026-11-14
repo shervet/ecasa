@@ -1,8 +1,7 @@
 // Modèles de planning : liste pleine page, édition au clic, application à
-// plusieurs pièces. Aucun menu déroulant : tout se fait en tapant sur une
-// ligne ou sur une pièce.
+// plusieurs pièces. Les modèles sont persistés côté serveur.
 
-import { put } from "../api.js";
+import { get, put } from "../api.js";
 import { icon, modeIcon } from "../icons.js";
 import { openSheet, closeSheet } from "../sheet.js";
 import { devicesInRoom, refreshState, store } from "../state.js";
@@ -20,17 +19,17 @@ import {
   weekdayShort,
 } from "../utils.js";
 
-// Les modèles sont conservés dans le navigateur, au format historique
-// { name, days: { A: [7 × créneaux], B: [7 × créneaux] } }.
 const STORAGE_KEY = "ecasa.weekModels";
 const WEEKS = ["A", "B"];
 
 let root = null;
 let models = [];
-let selectedIndex = null; // index du modèle affiché, null = liste
+let selectedIndex = null;
 let week = "A";
 let applyWeeks = new Set(["A"]);
 let chosenRooms = new Set();
+let dirty = false;
+let saving = false;
 
 /* --------------------------------------------------------------- stockage */
 
@@ -52,14 +51,8 @@ function cloneWeek(days) {
   });
 }
 
-function loadModels() {
-  let saved = [];
-  try {
-    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    saved = [];
-  }
-  models = (Array.isArray(saved) ? saved : [])
+function normalizeModels(raw) {
+  return (Array.isArray(raw) ? raw : [])
     .filter((model) => model && typeof model === "object")
     .map((model) => ({
       name: String(model.name || "Sans nom"),
@@ -67,8 +60,76 @@ function loadModels() {
     }));
 }
 
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(models));
+function loadLocalModels() {
+  try {
+    return normalizeModels(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+async function loadModels() {
+  try {
+    const payload = await get("/api/models");
+    models = normalizeModels(payload?.models);
+  } catch {
+    models = loadLocalModels();
+    return;
+  }
+
+  if (!models.length) {
+    const local = loadLocalModels();
+    if (local.length) {
+      try {
+        const payload = await put("/api/models", { models: local });
+        models = normalizeModels(payload?.models);
+        localStorage.removeItem(STORAGE_KEY);
+        toast("Modèles importés depuis cet appareil.", { type: "info", timeout: 3000 });
+      } catch {
+        models = local;
+      }
+    }
+  }
+}
+
+function markDirty() {
+  dirty = true;
+  if (root) paintSaveState();
+}
+
+function paintSaveState() {
+  const btn = root?.querySelector("[data-save]");
+  const hint = root?.querySelector("[data-save-hint]");
+  if (btn) {
+    btn.disabled = saving || !dirty;
+    btn.innerHTML = saving
+      ? `${icon("refresh", 17)} Enregistrement…`
+      : `${icon("save", 17)} Enregistrer`;
+  }
+  if (hint) {
+    hint.textContent = dirty
+      ? "Modifications non enregistrées."
+      : "Tous les modèles sont enregistrés.";
+    hint.classList.toggle("is-bad", dirty);
+  }
+}
+
+async function saveAllModels() {
+  if (saving || !dirty) return;
+  saving = true;
+  paintSaveState();
+  try {
+    const payload = await put("/api/models", { models });
+    models = normalizeModels(payload?.models);
+    dirty = false;
+    localStorage.removeItem(STORAGE_KEY);
+    toast("Modèles enregistrés.");
+  } catch (err) {
+    toastError(err);
+  } finally {
+    saving = false;
+    paintSaveState();
+  }
 }
 
 function countSlots(days) {
@@ -129,33 +190,35 @@ function listView() {
         <p class="page-sub">Un modèle = un planning A/B réutilisable. Tape une ligne pour l'éditer, puis applique-la à plusieurs pièces.</p>
       </div>
       <div class="page-actions">
+        <button class="btn" type="button" data-save ${dirty ? "" : "disabled"}>${icon("save", 17)} Enregistrer</button>
         <button class="btn btn-primary" type="button" data-new>${icon("plus", 17)} Nouveau</button>
       </div>
     </div>
     <div class="card"><div class="list">${rows}</div></div>
-    <p class="hint">Les modèles sont enregistrés sur cet appareil.</p>
+    <p class="hint" data-save-hint>${dirty ? "Modifications non enregistrées." : "Tous les modèles sont enregistrés."}</p>
   </div>`;
 }
 
 function detailView() {
   const model = models[selectedIndex];
-  const days = model.days[week] || emptyWeek();
-  const total = countSlots(days);
+  if (!model) {
+    selectedIndex = null;
+    return listView();
+  }
+  const days = model.days[week] || (model.days[week] = emptyWeek());
 
   return `<div class="page">
     <div class="page-head">
       <div>
         <button class="btn btn-sm btn-ghost" type="button" data-back>${icon("chevron-left", 16)} Tous les modèles</button>
         <h1 class="page-title" data-title>${escapeHtml(model.name)}</h1>
-        <p class="page-sub">${total ? `${total} créneau${total > 1 ? "x" : ""} en semaine ${week}` : `Semaine ${week} vide`}</p>
       </div>
-
     </div>
 
     <div class="card card-pad stack">
       <label class="field">
         <span class="label">Nom du modèle</span>
-        <input class="input" data-rename maxlength="60" value="${escapeHtml(model.name)}" autocomplete="off">
+        <input class="input" type="text" value="${escapeHtml(model.name)}" data-rename>
       </label>
       <div class="row wrap" style="gap:10px;align-items:center">
         <div class="week-switch" data-week-switch>
@@ -175,7 +238,7 @@ function detailView() {
 
     <div class="card card-pad">
       ${gridHtml(days)}
-      <p class="hint mt-2">Tape un créneau pour le modifier, sur « + » pour en ajouter un.</p>
+      <p class="hint mt-2">Tape un créneau pour le modifier, sur « + » pour en ajouter un. Reviens à la liste puis clique sur « Enregistrer » pour sauvegarder tous les modèles.</p>
     </div>
   </div>`;
 }
@@ -254,6 +317,7 @@ function render() {
   if (!root) return;
   root.innerHTML = selectedIndex === null ? listView() : detailView();
   bind();
+  if (selectedIndex === null) paintSaveState();
 }
 
 function createModel() {
@@ -263,14 +327,14 @@ function createModel() {
     name = `Nouveau modèle ${suffix++}`;
   }
   models.push({ name, days: { A: emptyWeek(), B: emptyWeek() } });
-  persist();
+  markDirty();
   selectedIndex = models.length - 1;
   week = "A";
   chosenRooms.clear();
   render();
   const input = root?.querySelector("[data-rename]");
   input?.focus();
-  input?.select();
+  if (input?.select) input.select();
 }
 
 function duplicateModel() {
@@ -282,7 +346,7 @@ function duplicateModel() {
     name = `${model.name} (copie ${suffix++})`;
   }
   models.push({ name, days: { A: cloneWeek(model.days.A), B: cloneWeek(model.days.B) } });
-  persist();
+  markDirty();
   selectedIndex = models.length - 1;
   render();
   toast(`Modèle « ${name} » créé.`);
@@ -293,7 +357,7 @@ function deleteModel() {
   if (!model) return;
   if (!confirm(`Supprimer le modèle « ${model.name} » ?`)) return;
   models.splice(selectedIndex, 1);
-  persist();
+  markDirty();
   selectedIndex = null;
   chosenRooms.clear();
   render();
@@ -358,6 +422,7 @@ function openSlotEditor(dayIndex, slotIndex) {
 
   const timeInput = body.querySelector("[data-time]");
   const tempInput = body.querySelector("[data-temp-input]");
+
   const paint = () => {
     body.querySelectorAll("[data-mode]").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.mode === mode);
@@ -394,7 +459,7 @@ function openSlotEditor(dayIndex, slotIndex) {
     if (index >= 0) slots[index] = slot;
     else slots.push(slot);
     slots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
-    persist();
+    markDirty();
     closeSheet();
     render();
   });
@@ -402,7 +467,7 @@ function openSlotEditor(dayIndex, slotIndex) {
   footer.querySelector("[data-delete]")?.addEventListener("click", () => {
     const index = existing ? slots.indexOf(existing) : -1;
     if (index >= 0) slots.splice(index, 1);
-    persist();
+    markDirty();
     closeSheet();
     render();
   });
@@ -448,6 +513,7 @@ function bind() {
   const page = root;
   if (!page) return;
 
+  page.querySelector("[data-save]")?.addEventListener("click", saveAllModels);
   page.querySelector("[data-new]")?.addEventListener("click", createModel);
   page.querySelector("[data-back]")?.addEventListener("click", () => {
     selectedIndex = null;
@@ -471,7 +537,7 @@ function bind() {
       if (!model) return;
       if (!confirm(`Supprimer le modèle « ${model.name} » ?`)) return;
       models.splice(index, 1);
-      persist();
+      markDirty();
       if (selectedIndex === index) selectedIndex = null;
       render();
       toast("Modèle supprimé.", { type: "info" });
@@ -482,6 +548,7 @@ function bind() {
     const model = currentModel();
     if (!model) return;
     model.name = event.currentTarget.value;
+    markDirty();
     const title = page.querySelector("[data-title]");
     if (title) title.textContent = model.name || "Sans nom";
   });
@@ -489,7 +556,7 @@ function bind() {
     const model = currentModel();
     if (!model) return;
     model.name = String(model.name || "").trim() || "Sans nom";
-    persist();
+    markDirty();
   });
 
   page.querySelectorAll("[data-week]").forEach((button) => {
@@ -542,11 +609,13 @@ export default {
 
   async mount(view) {
     root = view;
-    loadModels();
+    root.innerHTML = `<div class="boot" style="min-height:220px"><span class="spinner"></span><p>Chargement des modèles…</p></div>`;
+    await loadModels();
     selectedIndex = null;
     week = "A";
     chosenRooms.clear();
     applyWeeks = new Set(["A"]);
+    dirty = false;
     render();
   },
 

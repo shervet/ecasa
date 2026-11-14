@@ -1816,8 +1816,8 @@ async function importWiserPrograms(event) {
 
     let models = [];
     try {
-      models = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]");
-      if (!Array.isArray(models)) models = [];
+      const mp = await get("/api/models");
+      models = Array.isArray(mp?.models) ? mp.models : [];
     } catch {
       models = [];
     }
@@ -1853,7 +1853,7 @@ async function importWiserPrograms(event) {
       }
     }
 
-    localStorage.setItem("ecasa.weekModels", JSON.stringify(models));
+    try { const saved = await put("/api/models", { models }); settingsModelsCache = Array.isArray(saved?.models) ? saved.models : models; } catch (err) { toastError(err); }
 
     if (created || updated) {
       toast(
@@ -2105,15 +2105,21 @@ function renderRooms() {
   });
 }
 
-function modelOptionsSettings() {
+let settingsModelsCache = [];
+async function loadSettingsModels() {
   try {
-    const saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]");
-    if (!Array.isArray(saved)) return "";
-    return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
+    const payload = await get("/api/models");
+    settingsModelsCache = Array.isArray(payload?.models) ? payload.models : [];
   } catch {
-    return "";
+    settingsModelsCache = [];
   }
+  return settingsModelsCache;
 }
+function modelOptionsSettings() {
+  const saved = Array.isArray(settingsModelsCache) ? settingsModelsCache : [];
+  return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
+}
+
 
 function cloneDaysSettings(days) {
   const source = Array.isArray(days) ? days : [];
@@ -2126,7 +2132,8 @@ function cloneDaysSettings(days) {
     }));
   });
 }
-function openRoomEditor(room) {
+async function openRoomEditor(room) {
+  await loadSettingsModels();
   const devices = store.state?.devices || [];
   const options = (selected) =>
     `<option value="">Aucun</option>${devices
@@ -2192,8 +2199,7 @@ function openRoomEditor(room) {
       const select = body.querySelector("[data-model]");
       const idx = Number(select?.value);
       if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      let saved = [];
-      try { saved = JSON.parse(localStorage.getItem("ecasa.weekModels") || "[]"); } catch { saved = []; }
+      const saved = Array.isArray(settingsModelsCache) ? settingsModelsCache : await loadSettingsModels();
       const m = saved[idx];
       if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
       const deviceId = room.actuator_device_id || room.thermostat_device_id;

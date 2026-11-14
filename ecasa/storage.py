@@ -99,6 +99,7 @@ class MemoryStore:
         self._week_overrides: dict[str, str] = {}
         self._overrides: dict[int, dict] = {}
         self._events: list[dict] = []
+        self._week_models: list[dict] = []
         self._samples: dict[int, dict[str, dict[str, dict]]] = {}
         self._pending_history: set[tuple[int, str, str]] = set()
         self._last_sample_at: dict[int, datetime] = {}
@@ -242,6 +243,12 @@ class MemoryStore:
                 (int(item.get("id", 0)) for item in self._events), default=0
             ) + 1
 
+        models = payload.get("week_models")
+        if isinstance(models, list):
+            self._week_models = [
+                copy.deepcopy(item) for item in models if isinstance(item, dict)
+            ]
+
     def _load_history(self) -> None:
         if not self.history_dir or not os.path.isdir(self.history_dir):
             return
@@ -336,6 +343,7 @@ class MemoryStore:
                 "week_overrides": dict(self._week_overrides),
                 "overrides": copy.deepcopy(self._overrides),
                 "events": copy.deepcopy(self._events[-MAX_EVENTS:]),
+                "week_models": copy.deepcopy(self._week_models),
             }
             self._structural_dirty = False
             self._last_state_save = time.monotonic()
@@ -569,6 +577,55 @@ class MemoryStore:
 
     def flag(self, key: str) -> bool:
         return self.settings().get(key, "0") in ("1", "true", "True", "on")
+
+    # ------------------------------------------------------------- week models
+
+    def week_models(self) -> list[dict]:
+        with self._lock:
+            return copy.deepcopy(self._week_models)
+
+    def set_week_models(self, models) -> list[dict]:
+        if not isinstance(models, list):
+            raise ValueError("Liste de modèles invalide")
+
+        def clean_week(raw):
+            week = []
+            for index in range(7):
+                slots = raw[index] if isinstance(raw, list) and index < len(raw) and isinstance(raw[index], list) else []
+                day_slots = []
+                for slot in slots:
+                    if not isinstance(slot, dict):
+                        continue
+                    time = str(slot.get("time") or "").strip()
+                    if not time:
+                        continue
+                    mode = str(slot.get("mode") or "heat")
+                    try:
+                        temp = float(slot.get("temp", 20))
+                    except (TypeError, ValueError):
+                        temp = 20.0
+                    day_slots.append({"time": time, "mode": mode, "temp": round(temp, 1)})
+                day_slots.sort(key=lambda s: s.get("time", "00:00"))
+                week.append(day_slots)
+            return week
+
+        cleaned: list[dict] = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            name = str(model.get("name") or "Sans nom").strip() or "Sans nom"
+            days = model.get("days") if isinstance(model.get("days"), dict) else {}
+            cleaned.append({
+                "name": name,
+                "days": {
+                    "A": clean_week(days.get("A")),
+                    "B": clean_week(days.get("B")),
+                },
+            })
+        with self._lock:
+            self._week_models = cleaned
+            self.mark_structure()
+        return self.week_models()
 
     # --------------------------------------------------------------- appareils
 

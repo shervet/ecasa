@@ -3200,6 +3200,24 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if method == "GET" and path == "/api/models":
+            self._json(200, {"models": app.store.week_models()})
+            return
+
+        if method == "PUT" and path == "/api/models":
+            body = self._body()
+            models = body.get("models")
+            if models is None:
+                models = body if isinstance(body, list) else []
+            try:
+                saved = app.store.set_week_models(models)
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                return
+            app.store.flush(force=True)
+            self._json(200, {"models": saved})
+            return
+
         if method == "PUT" and path == "/api/settings":
             body = self._body()
             settings = app.store.set_settings(body)
