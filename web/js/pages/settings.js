@@ -220,16 +220,12 @@ export default {
 
         <div class="settings-layout">
           ${appearanceSection()}
-          ${engineSection()}
           ${weeksSection()}
           ${roomsSection()}
           ${weatherSection()}
           ${devicesSection()}
           ${pronoteSection()}
           ${serverSection()}
-          ${updateSection()}
-          ${tailscaleSection()}
-          ${storageSection()}
           ${energySection()}
           ${supportSection()}
           <p class="hint">
@@ -1102,7 +1098,24 @@ function serverSection() {
       <button class="btn" type="button" id="importBtn">${icon("upload", 15)} Importer</button>
       <input id="importFile" type="file" accept="application/json,.json" hidden>
       <button class="btn btn-danger" type="button" data-stop>${icon("power", 15)} Arrêter le serveur</button>
-    </div>`,
+    </div>
+    <details class="stack brand-panel" style="margin-top:18px">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("sliders", 16)} Moteur de planning</summary>
+      <div style="margin-top:8px">${engineSection()}</div>
+    </details>
+    <details class="stack brand-panel" style="margin-top:18px">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("database", 16)} Stockage basse consommation</summary>
+      <div style="margin-top:8px">${storageSection()}</div>
+    </details>
+    <details class="stack brand-panel" style="margin-top:18px">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("shield", 16)} Tailscale</summary>
+      <div style="margin-top:8px">${tailscaleSection()}</div>
+    </details>
+    <details class="stack brand-panel" style="margin-top:18px">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("refresh", 16)} Mise à jour</summary>
+      <div style="margin-top:8px">${updateSection()}</div>
+    </details>
+    </div>` ,
     `<button class="btn btn-primary" type="button" data-save="server">${icon("save", 16)} Enregistrer</button>`
   );
 }
