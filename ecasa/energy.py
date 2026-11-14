@@ -21,6 +21,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -103,26 +104,32 @@ class EnergyHTTPError(EnergyError):
 
 
 class EnergyService:
-    """Client MyElectricalData avec cache mémoire et repli de chemin."""
+    """Client MyElectricalData avec cache mémoire et cache disque optionnel.
 
-    def __init__(self, fetcher=None):
+    Si ``cache_path`` est fourni, les mesures journalières déjà récupérées sont
+    persistées localement : seules les dates manquantes sont redemandées à
+    l'API (en mode ``refresh``, la semaine récente est revalidée). En cas
+    d'erreur réseau/quota, les données locales sont servies si disponibles et
+    ``last_warning`` est renseigné.
+    """
+
+    def __init__(self, fetcher=None, cache_path: str | None = None):
         self._fetcher = fetcher or _http_json
         self._cache: dict[tuple, tuple[float, dict[str, float]]] = {}
         self._lock = threading.Lock()
         self._errors: dict[tuple, tuple[float, str]] = {}
+        self.cache_path = os.path.abspath(cache_path) if cache_path else None
+        self._days: dict[str, dict[str, float]] = {}
+        self._days_loaded = False
+        self.last_warning: str | None = None
 
     def daily(self, base_url: str, pdl: str, token: str, start: date,
               end: date, refresh: bool = False) -> dict[str, float]:
         """Consommation journalière en kWh entre deux dates incluses.
 
-        Le résultat est indexé par date ISO (``YYYY-MM-DD``). Les années sont
-        demandées séparément : le cache reste utile d'un mois à l'autre et une
-        seule année manquante ne fait pas tout recharger. La clé de cache
-        inclut une empreinte du token pour qu'une rotation de token ne serve
-        pas d'anciennes valeurs.
-
-        ``refresh=True`` ignore le cache (synchro manuelle) tout en le
-        réécrivant avec les valeurs fraîches.
+        Le résultat est indexé par date ISO (``YYYY-MM-DD``). Avec cache disque,
+        seules les dates manquantes sont demandées ; ``refresh=True`` revalide
+        les 7 derniers jours (synchro manuelle/quotidienne).
         """
         if start > end:
             raise EnergyError("Période de consommation invalide")
@@ -135,9 +142,35 @@ class EnergyService:
         if not token:
             raise EnergyError("Token MyElectricalData manquant")
 
+        self.last_warning = None
+        source = _source_key(base, pdl)
         token_key = _token_key(token)
+
         values: dict[str, float] = {}
-        for chunk_start, chunk_end in _year_chunks(start, end):
+        stored = self._stored_days(source)
+        if stored:
+            for raw_day, raw_value in stored.items():
+                day = _parse_day(raw_day)
+                number = _as_float(raw_value)
+                if day is None or number is None or not (start <= day <= end):
+                    continue
+                values[day.isoformat()] = number
+
+        if refresh and stored is not None:
+            wanted = {
+                start + timedelta(days=offset)
+                for offset in range((end - start).days + 1)
+                if start + timedelta(days=offset) >= end - timedelta(days=6)
+            }
+        else:
+            wanted = {
+                start + timedelta(days=offset)
+                for offset in range((end - start).days + 1)
+                if (start + timedelta(days=offset)).isoformat() not in values
+            }
+
+        errors: list[EnergyError] = []
+        for chunk_start, chunk_end in _contiguous_ranges(wanted):
             key = (
                 base, pdl, token_key,
                 chunk_start.isoformat(), chunk_end.isoformat(),
@@ -151,14 +184,16 @@ class EnergyService:
                     continue
                 failure = self._errors.get(error_key)
                 if failure and now - failure[0] < ERROR_RETRY_SECONDS:
-                    raise EnergyError(failure[1])
+                    errors.append(EnergyError(failure[1]))
+                    continue
 
             try:
                 chunk = self._fetch(base, pdl, token, chunk_start, chunk_end)
             except EnergyError as err:
                 with self._lock:
                     self._errors[error_key] = (time.time(), str(err))
-                raise
+                errors.append(err)
+                continue
 
             with self._lock:
                 self._cache[key] = (time.time() + cache_ttl(), chunk)
@@ -178,7 +213,97 @@ class EnergyService:
                         if value[0] > cutoff
                     }
             values.update(chunk)
+            self._merge_days(source, chunk)
+
+        values = {
+            key: value
+            for key, value in values.items()
+            if (day := _parse_day(key)) is not None and start <= day <= end
+        }
+
+        if errors:
+            if not values:
+                raise errors[0]
+            self.last_warning = str(errors[0])
         return values
+
+    # ------------------------------------------------------- cache disque
+
+    def _stored_days(self, source: str) -> dict[str, float] | None:
+        if not self.cache_path:
+            return None
+        with self._lock:
+            if not self._days_loaded:
+                self._load_days_locked()
+            return self._days.get(source)
+
+    def _merge_days(self, source: str, chunk: dict[str, float]) -> None:
+        if not self.cache_path or not chunk:
+            return
+        with self._lock:
+            if not self._days_loaded:
+                self._load_days_locked()
+            days = self._days.setdefault(source, {})
+            added = False
+            for raw_day, raw_value in chunk.items():
+                day = _parse_day(raw_day)
+                number = _as_float(raw_value)
+                if day is None or number is None:
+                    continue
+                key = day.isoformat()
+                if key not in days:
+                    days[key] = _round(number) or 0.0
+                    added = True
+            if added:
+                self._save_days_locked()
+
+    def _load_days_locked(self) -> None:
+        self._days_loaded = True
+        if not self.cache_path or not os.path.isfile(self.cache_path):
+            return
+        try:
+            with open(self.cache_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError):
+            return
+        sources = payload.get("sources") if isinstance(payload, dict) else None
+        if not isinstance(sources, dict):
+            return
+        for source, block in sources.items():
+            days = block.get("days") if isinstance(block, dict) else None
+            if not isinstance(days, dict):
+                continue
+            clean: dict[str, float] = {}
+            for raw_day, raw_value in days.items():
+                day = _parse_day(raw_day)
+                number = _as_float(raw_value)
+                if day is None or number is None or number < 0:
+                    continue
+                clean[day.isoformat()] = number
+            if clean:
+                self._days[str(source)] = clean
+
+    def _save_days_locked(self) -> None:
+        if not self.cache_path:
+            return
+        payload = {
+            "version": 1,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "sources": {
+                source: {"days": dict(sorted(days.items()))}
+                for source, days in self._days.items()
+                if days
+            },
+        }
+        directory = os.path.dirname(self.cache_path) or "."
+        try:
+            os.makedirs(directory, exist_ok=True)
+            tmp_path = f"{self.cache_path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            os.replace(tmp_path, self.cache_path)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------ réseau
 
@@ -279,6 +404,10 @@ def build_energy(service, config: dict, view: str = "month", month=None,
         payload["error"] = f"Consommation indisponible : {err}"
         return payload
 
+    warning = getattr(service, "last_warning", None)
+    payload["warning"] = warning
+    payload["local"] = bool(warning)
+
     points: dict[date, float] = {}
     for key, value in daily.items():
         day = _parse_day(key)
@@ -324,11 +453,26 @@ def test_energy(config: dict, service=None, today: date | None = None) -> dict:
 
     service = service or EnergyService()
     try:
-        values = service.daily(base_url, pdl, token, today - timedelta(days=7), today)
+        values = service.daily(
+            base_url, pdl, token, today - timedelta(days=7), today, refresh=True
+        )
     except EnergyError as err:
         return {"ok": False, "message": str(err)}
     except Exception as err:  # noqa: BLE001
         return {"ok": False, "message": f"Connexion impossible : {err}"}
+
+    warning = getattr(service, "last_warning", None)
+    if warning:
+        return {
+            "ok": False,
+            "message": (
+                f"{warning} Données locales conservées"
+                f"{(' (dernière mesure : ' + max(values) + ')') if values else ''}."
+            ),
+            "pdl": pdl,
+            "samples": len(values),
+            "last_date": max(values) if values else None,
+        }
 
     if not values:
         return {
@@ -1251,6 +1395,29 @@ def _summary(points: dict[date, float], view: str, month: int,
     }
 
 
+def _source_key(base: str, pdl: str) -> str:
+    """Clé du cache disque (URL + PDL), indépendante du token."""
+    return f"{base}|{pdl}"
+
+
+def _contiguous_ranges(days) -> list[tuple[date, date]]:
+    """Regroupe des jours en plages consécutives, bornées par année."""
+    ranges: list[tuple[date, date]] = []
+    first = prev = None
+    for day in sorted(days):
+        if first is None:
+            first = prev = day
+            continue
+        if day == prev + timedelta(days=1) and day.year == prev.year:
+            prev = day
+            continue
+        ranges.append((first, prev))
+        first = prev = day
+    if first is not None:
+        ranges.append((first, prev))
+    return ranges
+
+
 def _year_chunks(start: date, end: date) -> list[tuple[date, date]]:
     chunks = []
     current = start
@@ -1380,11 +1547,23 @@ def _http_json(url: str, headers: dict, timeout: int = 20) -> dict:
             detail = err.read().decode("utf-8", "replace")[:300]
         except OSError:
             pass
-        raise EnergyHTTPError(
-            f"MyElectricalData HTTP {err.code}"
-            f"{(' : ' + detail) if detail else ''}",
-            err.code,
-        ) from err
+        if err.code == 429:
+            message = (
+                "Quota Enedis dépassé chez MyElectricalData : "
+                "réessaie plus tard (les données locales restent affichées si disponibles)."
+            )
+        elif err.code >= 500:
+            message = (
+                "MyElectricalData/Enedis : erreur technique ou quota dépassé. "
+                "Réessaie plus tard."
+            )
+            if detail:
+                message += f" ({detail[:120].strip()})"
+        else:
+            message = f"MyElectricalData HTTP {err.code}"
+            if detail:
+                message += f" : {detail}"
+        raise EnergyHTTPError(message, err.code) from err
     except urllib.error.URLError as err:
         raise EnergyError(
             f"MyElectricalData injoignable : {err.reason}"

@@ -1299,11 +1299,17 @@ def run_daily_sync(
                 result["ok"] = False
                 state["energy_error"] = str(err)
             else:
+                warning = getattr(app.energy, "last_warning", None)
                 result["energy"] = {
-                    "ok": True,
+                    "ok": warning is None,
                     "last_date": max(values) if values else None,
+                    "warning": warning,
                 }
-                state.pop("energy_error", None)
+                if warning:
+                    result["ok"] = False
+                    state["energy_error"] = warning
+                else:
+                    state.pop("energy_error", None)
 
     if state.get("pronote") != today:
         state["pronote"] = today
@@ -2658,7 +2664,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as err:
                 self._json(400, {"error": str(err)})
                 return
-            self._json(200, test_energy(config))
+            self._json(200, test_energy(config, service=app.energy))
             return
 
         # ----------------------------------------------------------- tailscale
@@ -3528,7 +3534,13 @@ def main() -> None:
         store.close()
         raise SystemExit(f"Impossible d'écouter sur {host}:{port} : {last_error}")
 
-    app = App(store, engine, WeatherService())
+    energy_cache = _resolve_path(config.get("energy_file"), "data/energy.json")
+    app = App(
+        store,
+        engine,
+        WeatherService(),
+        EnergyService(cache_path=str(energy_cache)),
+    )
     app.static.gzip_enabled = bool(config.get("gzip_enabled", True))
     count = app.static.load()
     server.app = app  # type: ignore[attr-defined]

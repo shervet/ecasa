@@ -608,6 +608,7 @@ function paintEnergy(payload) {
         Source MyElectricalData (Enedis)${
           payload.last_date ? ` · dernière donnée ${fmtDate(payload.last_date)}` : ""
         } · ${payload.days || 0} jour(s) en mémoire.
+        ${payload.warning ? `<br><span class="is-bad">Données locales : ${escapeHtml(String(payload.warning))}</span>` : ""}
       </p>
     `;
   }
