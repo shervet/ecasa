@@ -537,10 +537,12 @@ function paintPlanNav() {
       setPref("week", week);
       rebuildModels();
       dirty = false;
+      const scrollY = window.scrollY;
       paintWeekSwitch();
       paintRooms();
       paintDirty();
       paintSub();
+      requestAnimationFrame(() => window.scrollTo(0, scrollY));
     });
   });
 
