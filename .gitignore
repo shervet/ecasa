@@ -1,5 +1,7 @@
 config.json
 config.local.json
+config.zip
+config-*.zip
 data/
 .venv/
 venv/
