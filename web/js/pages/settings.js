@@ -318,6 +318,11 @@ function appearanceSection() {
       "Graphique température CPU",
       "Affiche la température CPU sur 60 minutes sur l'accueil (info serveur, non sauvegardée).",
       `<label class="switch" title="Afficher la température CPU"><input type="checkbox" data-pref="showCpuTemp" ${store.prefs?.showCpuTemp !== false ? "checked" : ""}><span class="track"></span></label>`
+    )}
+    ${row(
+      "Diagramme utilisation disque",
+      "Affiche l'utilisation du disque principal sur l'accueil (système, applications, libre).",
+      `<label class="switch" title="Afficher l'utilisation du disque"><input type="checkbox" data-pref="showDiskUsage" ${store.prefs?.showDiskUsage !== false ? "checked" : ""}><span class="track"></span></label>`
     )}`
   );
 }

@@ -20,6 +20,7 @@ export const store = {
     day: readPref("day", null),
     showCpuLoad: readPref("showCpuLoad", true),
     showCpuTemp: readPref("showCpuTemp", true),
+    showDiskUsage: readPref("showDiskUsage", true),
   },
 };
 

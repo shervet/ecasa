@@ -2385,6 +2385,64 @@ class CpuSampler:
                 print("[cpu] échantillon impossible : %s" % err)
 
 
+# -------------------------------------------------------- utilisation disque
+# Instantanée pour la partition principale (shutil.disk_usage), avec une
+# estimation grossière système vs applications/utilisateurs basée sur la taille
+# des dossiers (mise en cache 10 min pour ne pas surcharger le serveur).
+
+_DISK_CACHE = {"ts": None, "home": 0, "app": 0}
+_DISK_CACHE_TTL = 600
+
+
+def _dir_size(path) -> int:
+    """Taille récursive d'un dossier en octets (best-effort, erreurs ignorées)."""
+    total = 0
+    try:
+        for dirpath, _dirnames, filenames in os.walk(path):
+            for name in filenames:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def disk_usage_snapshot() -> dict:
+    """Utilisation du disque principal pour le diagramme circulaire de l'accueil."""
+    now = datetime.now()
+    try:
+        usage = shutil.disk_usage(str(ROOT))
+    except Exception:  # noqa: BLE001
+        try:
+            usage = shutil.disk_usage("/")
+        except Exception:  # noqa: BLE001
+            return {"ts": now.isoformat(timespec="seconds"), "total": 0,
+                    "used": 0, "free": 0, "system": 0, "apps": 0}
+    total = int(usage.total)
+    free = int(usage.free)
+    used = int(usage.used)
+    cache = _DISK_CACHE
+    if cache["ts"] is None or (now - cache["ts"]).total_seconds() > _DISK_CACHE_TTL:
+        home_path = Path.home()
+        home_size = _dir_size(home_path) if home_path.exists() else 0
+        app_size = _dir_size(ROOT)
+        cache["home"] = home_size
+        cache["app"] = app_size
+        cache["ts"] = now
+    apps = int(cache["home"])  # applications/utilisateurs (dossier personnel)
+    system = max(0, used - apps)
+    return {
+        "ts": now.isoformat(timespec="seconds"),
+        "total": total,
+        "used": used,
+        "free": free,
+        "system": system,
+        "apps": apps,
+    }
+
+
 def state_snapshot(app) -> dict:
     """Snapshot du moteur enrichi de l'état de mise à jour et des métriques CPU."""
     data = app.engine.snapshot()
@@ -2396,6 +2454,10 @@ def state_snapshot(app) -> dict:
         data["cpu"] = cpu_history_snapshot()
     except Exception:  # noqa: BLE001 - métriques facultatives
         data["cpu"] = {"ts": [], "load": [], "temp": []}
+    try:
+        data["disk"] = disk_usage_snapshot()
+    except Exception:  # noqa: BLE001 - métriques facultatives
+        data["disk"] = {"total": 0, "used": 0, "free": 0, "system": 0, "apps": 0}
     return data
 
 

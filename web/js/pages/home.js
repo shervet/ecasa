@@ -53,6 +53,7 @@ export default {
         <div class="strip" id="homeStrip"></div>
         <section class="room-grid" id="homeRooms"></section>
         <section id="homeCpu"></section>
+        <section id="homeDisk"></section>
         <section id="homeOther"></section>
       </div>
     `;
@@ -106,6 +107,7 @@ function paint() {
   paintStrip();
   paintRooms();
   paintCpu();
+  paintDisk();
   paintOther();
 }
 
@@ -412,6 +414,80 @@ function sparkline(values) {
     <path d="${d}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
     <circle cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="2.4" fill="currentColor" />
   </svg>`;
+}
+
+function paintDisk() {
+  const host = document.getElementById("homeDisk");
+  if (!host) return;
+  const prefs = store.prefs || {};
+  if (prefs.showDiskUsage === false) {
+    host.innerHTML = "";
+    return;
+  }
+  const disk = store.state?.disk || {};
+  const total = Number(disk.total || 0);
+  const system = Number(disk.system || 0);
+  const apps = Number(disk.apps || 0);
+  const free = Number(disk.free || 0);
+  if (!total) {
+    host.innerHTML = "";
+    return;
+  }
+  const slices = [
+    { label: "Système", value: system, color: "var(--bad)" },
+    { label: "Applications / utilisateurs", value: apps, color: "var(--primary)" },
+    { label: "Libre", value: free, color: "var(--ok)" },
+  ];
+  const legend = slices
+    .map(
+      (slice) => `<div class="disk-legend-row">
+        <span class="disk-dot" style="background:${slice.color}"></span>
+        <span class="disk-label">${escapeHtml(slice.label)}</span>
+        <span class="disk-value">${escapeHtml(fmtBytes(slice.value))}</span>
+      </div>`
+    )
+    .join("");
+  host.innerHTML = `<div class="card card-pad">
+    <div class="row-between" style="margin-bottom:8px">
+      <span class="card-title">${icon("hard-drive", 16)} Disque principal</span>
+      <span class="tiny muted">${escapeHtml(fmtBytes(total))} au total</span>
+    </div>
+    <div class="disk-pie-wrap">
+      ${pieChart(slices, total)}
+      <div class="disk-legend">${legend}</div>
+    </div>
+  </div>`;
+}
+
+function pieChart(slices, total) {
+  const values = slices.map((slice) => Math.max(0, Number(slice.value || 0)));
+  const sum = values.reduce((a, b) => a + b, 0);
+  if (!sum) {
+    return `<div class="empty" style="padding:10px 8px"><p>Aucune donnée.</p></div>`;
+  }
+  let acc = 0;
+  const stops = slices
+    .map((slice, index) => {
+      const start = acc;
+      acc += (values[index] / sum) * 360;
+      return `${slice.color} ${start.toFixed(1)}deg ${acc.toFixed(1)}deg`;
+    })
+    .join(", ");
+  return `<div class="disk-pie" style="background: conic-gradient(${stops})">
+    <div class="disk-pie-hole"></div>
+  </div>`;
+}
+
+function fmtBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const units = ["o", "Ko", "Mo", "Go", "To"];
+  let i = 0;
+  let value = bytes;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
 function paintOther() {
