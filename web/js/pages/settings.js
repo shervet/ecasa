@@ -1512,7 +1512,7 @@ function bind() {
   root.querySelector("#tailscaleHelp")?.addEventListener("click", openTailscaleHelp);
   root.querySelector("#tailscaleDnsHelp")?.addEventListener("click", openTailscaleDnsHelp);
   root.querySelector("#energyHelp")?.addEventListener("click", openEnergyHelp);
-  root.querySelector("#tsUp")?.addEventListener("click", () => tailscaleAction("up"));
+  root.querySelector("#tsUp")?.addEventListener("click", connectTailscale);
   root.querySelector("#tsServeOn")?.addEventListener("click", () => tailscaleAction("serve/enable"));
   root.querySelector("#tsServeOff")?.addEventListener("click", () => tailscaleAction("serve/disable"));
 root.querySelector("#tsInstall")?.addEventListener("click", () => {
@@ -2676,6 +2676,69 @@ async function waitForServer() {
 
 /* --------------------------------------------------------------- tailscale */
 
+function connectTailscale() {
+  if (tailscale?.running) {
+    tailscaleAction("up");
+    return;
+  }
+  openTailscaleConnect();
+}
+
+function openTailscaleConnect() {
+  const saved = Boolean(tailscale?.authkey_set);
+  const serviceUser = String(tailscale?.service_user || "admin");
+  const sheet = openSheet({
+    title: "Connecter ce nœud",
+    sub: "Enregistrement piloté par le serveur eCasa",
+    footer: `<div class="row wrap" style="gap:8px">
+      <button class="btn btn-primary" type="button" data-ts-save>${icon("wifi", 15)} Enregistrer et connecter</button>
+      <button class="btn" type="button" data-ts-link>${icon("external", 15)} Autoriser par lien</button>
+    </div>`,
+    body: `<div class="stack">
+      <p class="hint">eCasa enregistre lui-même ce Raspberry Pi : aucune commande à taper.</p>
+
+      <div class="help-step">
+        <div class="help-step-head"><span class="help-step-num">1</span><div>
+          <div class="help-step-title">Clé d'authentification (recommandé)</div>
+          <div class="help-step-sub">La clé reste enregistrée sur le serveur : la reconnexion est automatique après un redémarrage ou une coupure réseau.</div>
+        </div></div>
+        <div class="help-faq-a">
+          <div class="stack" style="gap:8px">
+            <input class="input" type="password" data-ts-key-input autocomplete="off" placeholder="${saved ? "•••••••• (clé déjà enregistrée)" : "tskey-auth-…"}">
+            <a class="tiny" href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">${icon("external", 12)} Créer une clé dans la console Tailscale</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head"><span class="help-step-num">2</span><div>
+          <div class="help-step-title">Ou autoriser par lien</div>
+          <div class="help-step-sub">eCasa ouvre une session et affiche un lien à valider une seule fois dans ton navigateur, puis il se connecte tout seul.</div>
+        </div></div>
+      </div>
+
+      <p class="hint">Si un message « droits requis » apparaît, lance une seule fois en SSH : <code>sudo tailscale set --operator=${escapeHtml(serviceUser)}</code></p>
+    </div>`,
+  });
+  sheet?.footer?.querySelector("[data-ts-save]")?.addEventListener("click", () => {
+    const input = sheet.body?.querySelector("[data-ts-key-input]");
+    const key = String(input?.value || "").trim();
+    sheet.close();
+    if (!key && !saved) {
+      toast("Colle une clé d'authentification, ou choisis « Autoriser par lien ».", {
+        type: "error",
+        timeout: 8000,
+      });
+      return;
+    }
+    tailscaleAction("up", key ? { authkey: key } : undefined);
+  });
+  sheet?.footer?.querySelector("[data-ts-link]")?.addEventListener("click", () => {
+    sheet.close();
+    tailscaleAction("up");
+  });
+}
+
 function openTailscaleDnsHelp() {
   const sheet = openSheet({
     title: "Activer MagicDNS et HTTPS",
@@ -2748,12 +2811,13 @@ function openTailscaleHelp() {
           <span class="help-step-num">2</span>
           <div>
             <div class="help-step-title">Connecter la machine avec le nom « ecasa »</div>
-            <div class="help-step-sub">C'est ce nom que l'app Android résout. Si un lien d'autorisation s'affiche, ouvre-le et valide la machine dans ton compte Tailscale.</div>
+            <div class="help-step-sub">Depuis eCasa, aucun terminal nécessaire : <strong>Réglages → Tailscale → Connecter</strong>, puis colle une clé d'authentification (conservée localement) ou choisis <strong>Autoriser par lien</strong>. Sinon, en ligne de commande :</div>
           </div>
         </div>
         <div><span class="help-os-label">Linux / macOS</span><code class="help-code">sudo tailscale up --hostname=ecasa</code></div>
         <div><span class="help-os-label">Windows</span><code class="help-code">tailscale up --hostname=ecasa</code></div>
         <div class="help-check"><strong>À vérifier :</strong> <code>tailscale status</code> montre une ligne avec <code>ecasa</code> et une adresse <code>100.x.y.z</code>. <code>tailscale ip -4</code> renvoie cette même adresse.</div>
+        <div class="help-warn"><strong>« access denied » depuis l'interface :</strong> le service eCasa tourne sans privilèges. Autorise une seule fois son compte : <code>sudo tailscale set --operator=&lt;compte&gt;</code> (<code>install-pi.sh</code> le fait automatiquement).</div>
         <div class="help-warn"><strong>Nom déjà pris :</strong> si le nœud s'appelle <code>ecasa-1</code>, le nom <code>ecasa</code> est réservé ailleurs (autre machine ou <strong>Service Tailscale</strong>). La commande réussit sans rien changer : libère le nom dans la console → Machines (supprimer l'ancien nœud) ou → Services (supprimer le service), puis relance-la.</div>
       </div>
 
@@ -2921,7 +2985,7 @@ function renderTailscale() {
   const localHost = pageHost === "localhost" || pageHost === "127.0.0.1" || pageHost === "::1";
   const wrongHost = Boolean(nodeHost && pageHost && !ipLike && !localHost && pageHost !== nodeHost);
   const hostWarning = wrongHost
-    ? `<p class="hint is-bad mt-1">Cette page est ouverte via <strong>${escapeHtml(pageHost)}</strong>, alors que le nœud Tailscale est <strong>${escapeHtml(nodeDns)}</strong>. Les actions risquent d'échouer (erreur 501) : utilise ${url ? `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>` : "l'URL du nœud"}.</p>`
+    ? `<p class="hint is-bad mt-1">Cette page est ouverte via <strong>${escapeHtml(pageHost)}</strong>, alors que le nœud Tailscale est <strong>${escapeHtml(nodeDns)}</strong> : les actions peuvent être refusées. Ouvre plutôt ${url ? `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>` : "l'URL du nœud"}.</p>`
     : "";
   const installBtn = root?.querySelector("#tsInstall");
   if (installBtn) {
@@ -2955,10 +3019,11 @@ function renderTailscale() {
     ${summary}
     ${checks.length ? `<div class="stack mt-1" style="gap:4px">${checks.map((item) => `<div class="row-between" style="gap:8px"><span class="hint ${item.ok ? "muted" : "is-bad"}">${item.ok ? icon("check", 12) : icon("alert", 12)} ${escapeHtml(item.label)}</span>${item.ok ? "" : `<span class="hint is-bad" style="text-align:right;max-width:60%">${escapeHtml(item.detail || "")}</span>`}</div>`).join("")}</div>` : ""}
     ${!data.installed ? '<p class="hint mt-1">Installe Tailscale sur le Raspberry Pi : <code>curl -fsSL https://tailscale.com/install.sh | sudo sh</code></p>' : ""}
+    ${data.can_pilot === false ? `<p class="hint is-bad mt-1">Le service eCasa n'a pas le droit de piloter Tailscale. Lance une seule fois en SSH : <code>sudo tailscale set --operator=${escapeHtml(data.service_user || "admin")}</code></p>` : ""}
   `;
 }
 
-async function tailscaleAction(path) {
+async function tailscaleAction(path, body) {
   const button = root?.querySelector(
   path === "up" ? "#tsUp"
     : path === "serve/enable" ? "#tsServeOn"
@@ -2969,7 +3034,7 @@ async function tailscaleAction(path) {
   if (button) button.disabled = true;
   let failure = null;
   try {
-    const payload = await post(`/api/tailscale/${path}`);
+    const payload = await post(`/api/tailscale/${path}`, body);
     if (payload.warning) {
       toast(payload.warning, { type: "error", timeout: 10000 });
     } else if (path === "serve/disable") {
@@ -2983,10 +3048,17 @@ async function tailscaleAction(path) {
       if (payload.command && !payload.ok) {
         toast(`Commande : ${payload.command}`, { type: "info", timeout: 12000 });
       }
+    } else if (payload.needs_login) {
+      toast(
+        "Nœud à autoriser : ouvre le lien affiché dans « État du nœud », puis Actualiser.",
+        { type: "info", timeout: 12000 },
+      );
     } else {
-      const message = payload.url
-        ? `Publié : ${payload.url}`
-        : payload.output || payload.message || "Commande envoyée.";
+      const message = payload.authkey_saved
+        ? "Clé enregistrée et nœud connecté."
+        : payload.url
+          ? `Publié : ${payload.url}`
+          : payload.output || payload.message || "Commande envoyée.";
       toast(message, { type: "info", timeout: 7000 });
     }
   } catch (err) {

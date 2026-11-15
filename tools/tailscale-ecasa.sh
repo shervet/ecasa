@@ -2,6 +2,7 @@
 # eCasa — actions Tailscale à lancer en root (sudo).
 #
 # Usage :
+#   sudo ./tailscale-ecasa.sh operator [utilisateur]  (défaut : $SUDO_USER)
 #   sudo ./tailscale-ecasa.sh install
 #   sudo ./tailscale-ecasa.sh uninstall
 #   sudo ./tailscale-ecasa.sh up [nom]      (nom par défaut : ecasa)
@@ -9,8 +10,8 @@
 #   sudo ./tailscale-ecasa.sh reset
 #   ./tailscale-ecasa.sh status
 #
-# Le service eCasa tourne volontairement sans privilèges (NoNewPrivileges) :
-# ces actions ne peuvent pas être exécutées depuis l'interface web.
+# « operator » autorise le compte du service à piloter tailscaled sans root :
+# c'est ce qui permet à l'interface eCasa de faire « up » et « serve ».
 set -euo pipefail
 
 ACTION="${1:-status}"
@@ -25,6 +26,16 @@ need_root() {
 }
 
 case "$ACTION" in
+  operator)
+    need_root "$@"
+    TARGET="${2:-${SUDO_USER:-}}"
+    if [ -z "$TARGET" ]; then
+      echo "Usage: sudo $0 operator <utilisateur>" >&2
+      exit 2
+    fi
+    tailscale set --operator="$TARGET"
+    echo "Compte $TARGET autorisé à piloter Tailscale (up / serve sans sudo)."
+    ;;
   install)
     need_root "$@"
     curl -fsSL https://tailscale.com/install.sh | sh
@@ -53,7 +64,7 @@ case "$ACTION" in
     tailscale serve status || true
     ;;
   *)
-    echo "Usage: sudo $0 {install|uninstall|up [nom]|serve|reset|status}" >&2
+    echo "Usage: sudo $0 {operator [user]|install|uninstall|up [nom]|serve|reset|status}" >&2
     exit 2
     ;;
 esac

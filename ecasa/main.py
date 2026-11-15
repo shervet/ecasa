@@ -1592,6 +1592,12 @@ def tailscale_checks(status: dict, hostname: str | None = None,
     dns_name = _clean_dns_name(status.get("dns_name"))
     add(installed, "Client Tailscale installé",
         "" if installed else "Commande « tailscale » introuvable dans le PATH")
+    can_pilot = bool(status.get("can_pilot", True))
+    add(can_pilot, "Service autorisé à piloter Tailscale",
+        "" if can_pilot else (
+            "Lance une seule fois en SSH : sudo tailscale set --operator="
+            f"{status.get('service_user') or '<utilisateur>'}"
+        ))
     add(running, "Nœud connecté au tailnet",
         "" if running else "Utilise « Connecter » ou lance « sudo tailscale up »")
     add(bool(status.get("magic_dns_enabled")), "MagicDNS activé",
@@ -1652,6 +1658,7 @@ def get_tailscale_status(port: int | None = None,
         "cert_domains": [], "https_ready": False, "https_url": None,
         "health": [], "checks": [], "warnings": [], "services": [],
         "binary": tailscale_binary(), "auth_url": None,
+        "service_user": None, "operator_user": None, "can_pilot": True,
     }
     data = None
     code, out, _ = _tailscale_cmd(["status", "--json"], timeout=15)
@@ -1725,6 +1732,12 @@ def get_tailscale_status(port: int | None = None,
     if status.get("dns_name"):
         status["https_url"] = f"https://{_clean_dns_name(status['dns_name'])}/"
 
+    if status.get("installed"):
+        can_pilot, operator, service_user = _tailscale_can_pilot()
+        status["can_pilot"] = can_pilot
+        status["operator_user"] = operator
+        status["service_user"] = service_user or None
+
     code_s, out_s, _ = _tailscale_cmd(["serve", "status", "--json"], timeout=10)
     serve = summarize_serve_config(out_s, port, status.get("dns_name"))
     if not serve["serve_active"]:
@@ -1752,11 +1765,8 @@ def tailscale_serve_enable(port: int, path: str = "/",
     code, out, err = _tailscale_cmd(args, timeout=20)
     if code != 0:
         detail = err or out or "Échec de l'activation de tailscale serve"
-        if os.geteuid() != 0 and _looks_privileged(detail):
-            raise RuntimeError(
-                "Droits root requis pour publier via Tailscale. Lance en SSH : "
-                "sudo tailscale " + " ".join(args)
-            )
+        if _looks_privileged(detail):
+            raise RuntimeError(_tailscale_root_hint(" ".join(args), detail))
         raise RuntimeError(detail)
     return {
         "ok": True,
@@ -1769,19 +1779,20 @@ def tailscale_serve_disable() -> dict:
     code, out, err = _tailscale_cmd(["serve", "reset"], timeout=15)
     if code != 0:
         detail = err or out or "Échec de la désactivation de tailscale serve"
-        if os.geteuid() != 0 and _looks_privileged(detail):
+        if _looks_privileged(detail):
             raise RuntimeError(
-                "Droits root requis pour dépublier Tailscale. Lance en SSH : "
-                "sudo tailscale serve reset"
+                _tailscale_root_hint("tailscale serve reset", detail)
             )
         raise RuntimeError(detail)
     return {"ok": True, "output": (out or err).strip()}
 
 
-def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
-    """Connecte le nœud. Sans clé, ``tailscale up`` réutilise la session.
+def tailscale_up(authkey: str = "", hostname: str | None = None) -> dict:
+    """Connecte (ou enregistre) le nœud.
 
-    La clé est optionnelle pour renommer un nœud déjà connecté.
+    Avec une clé : enregistrement direct, sans interaction. Sans clé :
+    ``tailscale up --timeout`` ouvre la session et renvoie l'URL
+    d'autorisation à valider dans la console Tailscale.
     """
     args = ["up"]
     if authkey:
@@ -1789,15 +1800,36 @@ def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
     if hostname:
         args.append(f"--hostname={hostname}")
     args.append("--accept-routes=false")
-    code, out, err = _tailscale_cmd(args, timeout=60)
-    if code != 0:
-        detail = err or out or "Échec de la connexion Tailscale"
-        if os.geteuid() != 0 and _looks_privileged(detail):
-            raise RuntimeError(
-                "Droits root requis pour connecter Tailscale. Lance en SSH : "
-                "sudo tailscale " + " ".join(args)
-            )
-        raise RuntimeError(detail)
+    timeout = 90
+    if not authkey:
+        # Sans clé, `tailscale up` bloque jusqu'à l'autorisation manuelle :
+        # on borne l'attente, l'URL reste disponible via `status --json`.
+        args.append("--timeout=8s")
+        timeout = 25
+    code, out, err = _tailscale_cmd(args, timeout=timeout)
+    detail = (err or out or "").strip()
+    if detail and _looks_privileged(detail):
+        raise RuntimeError(_tailscale_root_hint(" ".join(args), detail))
+    if authkey and code != 0:
+        raise RuntimeError(detail or "Échec de la connexion Tailscale")
+    if not authkey:
+        try:
+            current = get_tailscale_status(hostname=hostname)
+        except Exception:  # noqa: BLE001
+            current = {}
+        if not current.get("running"):
+            auth_url = current.get("auth_url")
+            if auth_url:
+                return {
+                    "ok": False,
+                    "needs_login": True,
+                    "auth_url": auth_url,
+                    "detail": (
+                        "Ouvre le lien pour autoriser ce nœud, puis clique "
+                        "« Actualiser » : la connexion se termine toute seule."
+                    ),
+                }
+            raise RuntimeError(detail or "Échec de la connexion Tailscale")
     result = {"ok": True, "output": (out or err).strip()}
     # `tailscale up --hostname=X` réussit même si X est déjà pris : le nœud
     # garde alors « X-1 ». On le détecte pour l'afficher au lieu de laisser
@@ -1817,6 +1849,68 @@ def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
                 "Libère-le dans la console Tailscale, puis reconnecte."
             )
     return result
+
+
+def _tailscale_service_user() -> str:
+    """Compte qui fait tourner eCasa (celui à autoriser via ``--operator``)."""
+    try:
+        import getpass
+
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001
+        return str(os.environ.get("USER") or os.environ.get("LOGNAME") or "")
+
+
+def tailscale_operator_user() -> str | None:
+    """Compte autorisé à piloter tailscaled sans root (``OperatorUser``).
+
+    Retourne ``""`` quand les préférences sont lisibles mais sans operator, et
+    ``None`` quand elles ne peuvent pas être lues (binaire absent, arrêté…).
+    """
+    code, out, _err = _tailscale_cmd(["debug", "prefs"], timeout=8)
+    if code != 0 or not (out or "").strip():
+        return None
+    try:
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return str(data.get("OperatorUser") or "").strip()
+
+
+def _tailscale_can_pilot() -> tuple[bool, str | None, str]:
+    """Le service peut-il piloter Tailscale ? (root ou ``--operator``).
+
+    On ne conclut à un refus que si les préférences sont lisiblement vides :
+    sinon (Windows, binaire absent, réponse inattendue) on laisse passer pour
+    ne pas afficher un faux avertissement.
+    """
+    user = _tailscale_service_user()
+    if os.name != "linux" or not hasattr(os, "geteuid"):
+        return True, None, user
+    if os.geteuid() == 0:
+        return True, user or None, user
+    operator = tailscale_operator_user()
+    if operator is None:
+        return True, None, user
+    allowed = bool(operator) and operator.lower() == user.lower()
+    return allowed, operator or None, user
+
+
+def _tailscale_root_hint(command: str, detail: str = "") -> str:
+    """Message actionnable quand tailscaled refuse une action non privilégiée."""
+    user = _tailscale_service_user() or "<utilisateur>"
+    text = (
+        "Le service eCasa n'a pas les droits requis (NoNewPrivileges). "
+        "Autorise une seule fois son compte à piloter Tailscale : "
+        f"« sudo tailscale set --operator={user} », puis relance l'action ici. "
+        f"Sinon, en SSH : sudo {command}"
+    )
+    cleaned = str(detail or "").strip()
+    if cleaned and cleaned not in text:
+        text += f" — {cleaned}"
+    return text
 
 
 def _looks_privileged(detail: str) -> bool:
@@ -2076,14 +2170,24 @@ def apply_tailscale_startup(config: dict) -> dict:
             if current.get("running") or authkey:
                 try:
                     result["up"] = tailscale_up(authkey, hostname=hostname)
+                    if result["up"].get("auth_url"):
+                        result["auth_url"] = result["up"]["auth_url"]
+                        result["errors"].append(
+                            "nœud à autoriser : ouvre l'URL affichée dans "
+                            "Réglages → Tailscale"
+                        )
                     if result["up"].get("warning"):
                         result["errors"].append(f"nom : {result['up']['warning']}")
                 except Exception as err:  # noqa: BLE001
                     result["errors"].append(f"connexion : {err}")
             else:
+                # Sans clé, `tailscale up` attend une autorisation manuelle :
+                # on ne bloque pas le démarrage, l'utilisateur lance
+                # « Connecter » depuis l'interface (clé ou lien).
                 result["auth_url"] = current.get("auth_url")
                 result["errors"].append(
-                    "nœud non connecté et aucune clé d'authentification enregistrée"
+                    "nœud non connecté : utilise « Connecter » dans "
+                    "Réglages → Tailscale"
                 )
 
     if auto_serve:
@@ -2780,6 +2884,7 @@ class Handler(BaseHTTPRequestHandler):
                 status["enabled"] = bool(cfg.get("tailscale_enabled"))
                 status["auto_serve"] = bool(cfg.get("tailscale_auto_serve"))
                 status["hostname"] = hostname
+                status["authkey_set"] = bool(cfg.get("tailscale_authkey"))
                 self._json(200, status)
             except Exception as err:  # noqa: BLE001
                 self._json(500, {"error": str(err)})
@@ -2824,25 +2929,41 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = self._body()
                 cfg = load_config()
-                authkey = str(body.get("authkey") or cfg.get("tailscale_authkey") or "").strip()
+                key = str(body.get("authkey") or "").strip()
+                authkey = key or str(cfg.get("tailscale_authkey") or "").strip()
                 hostname = str(cfg.get("tailscale_hostname") or "ecasa")
-                status = get_tailscale_status(
-                    int(cfg.get("port", 8780)), hostname, cfg.get("host"),
-                )
-                if not status.get("running") and not authkey:
-                    self._json(400, {
-                        "error": (
-                            "Ce nœud n'est pas connecté. Enregistre une clé "
-                            "d'authentification Tailscale, ou autorise le nœud "
-                            "depuis le lien ci-dessous."
-                        ),
-                        "auth_url": status.get("auth_url"),
-                        "status": status,
-                    })
-                    return
-                self._json(200, tailscale_up(authkey, hostname=hostname))
+                port = int(cfg.get("port", 8780))
+                result = tailscale_up(authkey, hostname=hostname)
+                if key and key != cfg.get("tailscale_authkey"):
+                    # La clé est conservée localement : la reconnexion au
+                    # démarrage (reboot, coupure réseau) reste automatique.
+                    try:
+                        save_config({"tailscale_authkey": key})
+                        result["authkey_saved"] = True
+                    except Exception as err:  # noqa: BLE001
+                        result["authkey_saved"] = False
+                        result["detail"] = (
+                            f"{result.get('detail') or ''} (clé non enregistrée : {err})"
+                        ).strip()
+                if result.get("auth_url"):
+                    result["status"] = get_tailscale_status(
+                        port, hostname, cfg.get("host"),
+                    )
+                self._json(200, result)
             except Exception as err:  # noqa: BLE001
-                self._json(500, {"error": str(err)})
+                try:
+                    cfg = load_config()
+                    port = int(cfg.get("port", 8780))
+                    hostname = str(cfg.get("tailscale_hostname") or "ecasa")
+                    status = get_tailscale_status(port, hostname, cfg.get("host"))
+                    auth_url = status.get("auth_url")
+                except Exception:  # noqa: BLE001
+                    status, auth_url = {}, None
+                self._json(500, {
+                    "error": str(err),
+                    "auth_url": auth_url,
+                    "status": status,
+                })
             return
 
         if method == "POST" and path == "/api/tailscale/install":

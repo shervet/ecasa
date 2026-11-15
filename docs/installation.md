@@ -127,6 +127,16 @@ L'application fonctionne alors en plein écran, avec l'icône eCasa.
 Le guide pas à pas (nom du nœud, MagicDNS, HTTPS, `tailscale serve`) est dans
 **Réglages → Tailscale → Ouvrir l'aide**. En résumé :
 
+1. `install-pi.sh` installe Tailscale et autorise le compte du service
+   (`sudo tailscale set --operator=…`).
+2. Dans **Réglages → Tailscale → Connecter** : colle une clé
+   d'authentification (`tskey-auth-…`, conservée localement) ou choisis
+   **Autoriser par lien**.
+3. Active **MagicDNS** et **HTTPS Certificates** dans la console Tailscale,
+   puis **Publier**.
+
+Équivalent en ligne de commande (si l'interface ne suffit pas) :
+
 ```bash
 sudo tailscale up --hostname=ecasa
 sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
@@ -150,20 +160,29 @@ sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
 
 Vérifier ensuite que seule l'adresse courante apparaît : `tailscale serve status`.
 
-> **Service systemd et droits root.** eCasa tourne volontairement sans
-> privilèges (`NoNewPrivileges`). Les actions qui exigent root — installer ou
-> désinstaller Tailscale, `tailscale up`, `tailscale serve` — ne peuvent pas
-> être exécutées depuis l'interface : lance-les en SSH. Pour une réinstallation
-> propre :
+> **Service systemd et droits Tailscale.** eCasa tourne volontairement sans
+> privilèges (`NoNewPrivileges`). Une seule étape, faite par `install-pi.sh`,
+> autorise le compte du service à piloter Tailscale sans root :
 >
 > ```bash
-> sudo apt-get purge -y tailscale && sudo rm -rf /var/lib/tailscale
-> curl -fsSL https://tailscale.com/install.sh | sudo sh
-> sudo tailscale up --hostname=ecasa
+> sudo tailscale set --operator=admin     # remplacer admin par le compte du service
 > ```
 >
-> L'interface affiche désormais la commande exacte à copier quand root est
-> requis, au lieu de l'erreur brute de `sudo`.
+> Après cela, **Connecter** et **Publier** fonctionnent depuis l'interface
+> (clé d'authentification enregistrée localement ou lien d'autorisation).
+> Seule l'installation/désinstallation du paquet Tailscale exige encore root :
+> `sudo ./tools/tailscale-ecasa.sh install` (ou `uninstall`).
+>
+> Pour une réinstallation propre :
+>
+> ```bash
+> sudo ./tools/tailscale-ecasa.sh uninstall
+> sudo ./tools/tailscale-ecasa.sh install
+> sudo tailscale set --operator=admin
+> ```
+>
+> L'interface affiche la commande exacte à copier quand root est requis, au
+> lieu de l'erreur brute de `sudo`.
 
 ## Sauvegarde et restauration
 

@@ -329,7 +329,7 @@ class StartupTests(unittest.TestCase):
         up.assert_called_once_with("", hostname="ecasa")
         self.assertEqual(result["errors"], [])
 
-    def test_connexion_sans_cle_signalee(self):
+    def test_connexion_sans_cle_renvoie_vers_interface(self):
         config = {
             "tailscale_enabled": True,
             "tailscale_auto_serve": False,
@@ -339,21 +339,30 @@ class StartupTests(unittest.TestCase):
             "host": "0.0.0.0",
         }
         with mock.patch.object(
-            main, "get_tailscale_status", return_value={"running": False},
-        ):
+            main, "get_tailscale_status",
+            return_value={"running": False, "auth_url": None},
+        ), mock.patch.object(main, "tailscale_up") as up:
             result = main.apply_tailscale_startup(config)
         self.assertTrue(result["attempted"])
-        self.assertTrue(any("clé" in item for item in result["errors"]))
+        # Sans clé, le démarrage ne bloque pas sur `tailscale up` (qui
+        # attendrait une autorisation) : l'utilisateur passe par « Connecter ».
+        up.assert_not_called()
+        self.assertTrue(any("Connecter" in item for item in result["errors"]))
 
 
 class UpTests(unittest.TestCase):
     def test_nom_deja_pris_signale(self):
-        responses = {"up --hostname=ecasa --accept-routes=false": (0, "", "")}
+        responses = {
+            "up --hostname=ecasa --accept-routes=false --timeout=8s": (0, "", ""),
+        }
         with mock.patch.object(
             main, "_tailscale_cmd", side_effect=fake_cmd(responses),
         ), mock.patch.object(
             main, "get_tailscale_status",
-            return_value={"dns_name": "ecasa-1.tailnet-abcd.ts.net"},
+            return_value={
+                "running": True,
+                "dns_name": "ecasa-1.tailnet-abcd.ts.net",
+            },
         ):
             result = main.tailscale_up("", hostname="ecasa")
         self.assertTrue(result["ok"])
@@ -361,16 +370,54 @@ class UpTests(unittest.TestCase):
         self.assertIn("déjà pris", result["warning"])
 
     def test_nom_correct_sans_avertissement(self):
-        responses = {"up --hostname=ecasa --accept-routes=false": (0, "", "")}
+        responses = {
+            "up --hostname=ecasa --accept-routes=false --timeout=8s": (0, "", ""),
+        }
         with mock.patch.object(
             main, "_tailscale_cmd", side_effect=fake_cmd(responses),
         ), mock.patch.object(
             main, "get_tailscale_status",
-            return_value={"dns_name": "ecasa.tailnet-abcd.ts.net"},
+            return_value={
+                "running": True,
+                "dns_name": "ecasa.tailnet-abcd.ts.net",
+            },
         ):
             result = main.tailscale_up("", hostname="ecasa")
         self.assertTrue(result["ok"])
         self.assertNotIn("warning", result)
+
+    def test_sans_cle_renvoie_url_autorisation(self):
+        auth_url = "https://login.tailscale.com/a/abc"
+        responses = {
+            "up --hostname=ecasa --accept-routes=false --timeout=8s": (
+                1, "", "timeout",
+            ),
+        }
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd(responses),
+        ), mock.patch.object(
+            main, "get_tailscale_status",
+            return_value={"running": False, "auth_url": auth_url},
+        ):
+            result = main.tailscale_up("", hostname="ecasa")
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["needs_login"])
+        self.assertEqual(result["auth_url"], auth_url)
+
+    def test_cle_enregistree_sans_interaction(self):
+        responses = {
+            "up --authkey=tskey-auth-x --hostname=ecasa --accept-routes=false": (
+                0, "", "",
+            ),
+        }
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd(responses),
+        ), mock.patch.object(
+            main, "get_tailscale_status",
+            return_value={"running": True, "dns_name": "ecasa.tailnet.ts.net"},
+        ):
+            result = main.tailscale_up("tskey-auth-x", hostname="ecasa")
+        self.assertTrue(result["ok"])
 
 
 if __name__ == "__main__":

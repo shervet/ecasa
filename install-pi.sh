@@ -37,6 +37,18 @@ if ! command -v tailscale >/dev/null 2>&1; then
     fi
 fi
 
+# Autorise le compte du service à piloter tailscaled sans root : sans cela
+# l'interface ne peut exécuter ni « tailscale up » ni « tailscale serve »
+# (le service tourne avec NoNewPrivileges, sudo y est impossible).
+if command -v tailscale >/dev/null 2>&1; then
+    if tailscale set --operator="$RUN_USER" 2>/dev/null; then
+        echo "→ Compte $RUN_USER autorisé à piloter Tailscale (operator)."
+    else
+        echo "⚠ Autorisation Tailscale non appliquée (tailscaled arrêté ?). Lance :"
+        echo "  sudo tailscale set --operator=$RUN_USER"
+    fi
+fi
+
 # ------------------------------------------------------- environnement python
 if [ ! -d "$APP_DIR/.venv" ]; then
     sudo -u "$RUN_USER" python3 -m venv "$APP_DIR/.venv"
@@ -81,5 +93,5 @@ echo "  Config       : $APP_DIR/config.json"
 echo "  Arrêt        : sudo systemctl stop $SERVICE_NAME"
 echo ""
 echo "Tailscale (accès distant) :"
-echo "  sudo tailscale up --hostname=ecasa"
-echo "  puis dans l'interface : Réglages → Tailscale → Publier."
+echo "  sudo tailscale set --operator=$RUN_USER   # une seule fois (fait ci-dessus)"
+echo "  puis dans l'interface : Réglages → Tailscale → Connecter, puis Publier."

@@ -65,7 +65,8 @@
 | Ancienne adresse `https://mecasa.<tailnet>.ts.net` encore accessible | Ancien nom de nœud publié par `tailscale serve` | `sudo tailscale serve reset` puis `sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780` (ou Réglages → Tailscale → Publier). |
 | Page ouverte en `http://192.168.x.x:8780` | Accès direct au réseau local | Contexte non sécurisé : pas de service worker, donc pas de PWA hors ligne ni de rafraîchissement complet. Utiliser l'adresse HTTPS `https://<nœud>.<tailnet>.ts.net/`. |
 | Avertissement « non sécurisé » / `ERR_CERT_*` | Accès par IP ou certificat auto-signé | Passer par `https://<nœud>.<tailnet>.ts.net/` (certificat Tailscale reconnu par tous les navigateurs). |
-| `sudo: The "no new privileges" flag is set` | Le service eCasa tourne volontairement sans privilèges (`NoNewPrivileges`) : sudo ne peut pas élever les droits. | Lancer l'action en SSH. Désinstaller/repartir propre : `sudo apt-get purge -y tailscale && sudo rm -rf /var/lib/tailscale`, puis `curl -fsSL https://tailscale.com/install.sh \| sudo sh`. |
+| `sudo: The "no new privileges" flag is set` (installation/désinstallation) | Le service tourne volontairement sans privilèges (`NoNewPrivileges`) : `sudo` ne peut pas élever les droits. | Lancer le paquet en SSH : `sudo ./tools/tailscale-ecasa.sh uninstall` puis `install`. |
+| `access denied` / `must be root` sur **Connecter** ou **Publier** | Le compte du service n'est pas autorisé à piloter `tailscaled`. | Une seule fois : `sudo tailscale set --operator=<compte>` (fait par `install-pi.sh`), puis Actualiser. |
 
 ## Consommation électrique
 

@@ -101,8 +101,13 @@ configurations.
 | `tailscale_auto_serve` | `false` | Publie le service HTTPS au démarrage. |
 | `tailscale_hostname` | `ecasa` | Nom du nœud dans le tailnet. |
 | `tailscale_bin` | vide | Chemin du binaire si absent du `PATH`. |
-| `tailscale_authkey` | vide | Clé d'authentification (optionnelle). |
+| `tailscale_authkey` | vide | Clé d'authentification, enregistrée localement par **Connecter** et réutilisée à chaque démarrage (reconnexion automatique). |
 
+> Le nœud se connecte et se publie depuis l'interface (**Réglages → Tailscale**) :
+> `install-pi.sh` autorise le compte du service avec `tailscale set --operator`,
+> ce qui rend `tailscale up`/`serve` utilisables sans root malgré
+> `NoNewPrivileges`. Seule l'installation du paquet reste en SSH.
+>
 > Le serveur écoute en **HTTP** ; `tailscale_auto_serve` publie un proxy **HTTPS**
 > (certificat Let's Encrypt de `*.ts.net`) accessible uniquement depuis le tailnet.
 > Détails : [installation.md](installation.md).
