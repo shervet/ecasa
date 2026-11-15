@@ -9,6 +9,7 @@
 | Inaccessible depuis le téléphone | `host` sur `127.0.0.1` | Passer `host` à `0.0.0.0` dans Réglages → Serveur, puis redémarrer. |
 | 403 sur les routes de réglage depuis le réseau | Administration distante désactivée | Activer `allow_remote_admin` (réseau de confiance) ou passer par Tailscale. |
 | Port déjà utilisé | Autre service | Changer `port` et mettre à jour la publication Tailscale. |
+| `Permission denied` sur `./run.sh` ou `./install-pi.sh` | Scripts non exécutables (archive ZIP, copie FAT/NTFS) | `chmod +x *.sh`, ou lancer avec `bash run.sh` / `sudo bash install-pi.sh`. |
 
 ## Comptes et équipements
 

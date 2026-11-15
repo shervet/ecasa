@@ -69,6 +69,16 @@ sudo systemctl status ecasa
 sudo journalctl -u ecasa -f
 ```
 
+> **Droits d'exécution.** Les scripts sont livrés exécutables dans le dépôt Git. Si
+> tu as récupéré le code via une archive ZIP (ou une copie sur FAT/NTFS), le droit
+> peut manquer et `./install-pi.sh` renvoie `Permission denied`. Corrige une fois :
+>
+> ```bash
+> chmod +x install-pi.sh run.sh stop.sh export-config.sh import-config.sh
+> ```
+>
+> À défaut, lance-les avec `bash install-pi.sh` / `bash run.sh`.
+
 `install-pi.sh` crée un environnement virtuel, installe l'unité `systemd` et active
 le démarrage automatique. Le service survit aux coupures de courant et redémarre seul.
 

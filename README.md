@@ -152,6 +152,11 @@ Installation en service (démarrage automatique, résistant aux coupures) :
 sudo ./install-pi.sh
 ```
 
+> Les scripts `install-pi.sh`, `run.sh`, `stop.sh`, `export-config.sh` et
+> `import-config.sh` sont livrés **exécutables** dans le dépôt Git. Si tu passes par
+> une archive ZIP ou une copie qui a perdu ce droit (`Permission denied`), rends-les
+> exécutables une fois : `chmod +x install-pi.sh run.sh stop.sh export-config.sh import-config.sh`.
+
 Les scripts utilisent le Python du projet (`.venv`) s'il existe, sinon celui du
 système. Si tu préfères la ligne de commande, `python -m ecasa.main` fonctionne
 aussi — voir [docs/installation.md](docs/installation.md).

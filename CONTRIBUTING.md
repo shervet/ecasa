@@ -63,6 +63,10 @@ meilleure façon de montrer qu'il est corrigé.
 - **Interface** : en français, mobile-first, avec le même ton partout.
 - **Aucune donnée personnelle ni secret** dans le dépôt : `config.json` et `data/`
   sont ignorés par git.
+- **Scripts shell exécutables** : sous Windows, le bit `+x` n'existe pas sur le
+  disque ; il faut l'enregistrer dans l'index Git pour que les clones Linux le
+  conservent : `git update-index --chmod=+x script.sh`. Vérifier avec
+  `git ls-files -s '*.sh'` (mode attendu `100755`).
 
 ## Processus
 
