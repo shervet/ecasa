@@ -1593,7 +1593,7 @@ def tailscale_checks(status: dict, hostname: str | None = None,
     add(installed, "Client Tailscale installé",
         "" if installed else "Commande « tailscale » introuvable dans le PATH")
     add(running, "Nœud connecté au tailnet",
-        "" if running else "Utilise « Connecter » ou lance « tailscale up »")
+        "" if running else "Utilise « Connecter » ou lance « sudo tailscale up »")
     add(bool(status.get("magic_dns_enabled")), "MagicDNS activé",
         "" if status.get("magic_dns_enabled")
         else "Active MagicDNS dans la console d'administration Tailscale")
@@ -1622,13 +1622,13 @@ def tailscale_checks(status: dict, hostname: str | None = None,
             else:
                 detail = (
                     f"Le nœud s'appelle « {short} » au lieu de « {hostname} ». "
-                    f"Relance « tailscale up --hostname={hostname} » ou renomme "
+                    f"Relance « sudo tailscale up --hostname={hostname} » ou renomme "
                     "le nœud dans la console → Machines."
                 )
             add(False, f"Nom du nœud : {hostname}", detail)
     add(bool(status.get("https_ready")), "HTTPS Certificates activé",
         "" if status.get("https_ready")
-        else "Active HTTPS Certificates dans la console Tailscale")
+        else "Active HTTPS Certificates dans la console Tailscale (DNS → HTTPS Certificates)")
     if local_host is not None:
         reachable = str(local_host) in ("0.0.0.0", "::", "", "127.0.0.1",
                                         "::1", "localhost")
@@ -1637,7 +1637,7 @@ def tailscale_checks(status: dict, hostname: str | None = None,
             else "Règle « host » sur 0.0.0.0 pour que tailscale serve atteigne eCasa")
     add(bool(status.get("serve_ok")), "eCasa publié en HTTPS",
         "" if status.get("serve_ok")
-        else "Publie avec le bouton « Publier » (tailscale serve)")
+        else "Publie avec le bouton « Publier » (sudo tailscale serve)")
     return checks
 
 
@@ -1749,7 +1749,13 @@ def tailscale_serve_enable(port: int, path: str = "/",
     args = tailscale_serve_args(port, path, https_port)
     code, out, err = _tailscale_cmd(args, timeout=20)
     if code != 0:
-        raise RuntimeError(err or out or "Échec de l'activation de tailscale serve")
+        detail = err or out or "Échec de l'activation de tailscale serve"
+        if os.geteuid() != 0 and _looks_privileged(detail):
+            raise RuntimeError(
+                "Droits root requis pour publier via Tailscale. Lance en SSH : "
+                "sudo tailscale " + " ".join(args)
+            )
+        raise RuntimeError(detail)
     return {
         "ok": True,
         "command": "tailscale " + " ".join(args),
@@ -1760,7 +1766,13 @@ def tailscale_serve_enable(port: int, path: str = "/",
 def tailscale_serve_disable() -> dict:
     code, out, err = _tailscale_cmd(["serve", "reset"], timeout=15)
     if code != 0:
-        raise RuntimeError(err or out or "Échec de la désactivation de tailscale serve")
+        detail = err or out or "Échec de la désactivation de tailscale serve"
+        if os.geteuid() != 0 and _looks_privileged(detail):
+            raise RuntimeError(
+                "Droits root requis pour dépublier Tailscale. Lance en SSH : "
+                "sudo tailscale serve reset"
+            )
+        raise RuntimeError(detail)
     return {"ok": True, "output": (out or err).strip()}
 
 
@@ -1777,7 +1789,13 @@ def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
     args.append("--accept-routes=false")
     code, out, err = _tailscale_cmd(args, timeout=60)
     if code != 0:
-        raise RuntimeError(err or out or "Échec de la connexion Tailscale")
+        detail = err or out or "Échec de la connexion Tailscale"
+        if os.geteuid() != 0 and _looks_privileged(detail):
+            raise RuntimeError(
+                "Droits root requis pour connecter Tailscale. Lance en SSH : "
+                "sudo tailscale " + " ".join(args)
+            )
+        raise RuntimeError(detail)
     result = {"ok": True, "output": (out or err).strip()}
     # `tailscale up --hostname=X` réussit même si X est déjà pris : le nœud
     # garde alors « X-1 ». On le détecte pour l'afficher au lieu de laisser
@@ -1799,22 +1817,68 @@ def tailscale_up(authkey: str, hostname: str | None = None) -> dict:
     return result
 
 
+def _looks_privileged(detail: str) -> bool:
+    """Erreur qui trahit un manque de droits root (service non privilégié)."""
+    low = str(detail or "").lower()
+    return any(
+        key in low
+        for key in (
+            "no new privileges",
+            "must be root",
+            "access denied",
+            "permission denied",
+            "operation not permitted",
+            "a password is required",
+            "a terminal is required",
+        )
+    )
+
+
+def _privileged_failure(command: str, detail: str = "") -> dict:
+    """Résultat d'échec lisible quand root est requis mais inaccessible."""
+    hint = (
+        "Droits root requis. Le service eCasa tourne sans privilèges "
+        "(NoNewPrivileges) : sudo ne peut pas élever les droits depuis "
+        "l'interface. Lance cette commande en SSH :"
+    )
+    suffix = f" — {detail.strip()}" if str(detail or "").strip() else ""
+    return {
+        "ok": False,
+        "needs_root": True,
+        "detail": f"{hint} {command}{suffix}",
+        "command": command,
+    }
+
+
+def _sudo_available() -> bool:
+    """``sudo`` peut-il élever les droits sans mot de passe ni blocage ?"""
+    if os.geteuid() == 0:
+        return True
+    if not shutil.which("sudo"):
+        return False
+    code, _detail = _run(["sudo", "-n", "true"], timeout=5)
+    return code == 0
+
+
 def tailscale_install() -> dict:
     import platform as _platform
     system = _platform.system().lower()
     if system == "linux":
         command = "curl -fsSL https://tailscale.com/install.sh | sh"
-        args = ["sh", "-c", command]
-        # Le script d'installation requiert root : en dev (SSH/terminal),
-        # on relève via sudo ; sous le service systemd (sans privilèges),
-        # l'échec est renvoyé avec un message clair.
+        ssh_command = f"sudo sh -c '{command}'"
+        # Le service systemd tourne sans privilèges : inutile d'appeler sudo
+        # s'il ne peut pas aboutir, on renvoie la commande à lancer en SSH.
         if os.geteuid() != 0:
-            if not shutil.which("sudo"):
-                return {"ok": False, "detail": "Droits root requis : lance eCasa avec sudo ou installe Tailscale manuellement.", "command": f"sudo {command}"}
-            args = ["sudo", "sh", "-c", command]
+            if not _sudo_available():
+                return _privileged_failure(ssh_command)
+            args = ["sudo", "-n", "sh", "-c", command]
+        else:
+            args = ["sh", "-c", command]
         code, detail = _run(args, timeout=300)
         if code != 0:
-            return {"ok": False, "detail": detail or ("code %d" % code), "command": command}
+            if _looks_privileged(detail):
+                return _privileged_failure(ssh_command, detail)
+            return {"ok": False, "detail": detail or ("code %d" % code), "command": ssh_command}
         return {"ok": True, "detail": detail or "Tailscale installe"}
     if system == "darwin":
         return {"ok": False, "detail": "Installation manuelle requise sur macOS.", "command": "brew install --cask tailscale"}
@@ -1835,15 +1899,22 @@ def tailscale_uninstall() -> dict:
     import platform as _platform
     system = _platform.system().lower()
     if system == "linux":
-        command = "apt-get remove -y tailscale || dnf remove -y tailscale"
-        args = ["sh", "-c", command]
+        # « purge » + suppression de l'état : base propre pour une réinstallation.
+        command = (
+            "apt-get purge -y tailscale 2>/dev/null || dnf remove -y tailscale"
+        )
+        ssh_command = f"sudo sh -c '{command}'"
         if os.geteuid() != 0:
-            if not shutil.which("sudo"):
-                return {"ok": False, "detail": "Droits root requis pour désinstaller Tailscale.", "command": f"sudo {command}"}
-            args = ["sudo", "sh", "-c", command]
+            if not _sudo_available():
+                return _privileged_failure(ssh_command)
+            args = ["sudo", "-n", "sh", "-c", command]
+        else:
+            args = ["sh", "-c", command]
         code, detail = _run(args, timeout=300)
         if code != 0:
-            return {"ok": False, "detail": detail or ("code %d" % code), "command": f"sudo {command}"}
+            if _looks_privileged(detail):
+                return _privileged_failure(ssh_command, detail)
+            return {"ok": False, "detail": detail or ("code %d" % code), "command": ssh_command}
         return {"ok": True, "detail": detail or "Tailscale desinstalle"}
     if system == "darwin":
         return {"ok": False, "detail": "Desinstallation manuelle requise sur macOS.", "command": "brew uninstall --cask tailscale"}

@@ -61,10 +61,11 @@
 | `HTTPS is not enabled in your tailnet` | Étape MagicDNS/HTTPS incomplète | Activer HTTPS Certificates, attendre 30 s, Actualiser, Publier. |
 | `502` / `connection refused` | Mauvaise adresse d'écoute | `host` = `0.0.0.0` ou `127.0.0.1`, republier avec le bon port. |
 | Le nom MagicDNS ne résout pas | MagicDNS désactivé | Activer MagicDNS dans la console Tailscale. |
-| `ecasa-1` au lieu de `ecasa` | Nom réservé | Supprimer l'ancien nœud ou le Service Tailscale, puis `tailscale up --hostname=ecasa`. |
-| Ancienne adresse `https://mecasa.<tailnet>.ts.net` encore accessible | Ancien nom de nœud publié par `tailscale serve` | `tailscale serve reset` puis `tailscale serve --bg --set-path=/ http://127.0.0.1:8780` (ou Réglages → Tailscale → Publier). |
+| `ecasa-1` au lieu de `ecasa` | Nom réservé | Supprimer l'ancien nœud ou le Service Tailscale, puis `sudo tailscale up --hostname=ecasa`. |
+| Ancienne adresse `https://mecasa.<tailnet>.ts.net` encore accessible | Ancien nom de nœud publié par `tailscale serve` | `sudo tailscale serve reset` puis `sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780` (ou Réglages → Tailscale → Publier). |
 | Page ouverte en `http://192.168.x.x:8780` | Accès direct au réseau local | Contexte non sécurisé : pas de service worker, donc pas de PWA hors ligne ni de rafraîchissement complet. Utiliser l'adresse HTTPS `https://<nœud>.<tailnet>.ts.net/`. |
 | Avertissement « non sécurisé » / `ERR_CERT_*` | Accès par IP ou certificat auto-signé | Passer par `https://<nœud>.<tailnet>.ts.net/` (certificat Tailscale reconnu par tous les navigateurs). |
+| `sudo: The "no new privileges" flag is set` | Le service eCasa tourne volontairement sans privilèges (`NoNewPrivileges`) : sudo ne peut pas élever les droits. | Lancer l'action en SSH. Désinstaller/repartir propre : `sudo apt-get purge -y tailscale && sudo rm -rf /var/lib/tailscale`, puis `curl -fsSL https://tailscale.com/install.sh \| sudo sh`. |
 
 ## Consommation électrique
 

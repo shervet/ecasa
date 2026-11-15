@@ -128,8 +128,8 @@ Le guide pas à pas (nom du nœud, MagicDNS, HTTPS, `tailscale serve`) est dans
 **Réglages → Tailscale → Ouvrir l'aide**. En résumé :
 
 ```bash
-tailscale up --hostname=ecasa
-tailscale serve --bg --set-path=/ http://127.0.0.1:8780
+sudo tailscale up --hostname=ecasa
+sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
 ```
 
 Puis ouvrir `https://ecasa.<tailnet>.ts.net/`.
@@ -144,11 +144,26 @@ Après un renommage du nœud, l'ancienne adresse peut rester publiée. Pour repa
 propre :
 
 ```bash
-tailscale serve reset
-tailscale serve --bg --set-path=/ http://127.0.0.1:8780
+sudo tailscale serve reset
+sudo tailscale serve --bg --set-path=/ http://127.0.0.1:8780
 ```
 
 Vérifier ensuite que seule l'adresse courante apparaît : `tailscale serve status`.
+
+> **Service systemd et droits root.** eCasa tourne volontairement sans
+> privilèges (`NoNewPrivileges`). Les actions qui exigent root — installer ou
+> désinstaller Tailscale, `tailscale up`, `tailscale serve` — ne peuvent pas
+> être exécutées depuis l'interface : lance-les en SSH. Pour une réinstallation
+> propre :
+>
+> ```bash
+> sudo apt-get purge -y tailscale && sudo rm -rf /var/lib/tailscale
+> curl -fsSL https://tailscale.com/install.sh | sudo sh
+> sudo tailscale up --hostname=ecasa
+> ```
+>
+> L'interface affiche désormais la commande exacte à copier quand root est
+> requis, au lieu de l'erreur brute de `sudo`.
 
 ## Sauvegarde et restauration
 

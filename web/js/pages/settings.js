@@ -2899,7 +2899,7 @@ function renderTailscale() {
     ${data.auth_url ? `<p class="hint mt-1">Ce nœud attend une autorisation : <a href="${escapeHtml(data.auth_url)}" target="_blank" rel="noreferrer">ouvrir la page de connexion Tailscale</a>.</p>` : ""}
     ${summary}
     ${checks.length ? `<div class="stack mt-1" style="gap:4px">${checks.map((item) => `<div class="row-between" style="gap:8px"><span class="hint ${item.ok ? "muted" : "is-bad"}">${item.ok ? icon("check", 12) : icon("alert", 12)} ${escapeHtml(item.label)}</span>${item.ok ? "" : `<span class="hint is-bad" style="text-align:right;max-width:60%">${escapeHtml(item.detail || "")}</span>`}</div>`).join("")}</div>` : ""}
-    ${!data.installed ? '<p class="hint mt-1">Installe Tailscale sur le Raspberry Pi : <code>curl -fsSL https://tailscale.com/install.sh | sh</code></p>' : ""}
+    ${!data.installed ? '<p class="hint mt-1">Installe Tailscale sur le Raspberry Pi : <code>curl -fsSL https://tailscale.com/install.sh | sudo sh</code></p>' : ""}
   `;
 }
 
