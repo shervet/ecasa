@@ -2834,6 +2834,7 @@ class App:
         engine: Engine,
         weather: WeatherService | None = None,
         energy: EnergyService | None = None,
+        consoapi_energy: EnergyService | None = None,
     ):
         self.store = store
         self.engine = engine
