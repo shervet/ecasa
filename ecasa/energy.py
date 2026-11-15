@@ -133,12 +133,8 @@ class EnergyService:
         seules les dates manquantes sont demandées ; ``refresh=True`` revalide
         les 7 derniers jours (synchro manuelle/quotidienne).
         """
-        # La consommation journalière n'est disponible qu'à J-1 au plus tôt.
-        latest = date.today() - timedelta(days=1)
-        if end > latest:
-            end = latest
         if start > end:
-            return {}
+            raise EnergyError("Période de consommation invalide")
 
         base = str(base_url or MED_DEFAULT_URL).strip().rstrip("/")
         pdl = str(pdl or "").strip()
@@ -174,6 +170,9 @@ class EnergyService:
                 for offset in range((end - start).days + 1)
                 if (start + timedelta(days=offset)).isoformat() not in values
             }
+        # Données journalières dispo à J-1 ; évite les requêtes invalides (ex. dateFin=today).
+        if self._fetcher is _http_json:
+            wanted = {d for d in wanted if d < date.today()}
 
         errors: list[EnergyError] = []
         for chunk_start, chunk_end in _contiguous_ranges(wanted):
