@@ -1599,7 +1599,7 @@ def tailscale_checks(status: dict, hostname: str | None = None,
         else "Active MagicDNS dans la console d'administration Tailscale")
     add(bool(dns_name), "Nom DNS du nœud",
         "" if dns_name else "Le nœud n'a pas encore de nom MagicDNS")
-    if hostname and dns_name:
+    if hostname and dns_name and running:
         short = dns_name.split(".")[0].lower()
         wanted = hostname.lower()
         if short == wanted:
