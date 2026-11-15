@@ -1677,7 +1677,9 @@ def get_tailscale_status(port: int | None = None,
         status["running"] = data.get("BackendState") == "Running"
         self_info = data.get("Self") or {}
         dns_name = _clean_dns_name(self_info.get("DNSName"))
-        status["dns_name"] = dns_name or self_info.get("HostName")
+        # DNSName n'existe qu'une fois le nœud connecté ; le HostName local ne
+        # doit pas être présenté comme un nom MagicDNS valide.
+        status["dns_name"] = dns_name or None
         addrs = self_info.get("TailscaleIPs") or data.get("TailscaleIPs") or []
         if addrs:
             status["ip"] = addrs[0]
