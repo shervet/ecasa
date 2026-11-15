@@ -1942,7 +1942,12 @@ def ecasa_update_apply() -> dict:
     if root is None:
         return {"ok": False, "detail": "Dépôt git introuvable.", "command": ""}
     branch = ecasa_update_branch()
-    code, detail = _git(["pull", "--ff-only", "origin", branch], timeout=180)
+    # core.filemode=false : un simple changement de droit d'exécution (chmod +x
+    # manuel, copie FAT/NTFS) ne doit pas bloquer le git pull.
+    code, detail = _git(
+        ["-c", "core.filemode=false", "pull", "--ff-only", "origin", branch],
+        timeout=180,
+    )
     if code != 0:
         return {
             "ok": False,
@@ -2785,18 +2790,35 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and path == "/api/update/check":
             try:
-                self._json(200, ecasa_update_check())
+                result = ecasa_update_check()
+                # Le cas « installé hors git » est normal : pas de bruit dans le
+                # journal. On ne trace que les échecs réels (réseau, git absent).
+                if result.get("is_git") and result.get("error"):
+                    self.app.store.log(
+                        "warn", f"Vérification de mise à jour : {result['error']}"
+                    )
+                self._json(200, result)
             except Exception as err:  # noqa: BLE001
+                self.app.store.log("warn", f"Vérification de mise à jour : {err}")
                 self._json(500, {"error": str(err)})
             return
 
         if method == "POST" and path == "/api/update/apply":
             try:
                 result = ecasa_update_apply()
+                if result.get("ok"):
+                    self.app.store.log(
+                        "info", f"Mise à jour appliquée : {result.get('detail', '')}"
+                    )
+                else:
+                    self.app.store.log(
+                        "error", f"Mise à jour échouée : {result.get('detail', '')}"
+                    )
                 self._json(200, result)
                 if result.get("ok"):
                     self._schedule_shutdown(restart=True)
             except Exception as err:  # noqa: BLE001
+                self.app.store.log("error", f"Mise à jour échouée : {err}")
                 self._json(500, {"error": str(err)})
             return
 

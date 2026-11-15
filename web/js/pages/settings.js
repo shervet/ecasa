@@ -2788,7 +2788,9 @@ async function loadUpdate() {
   try {
     updateInfo = await get("/api/update/check");
   } catch (err) {
-    updateInfo = { is_git: false, error: err.message || String(err), available: false };
+    // Échec du check (serveur occupé, redémarrage…) : ne pas prétendre que
+    // l'installation n'est pas issue de Git. is_git=null => afficher l'erreur.
+    updateInfo = { is_git: null, error: err.message || String(err), available: false };
   }
   if (sec) {
     sec.outerHTML = updateSection();
