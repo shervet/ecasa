@@ -1129,6 +1129,14 @@ function tailscaleSection() {
       "Installation, connexion et publication du service sur ton tailnet.",
       `<button class="btn btn-sm" type="button" id="tailscaleHelp">${icon("info", 15)} Ouvrir l'aide</button>`
     )}
+    ${row(
+      "MagicDNS et HTTPS",
+      "À activer dans la console Tailscale, sinon l'app Android ne peut pas charger l'URL.",
+      `<div class="row wrap" style="gap:8px">
+        <button class="btn btn-sm" type="button" id="tailscaleDnsHelp">${icon("info", 15)} Quoi faire</button>
+        <a class="btn btn-sm" href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">${icon("external", 14)} Console Tailscale</a>
+      </div>`
+    )}
     ${row("Activer Tailscale", "Au démarrage, eCasa peut connecter le nœud et publier le service.", toggle("tailscale_enabled", Boolean(c.tailscale_enabled)))}
     ${row("Publier automatiquement", "Au démarrage, expose l'interface sur le tailnet en HTTPS via « tailscale serve ».", toggle("tailscale_auto_serve", Boolean(c.tailscale_auto_serve)))}
     ${textRow("Nom du nœud", "tailscale_hostname", c.tailscale_hostname || "ecasa", {
@@ -1502,6 +1510,7 @@ function bind() {
   root.querySelector("#updateCheck")?.addEventListener("click", loadUpdate);
   root.querySelector("#updateApply")?.addEventListener("click", updateAction);
   root.querySelector("#tailscaleHelp")?.addEventListener("click", openTailscaleHelp);
+  root.querySelector("#tailscaleDnsHelp")?.addEventListener("click", openTailscaleDnsHelp);
   root.querySelector("#energyHelp")?.addEventListener("click", openEnergyHelp);
   root.querySelector("#tsUp")?.addEventListener("click", () => tailscaleAction("up"));
   root.querySelector("#tsServeOn")?.addEventListener("click", () => tailscaleAction("serve/enable"));
@@ -2667,6 +2676,51 @@ async function waitForServer() {
 
 /* --------------------------------------------------------------- tailscale */
 
+function openTailscaleDnsHelp() {
+  const sheet = openSheet({
+    title: "Activer MagicDNS et HTTPS",
+    sub: "Réglage du tailnet, à faire une fois dans la console Tailscale",
+    footer: `<div class="row wrap" style="gap:8px">
+      <a class="btn btn-primary" href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">${icon("external", 15)} Ouvrir la console → DNS</a>
+      <button class="btn" type="button" data-dns-refresh>${icon("refresh", 15)} J'ai activé, actualiser</button>
+    </div>`,
+    body: `<div class="stack">
+      <p class="hint">Ces deux réglages appartiennent à ton <strong>tailnet</strong> (le compte Tailscale), pas à eCasa. Ils ne peuvent pas être activés depuis cette page : il faut passer par la console Tailscale, avec un compte administrateur du tailnet.</p>
+
+      <div class="help-step">
+        <div class="help-step-head"><span class="help-step-num">1</span><div>
+          <div class="help-step-title">Activer MagicDNS</div>
+          <div class="help-step-sub">Permet de résoudre <code>ecasa.&lt;tailnet&gt;.ts.net</code> depuis le téléphone.</div>
+        </div></div>
+        <div class="help-faq-a">Dans la console → <strong>DNS</strong>, active <strong>MagicDNS</strong>.</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head"><span class="help-step-num">2</span><div>
+          <div class="help-step-title">Activer HTTPS Certificates</div>
+          <div class="help-step-sub">Autorise Tailscale à émettre le certificat du nom <code>ecasa.&lt;tailnet&gt;.ts.net</code>.</div>
+        </div></div>
+        <div class="help-faq-a">Toujours dans <strong>DNS</strong>, section <strong>HTTPS Certificates</strong> → clique sur <strong>Enable HTTPS</strong> (ou « Activer HTTPS »).</div>
+      </div>
+
+      <div class="help-step">
+        <div class="help-step-head"><span class="help-step-num">3</span><div>
+          <div class="help-step-title">Revenir dans eCasa et actualiser</div>
+          <div class="help-step-sub">L'émission du certificat peut prendre 30 secondes.</div>
+        </div></div>
+        <div class="help-faq-a">Réglages → Tailscale → <strong>Actualiser</strong>. Les lignes <strong>MagicDNS</strong> et <strong>HTTPS Certificates</strong> doivent passer au vert. Publie ensuite avec <strong>Publier</strong>.</div>
+      </div>
+
+      <p class="hint">Si tu n'es pas administrateur du tailnet, demande à la personne qui gère le compte Tailscale d'activer ces deux options.</p>
+      <p class="hint">Scripts prêts à l'emploi (à lancer en SSH sur le serveur) : <a href="https://raw.githubusercontent.com/shervet/ecasa/main/tools/tailscale-ecasa.sh" target="_blank" rel="noreferrer">tailscale-ecasa.sh</a> · <a href="https://raw.githubusercontent.com/shervet/ecasa/main/tools/tailscale-ecasa.bat" target="_blank" rel="noreferrer">tailscale-ecasa.bat</a></p>
+    </div>`,
+  });
+  sheet?.footer?.querySelector("[data-dns-refresh]")?.addEventListener("click", () => {
+    sheet.close();
+    loadTailscale();
+  });
+}
+
 function openTailscaleHelp() {
   const sheet = openSheet({
     title: "Configurer Tailscale",
@@ -2685,7 +2739,7 @@ function openTailscaleHelp() {
         </div>
         <div><span class="help-os-label">Windows (PowerShell)</span><code class="help-code">winget install -e --id Tailscale.Tailscale</code></div>
         <div><span class="help-os-label">macOS</span><code class="help-code">brew install --cask tailscale</code></div>
-        <div><span class="help-os-label">Linux / Raspberry Pi</span><code class="help-code">curl -fsSL https://tailscale.com/install.sh | sh</code></div>
+        <div><span class="help-os-label">Linux / Raspberry Pi</span><code class="help-code">curl -fsSL https://tailscale.com/install.sh | sudo sh</code></div>
         <div class="help-check"><strong>À vérifier :</strong> <code>tailscale version</code> affiche un numéro de version. Sur Windows, eCasa détecte automatiquement <code>C:\\Program Files\\Tailscale\\tailscale.exe</code> même s'il n'est pas dans le PATH.</div>
       </div>
 
@@ -2774,7 +2828,8 @@ function openTailscaleHelp() {
         </div>
       </div>
 
-      <p class="hint mt-2">Liens utiles : <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">DNS du tailnet</a> · <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">Clés d'authentification</a> · <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Installer Tailscale</a> · <a href="https://tailscale.com/kb/1242/tailscale-serve" target="_blank" rel="noreferrer">Documentation serve</a></p>
+      <p class="hint mt-2">Liens utiles : <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer">DNS du tailnet</a> · <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noreferrer">Machines</a> · <a href="https://login.tailscale.com/admin/settings/keys" target="_blank" rel="noreferrer">Clés d'authentification</a> · <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Installer Tailscale</a> · <a href="https://tailscale.com/kb/1242/tailscale-serve" target="_blank" rel="noreferrer">Documentation serve</a></p>
+      <p class="hint">Scripts prêts à l'emploi (à lancer en SSH sur le serveur) : <a href="https://raw.githubusercontent.com/shervet/ecasa/main/tools/tailscale-ecasa.sh" target="_blank" rel="noreferrer">tailscale-ecasa.sh</a> · <a href="https://raw.githubusercontent.com/shervet/ecasa/main/tools/tailscale-ecasa.bat" target="_blank" rel="noreferrer">tailscale-ecasa.bat</a></p>
     </div>`,
   });
   sheet?.footer?.querySelector("[data-help-refresh]")?.addEventListener("click", () => {
