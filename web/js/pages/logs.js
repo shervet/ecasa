@@ -20,6 +20,14 @@ const LEVEL_ICON = {
   info: "info",
 };
 
+// Le backend utilise parfois "warn"/"error" (hérité) ; on normalise une fois ici
+// pour que les filtres, compteurs et styles restent cohérents.
+const LEVEL_ALIASES = { warn: "avertissement", warning: "avertissement", error: "erreur" };
+function normLevel(level) {
+  const raw = String(level || "info").toLowerCase();
+  return LEVEL_ALIASES[raw] || raw;
+}
+
 let root = null;
 let filter = "all";
 let search = "";
@@ -150,7 +158,7 @@ export default {
 };
 
 function markErrorsSeen() {
-  const errors = (store.state?.logs || []).filter((entry) => entry.level === "erreur").length;
+  const errors = (store.state?.logs || []).filter((entry) => normLevel(entry.level) === "erreur").length;
   try {
     localStorage.setItem("ecasa.seenErrorCount", String(errors));
   } catch {
@@ -165,7 +173,7 @@ function entries() {
 function filtered(list) {
   const needle = search.toLocaleLowerCase("fr");
   return list.filter((entry) => {
-    if (filter !== "all" && entry.level !== filter) return false;
+    if (filter !== "all" && normLevel(entry.level) !== filter) return false;
     if (!needle) return true;
     const device = entry.device_id ? deviceName(store.state, entry.device_id) : "";
     return `${entry.message || ""} ${device}`.toLocaleLowerCase("fr").includes(needle);
@@ -177,8 +185,8 @@ function render() {
   const all = entries();
   const list = filtered(all);
 
-  const errors = all.filter((entry) => entry.level === "erreur").length;
-  const warnings = all.filter((entry) => entry.level === "avertissement").length;
+  const errors = all.filter((entry) => normLevel(entry.level) === "erreur").length;
+  const warnings = all.filter((entry) => normLevel(entry.level) === "avertissement").length;
 
   const stats = root.querySelector("#logsStats");
   if (stats) {
@@ -257,7 +265,7 @@ function render() {
       );
     }
 
-    const level = entry.level || "info";
+    const level = normLevel(entry.level);
     const glyph = LEVEL_ICON[level] || "info";
     const device = entry.device_id ? deviceName(store.state, entry.device_id) : "";
 
