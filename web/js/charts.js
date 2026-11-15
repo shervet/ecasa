@@ -165,8 +165,10 @@ export function barChart({
     </div>`;
   }
 
-  const tempValues = Array.isArray(outdoor?.values) ? outdoor.values : [];
-  const tempNums = tempValues.filter((value) => Number.isFinite(value));
+  const tempSeries = Array.isArray(outdoor)
+    ? outdoor.filter((s) => Array.isArray(s?.values))
+    : (outdoor && Array.isArray(outdoor.values) ? [outdoor] : []);
+  const tempNums = tempSeries.flatMap((s) => s.values).filter((value) => Number.isFinite(value));
   const hasTemp = tempNums.length > 0;
   const right = hasTemp ? 42 : M.right;
 
@@ -246,25 +248,30 @@ export function barChart({
     tMin -= tPad;
     tMax += tPad;
     const ty = (value) => M.top + innerH - ((value - tMin) / (tMax - tMin)) * innerH;
-    const tUnit = outdoor.unit || "°C";
+    const tUnit = (tempSeries[0] && tempSeries[0].unit) || "°C";
     for (let i = 0; i <= gridCount; i += 1) {
       const value = tMin + ((tMax - tMin) * i) / gridCount;
       const py = ty(value);
       tempLayer += `<text x="${svgWidth - right + 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="start" font-size="10.5" fill="var(--faint)">${fmtNumber(value, 0)}${tUnit}</text>`;
     }
-    const pts = [];
-    for (let i = 0; i < count; i += 1) {
-      const v = tempValues[i];
-      if (!Number.isFinite(v)) continue;
-      pts.push({ x: M.left + groupW * i + groupW / 2, y: ty(v) });
-    }
-    if (pts.length >= 2) {
-      const d = `M ${pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
-      tempLayer += `<path d="${d}" fill="none" stroke="var(--warn, #f59e0b)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    }
-    for (const p of pts) {
-      tempLayer += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4" fill="var(--warn, #f59e0b)"/>`;
-    }
+    tempSeries.forEach((ts) => {
+      const vals = Array.isArray(ts.values) ? ts.values : [];
+      const color = ts.color || "var(--warn, #f59e0b)";
+      const pts = [];
+      for (let i = 0; i < count; i += 1) {
+        const v = vals[i];
+        if (!Number.isFinite(v)) continue;
+        pts.push({ i, x: M.left + groupW * i + groupW / 2, y: ty(v), v });
+      }
+      if (pts.length >= 2) {
+        const d = `M ${pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
+        tempLayer += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.95"/>`;
+      }
+      for (const p of pts) {
+        const title = `${labels[p.i] ?? ""} · ${ts.label || "Temp. ext."} : ${fmtNumber(p.v, 1)} ${tUnit}`;
+        tempLayer += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4" fill="${color}"><title>${escapeHtml(title)}</title></circle>`;
+      }
+    });
   }
 
   const step = Math.max(1, Math.ceil(count / maxLabels));

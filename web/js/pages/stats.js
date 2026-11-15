@@ -594,11 +594,12 @@ function paintEnergy(payload) {
     const series = payload.series || [];
     const labels = payload.labels || [];
     const hasByYear = Array.isArray(summary.by_year) && summary.by_year.length;
-    const outdoor = payload.outdoor_temp && Array.isArray(payload.outdoor_temp.values)
-      ? payload.outdoor_temp : null;
-    const legendItems = outdoor
-      ? [...series, { label: outdoor.label || "Temp. ext. moy.", color: "var(--warn, #f59e0b)" }]
-      : series;
+    const outdoor = Array.isArray(payload.outdoor_temp) ? payload.outdoor_temp : null;
+    const hasOutdoor = outdoor && outdoor.some((s) => Array.isArray(s.values) && s.values.some((v) => Number.isFinite(v)));
+    const tempLegend = hasOutdoor
+      ? outdoor.map((s) => ({ label: `T° ext. ${s.label || s.key || ""}`.trim(), color: s.color || "var(--warn, #f59e0b)" }))
+      : [];
+    const legendItems = [...series, ...tempLegend];
     body = `
       ${barChart({
         labels,
@@ -606,7 +607,7 @@ function paintEnergy(payload) {
         height: 280,
         unit: "kWh",
         ariaLabel: "Consommation électrique",
-        outdoor,
+        outdoor: hasOutdoor ? outdoor : null,
       })}
       ${chartLegend(legendItems)}
       ${hasByYear ? energyTable(payload) : energyKpiGrid(summary)}

@@ -344,9 +344,24 @@ class EnergyService:
         return _parse_daily(payload)
 
 
+def _mean_temps(hours: dict, days: list[date]) -> float | None:
+    nums = []
+    for day in days:
+        bucket = hours.get(day.isoformat()) or {}
+        for value in bucket.values():
+            if value is not None:
+                try:
+                    nums.append(float(value))
+                except (TypeError, ValueError):
+                    pass
+    if not nums:
+        return None
+    return round(sum(nums) / len(nums), 1)
+
+
 def _outdoor_temps(weather_service, config: dict, view: str, payload: dict,
-                    today: date) -> dict | None:
-    """Température extérieure moyenne alignée sur les labels du graphe énergie."""
+                    today: date) -> list | None:
+    """Températures extérieures moyennes par année, alignées sur le graphe énergie."""
     if not config.get("weather_enabled", True):
         return None
     try:
@@ -359,80 +374,114 @@ def _outdoor_temps(weather_service, config: dict, view: str, payload: dict,
 
     window = payload.get("window") or {}
     labels = payload.get("labels") or []
-    if not labels:
+    years = payload.get("years") or []
+    series = payload.get("series") or []
+    if not labels or not years:
         return None
 
+    color_by_year = {s.get("key") or str(s.get("label")): s.get("color") for s in series}
+
+    # Périodes par index de label : liste de (month, day) ou liste de dates selon la vue.
+    periods = []
     if view == "day":
-        start = _parse_day(window.get("start_iso"))
-        end = _parse_day(window.get("end_iso"))
-        if start is None or end is None or end < start:
-            return None
-        result = weather_service.hourly(latitude, longitude, start, end)
-        hours = getattr(result, "hours", None) or {}
-        values = []
-        cur = start
-        for _ in range(len(labels)):
-            bucket = hours.get(cur.isoformat()) or {}
-            nums = [float(v) for v in bucket.values() if v is not None]
-            values.append(round(sum(nums) / len(nums), 1) if nums else None)
-            cur += timedelta(days=1)
+        day_pairs = window.get("days") or []
+        if len(day_pairs) != len(labels):
+            start = _parse_day(window.get("start_iso"))
+            end = _parse_day(window.get("end_iso"))
+            if start is None or end is None:
+                return None
+            day_pairs = []
+            cur = start
+            while cur <= end and len(day_pairs) < len(labels):
+                day_pairs.append((cur.month, cur.day))
+                cur += timedelta(days=1)
+        periods = [[("md", m, d)] for m, d in day_pairs]
     elif view == "week":
         start = _parse_day(window.get("start_iso"))
         end = _parse_day(window.get("end_iso"))
-        if start is None or end is None or end < start:
+        if start is None or end is None:
             return None
-        result = weather_service.hourly(latitude, longitude, start, end)
-        hours = getattr(result, "hours", None) or {}
-        values = []
         cur = start
-        for _ in range(len(labels)):
-            week_end = cur + timedelta(days=6)
-            nums = []
-            d = cur
-            while d <= week_end:
-                bucket = hours.get(d.isoformat()) or {}
-                nums.extend(float(v) for v in bucket.values() if v is not None)
-                d += timedelta(days=1)
-            values.append(round(sum(nums) / len(nums), 1) if nums else None)
+        while cur <= end and len(periods) < len(labels):
+            week_days = []
+            for offset in range(7):
+                dd = cur + timedelta(days=offset)
+                week_days.append(("md", dd.month, dd.day))
+            periods.append(week_days)
             cur += timedelta(days=7)
     elif view == "month":
         months = window.get("months") or []
-        if not months or len(months) != len(labels):
+        if len(months) != len(labels):
             return None
-        first = months[0]
-        last = months[-1]
-        try:
-            start = date(int(first["year"]), int(first["month"]), 1)
-            last_year = int(last["year"])
-            last_month = int(last["month"])
-            last_day = calendar.monthrange(last_year, last_month)[1]
-            end = date(last_year, last_month, last_day)
-        except Exception:  # noqa: BLE001
-            return None
-        if end < start:
-            return None
-        result = weather_service.hourly(latitude, longitude, start, end)
-        hours = getattr(result, "hours", None) or {}
-        values = []
-        for col in months:
-            try:
-                y = int(col["year"])
-                m = int(col["month"])
-                dim = calendar.monthrange(y, m)[1]
-            except Exception:  # noqa: BLE001
-                values.append(None)
-                continue
-            nums = []
-            for day_num in range(1, dim + 1):
-                bucket = hours.get(date(y, m, day_num).isoformat()) or {}
-                nums.extend(float(v) for v in bucket.values() if v is not None)
-            values.append(round(sum(nums) / len(nums), 1) if nums else None)
+        periods = [[("month", int(col.get("month", 0)))] for col in months]
     else:
         return None
 
-    if not any(v is not None for v in values):
+    if len(periods) != len(labels):
         return None
-    return {"label": "Temp. ext. moy.", "unit": "°C", "values": values}
+
+    def dates_for(year: int, period):
+        out = []
+        for item in period:
+            if item[0] == "md":
+                _, m, d = item
+                try:
+                    out.append(date(year, m, d))
+                except ValueError:
+                    pass
+            elif item[0] == "month":
+                m = item[1]
+                if m < 1 or m > 12:
+                    continue
+                last = calendar.monthrange(year, m)[1]
+                out.extend(date(year, m, d) for d in range(1, last + 1))
+        return out
+
+    # Précharge les plages nécessaires par année (une requête par plage contiguë).
+    hours_cache = {}
+    for year in years:
+        try:
+            y = int(year)
+        except (TypeError, ValueError):
+            continue
+        needed = []
+        for period in periods:
+            needed.extend(dates_for(y, period))
+        if not needed:
+            continue
+        start = min(needed)
+        end = max(needed)
+        try:
+            result = weather_service.hourly(latitude, longitude, start, end)
+            hours_cache[y] = getattr(result, "hours", None) or {}
+        except Exception:  # noqa: BLE001 - météo facultative
+            hours_cache[y] = {}
+
+    out_series = []
+    any_value = False
+    for year in years:
+        try:
+            y = int(year)
+        except (TypeError, ValueError):
+            continue
+        hours = hours_cache.get(y, {})
+        values = []
+        for period in periods:
+            ds = dates_for(y, period)
+            v = _mean_temps(hours, ds) if ds else None
+            values.append(v)
+            if v is not None:
+                any_value = True
+        out_series.append({
+            "key": str(year),
+            "label": str(year),
+            "values": values,
+            "color": color_by_year.get(str(year)) or _year_color(y, today),
+        })
+
+    if not any_value:
+        return None
+    return out_series
 
 
 def build_energy(service, config: dict, view: str = "month", month=None,
