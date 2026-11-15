@@ -1398,7 +1398,7 @@ function bind() {
     });
   });
 
-  page.querySelectorAll("[data-pref]").forEach((input) => {
+  root.querySelectorAll("[data-pref]").forEach((input) => {
     input.addEventListener("change", () => {
       setPref(input.dataset.pref, input.checked);
     });
