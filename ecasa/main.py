@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -2309,9 +2310,31 @@ class Handler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------------- API
 
     def _loopback(self) -> bool:
-        return str(self.client_address[0]) in (
-            "127.0.0.1", "::1", "::ffff:127.0.0.1",
-        )
+        """Vrai si le client est la machine locale, le réseau local ou Tailscale.
+
+        Autorise ainsi l'administration depuis le LAN / Tailscale sans avoir à
+        activer explicitement « Autoriser les réglages depuis le réseau ».
+        """
+        addr = str(self.client_address[0] or "").strip()
+        try:
+            ip = ipaddress.ip_address(addr)
+        except (ValueError, TypeError):
+            return False
+        # IPv4 encapsulée en IPv6 (::ffff:127.0.0.1, etc.)
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if ip.is_loopback:
+            return True
+        # Tailscale utilise la plage CGNAT 100.64.0.0/10.
+        if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network(
+            "100.64.0.0/10"
+        ):
+            return True
+        # Réseau local privé (RFC 1918 et assimilés).
+        if ip.is_private:
+            return True
+        return False
 
     def _schedule_shutdown(self, restart: bool) -> None:
         server = self.server
