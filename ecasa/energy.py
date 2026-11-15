@@ -133,8 +133,12 @@ class EnergyService:
         seules les dates manquantes sont demandées ; ``refresh=True`` revalide
         les 7 derniers jours (synchro manuelle/quotidienne).
         """
+        # La consommation journalière n'est disponible qu'à J-1 au plus tôt.
+        latest = date.today() - timedelta(days=1)
+        if end > latest:
+            end = latest
         if start > end:
-            raise EnergyError("Période de consommation invalide")
+            return {}
 
         base = str(base_url or MED_DEFAULT_URL).strip().rstrip("/")
         pdl = str(pdl or "").strip()
@@ -319,6 +323,8 @@ class EnergyService:
             }
             # ConsoAPI : dateFin est exclusive, mais doit rester <= date du jour.
             api_end = min(end + timedelta(days=1), date.today())
+            if api_end <= start:
+                return {}
             url = (
                 f"{base.rstrip('/')}/consommation_quotidienne"
                 f"?pointId={urllib.parse.quote(str(pdl or '').strip(), safe='')}"
