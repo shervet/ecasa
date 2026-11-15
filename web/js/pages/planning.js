@@ -6,12 +6,14 @@ import { openSheet, closeSheet } from "../sheet.js";
 import { devicesInRoom, refreshConfig, refreshState, setPref, store } from "../state.js";
 import { toast, toastError } from "../toast.js";
 import {
+  addDays,
   clamp,
   describeSlot,
   deviceTempRange,
   escapeHtml,
   fmtDate,
   fmtTemp,
+  isoDay,
   minutesToTime,
   modeColor,
   modeLabel,
@@ -514,7 +516,15 @@ function paintRooms() {
     return;
   }
 
-  const dates = weekDates(mondayOf(new Date()));
+  // Les dates affichées correspondent à la semaine effectivement affichée :
+  // si l'utilisateur consulte la semaine B alors que la semaine courante est A
+  // (ou l'inverse), on décale d'une semaine pour rester cohérent.
+  const currentWeekType = store.state?.week || "A";
+  let monday = mondayOf(new Date());
+  if (week && week !== currentWeekType) {
+    monday = isoDay(addDays(monday, 7));
+  }
+  const dates = weekDates(monday);
   const nowIndex = todayIndex();
   const nowWeek = store.state?.week;
 
