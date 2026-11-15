@@ -1455,11 +1455,11 @@ def _token_key(token: str) -> str:
 
 
 def _parse_daily(payload) -> dict[str, float]:
-    """Extrait les couples date → kWh d'une réponse MyElectricalData."""
+    """Extrait les couples date → kWh d'une réponse fournisseur énergie."""
     if isinstance(payload, list):
         return _parse_interval(payload)
     if not isinstance(payload, dict):
-        raise EnergyError("Réponse MyElectricalData inattendue")
+        raise EnergyError("Réponse du fournisseur d'énergie inattendue")
 
     for key in ("meter_reading", "reading", "consumption"):
         block = payload.get(key)
@@ -1472,6 +1472,12 @@ def _parse_daily(payload) -> dict[str, float]:
     items = payload.get("interval_reading")
     if isinstance(items, list):
         return _parse_interval(items)
+
+    grandeur = payload.get("grandeur")
+    if isinstance(grandeur, list):
+        parsed = _parse_grandeur(grandeur)
+        if parsed:
+            return parsed
 
     data = payload.get("data")
     if isinstance(data, dict):
@@ -1513,6 +1519,32 @@ def _parse_data_map(data: dict) -> dict[str, float]:
             continue
         key = day.isoformat()
         values[key] = values.get(key, 0.0) + kwh
+    return values
+
+
+def _parse_grandeur(grandeurs: list) -> dict[str, float]:
+    """Parse le format ConsoAPI/Enedis v2 (grandeur/points v/d en Wh)."""
+    values: dict[str, float] = {}
+    for g in grandeurs:
+        if not isinstance(g, dict):
+            continue
+        unit = str(g.get("unite") or "").strip().upper()
+        points = g.get("points")
+        if not isinstance(points, list):
+            continue
+        for pt in points:
+            if not isinstance(pt, dict):
+                continue
+            day = _parse_day(pt.get("d") or pt.get("date") or pt.get("day"))
+            raw = pt.get("v")
+            if raw is None:
+                raw = pt.get("value")
+            number = _as_float(raw)
+            if day is None or number is None or number < 0:
+                continue
+            kwh = number / 1000.0 if unit == "WH" else (number if unit == "KWH" else number / 1000.0)
+            key = day.isoformat()
+            values[key] = values.get(key, 0.0) + kwh
     return values
 
 
