@@ -605,7 +605,7 @@ function paintEnergy(payload) {
       ${chartLegend(series)}
       ${hasByYear ? energyTable(payload) : energyKpiGrid(summary)}
       <p class="hint mt-2">
-        Source MyElectricalData (Enedis)${
+        Source ${escapeHtml(payload.source || "fournisseur d'énergie")}${
           payload.last_date ? ` · dernière donnée ${fmtDate(payload.last_date)}` : ""
         } · ${payload.days || 0} jour(s) en mémoire.
         ${payload.warning ? `<br><span class="is-bad">Données locales : ${escapeHtml(String(payload.warning))}</span>` : ""}

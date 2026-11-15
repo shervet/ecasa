@@ -372,10 +372,23 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     ref_day = parse_energy_day(day, month)
     window_size = parse_energy_days(days)
 
-    enabled = bool(config.get("med_enabled"))
-    token = str(config.get("med_token") or "").strip()
-    pdl = str(config.get("med_pdl") or "").strip()
-    base_url = str(config.get("med_url") or MED_DEFAULT_URL).strip() or MED_DEFAULT_URL
+    provider = str(config.get("energy_provider") or "myelectricaldata").strip().lower()
+    if provider == "consoapi":
+        enabled = bool(config.get("consoapi_enabled"))
+        token = str(config.get("consoapi_token") or "").strip()
+        pdl = str(config.get("consoapi_pdl") or "").strip()
+        base_url = str(config.get("consoapi_url") or "https://conso.boris.sh/api").strip() or "https://conso.boris.sh/api"
+        start_value = config.get("consoapi_start")
+        source = "ConsoAPI"
+        label = "ConsoAPI"
+    else:
+        enabled = bool(config.get("med_enabled"))
+        token = str(config.get("med_token") or "").strip()
+        pdl = str(config.get("med_pdl") or "").strip()
+        base_url = str(config.get("med_url") or MED_DEFAULT_URL).strip() or MED_DEFAULT_URL
+        start_value = config.get("med_start")
+        source = "MyElectricalData"
+        label = "MyElectricalData"
 
     payload = {
         "ok": False,
@@ -389,7 +402,7 @@ def build_energy(service, config: dict, view: str = "month", month=None,
         "labels": [],
         "series": [],
         "years": [],
-        "source": "MyElectricalData",
+        "source": source,
         "start": None,
         "end": today.isoformat(),
         "days": 0,
@@ -404,11 +417,11 @@ def build_energy(service, config: dict, view: str = "month", month=None,
 
     if not token or not pdl:
         payload["error"] = (
-            "Renseigne le token et le PDL MyElectricalData dans les réglages."
+            f"Renseigne le token et le PDL {label} dans les réglages."
         )
         return payload
 
-    start = parse_med_start(config.get("med_start"), today)
+    start = parse_med_start(start_value, today)
     payload["start"] = start.isoformat()
 
     try:
