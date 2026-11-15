@@ -96,7 +96,7 @@ class EnergyError(RuntimeError):
 
 
 class EnergyHTTPError(EnergyError):
-    """Erreur HTTP renvoyée par MyElectricalData."""
+    """Erreur HTTP renvoyée par le fournisseur d'énergie."""
 
     def __init__(self, message: str, status: int):
         super().__init__(message)
@@ -317,8 +317,8 @@ class EnergyService:
                 "Accept": "application/json",
                 "User-Agent": "eCasa/1.0 (consommation electrique locale)",
             }
-            # ConsoAPI : dateFin exclusive -> on demande end+1 jour.
-            api_end = end + timedelta(days=1)
+            # ConsoAPI : dateFin est exclusive, mais doit rester <= date du jour.
+            api_end = min(end + timedelta(days=1), date.today())
             url = (
                 f"{base.rstrip('/')}/consommation_quotidienne"
                 f"?pointId={urllib.parse.quote(str(pdl or '').strip(), safe='')}"
@@ -1569,27 +1569,27 @@ def _http_json(url: str, headers: dict, timeout: int = 20) -> dict:
             pass
         if err.code == 429:
             message = (
-                "Quota Enedis dépassé chez MyElectricalData : "
+                "Quota Enedis dépassé chez le fournisseur : "
                 "réessaie plus tard (les données locales restent affichées si disponibles)."
             )
         elif err.code >= 500:
             message = (
-                "MyElectricalData/Enedis : erreur technique ou quota dépassé. "
+                "Fournisseur d'énergie/Enedis : erreur technique ou quota dépassé. "
                 "Réessaie plus tard."
             )
             if detail:
                 message += f" ({detail[:120].strip()})"
         else:
-            message = f"MyElectricalData HTTP {err.code}"
+            message = f"Fournisseur d'énergie HTTP {err.code}"
             if detail:
                 message += f" : {detail}"
         raise EnergyHTTPError(message, err.code) from err
     except urllib.error.URLError as err:
         raise EnergyError(
-            f"MyElectricalData injoignable : {err.reason}"
+            f"Fournisseur d'énergie injoignable : {err.reason}"
         ) from err
     except OSError as err:
-        raise EnergyError(f"MyElectricalData injoignable : {err}") from err
+        raise EnergyError(f"Fournisseur d'énergie injoignable : {err}") from err
 
     try:
         payload = json.loads(raw.decode("utf-8"))
