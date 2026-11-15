@@ -420,5 +420,37 @@ class UpTests(unittest.TestCase):
         self.assertTrue(result["ok"])
 
 
+class OperatorTests(unittest.TestCase):
+    def test_lecture_operator(self):
+        responses = {"debug prefs": (0, json.dumps({"OperatorUser": "admin"}), "")}
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd(responses),
+        ):
+            self.assertEqual(main.tailscale_operator_user(), "admin")
+
+    def test_operator_vide(self):
+        responses = {"debug prefs": (0, json.dumps({"OperatorUser": ""}), "")}
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd(responses),
+        ):
+            self.assertEqual(main.tailscale_operator_user(), "")
+
+    def test_operator_illisible(self):
+        with mock.patch.object(
+            main, "_tailscale_cmd", side_effect=fake_cmd({}),
+        ):
+            self.assertIsNone(main.tailscale_operator_user())
+
+    def test_checks_signale_operator_manquant(self):
+        status = {
+            "installed": True, "running": True, "can_pilot": False,
+            "service_user": "admin",
+        }
+        checks = {item["label"]: item for item in main.tailscale_checks(status)}
+        item = checks["Service autorisé à piloter Tailscale"]
+        self.assertFalse(item["ok"])
+        self.assertIn("--operator=admin", item["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()
