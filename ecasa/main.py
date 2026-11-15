@@ -128,6 +128,14 @@ DEFAULT_CONFIG = {
     "med_pdl": "",
     # Vide = 3 ans d'historique (limite Enedis : 1095 jours).
     "med_start": "",
+    # --- Consommation électrique (ConsoAPI par bokup) -----------------------
+    "consoapi_enabled": False,
+    "consoapi_url": "https://conso.boris.sh/api",
+    "consoapi_token": "",
+    "consoapi_pdl": "",
+    "consoapi_start": "",
+    # Fournisseur actif pour la consommation électrique.
+    "energy_provider": "myelectricaldata",
     "tailscale_enabled": False,
     "tailscale_auto_serve": False,
     # Nom du nœud dans le tailnet : l'app Android résout ecasa.<tailnet>.ts.net.
@@ -398,6 +406,12 @@ def public_config(config: dict) -> dict:
         "med_pdl": str(config.get("med_pdl", "")),
         "med_start": str(config.get("med_start", "")),
         "med_token_set": bool(config.get("med_token")),
+    "consoapi_enabled": bool(config.get("consoapi_enabled", False)),
+    "consoapi_url": str(config.get("consoapi_url", "https://conso.boris.sh/api")),
+    "consoapi_pdl": str(config.get("consoapi_pdl", "")),
+    "consoapi_start": str(config.get("consoapi_start", "")),
+    "consoapi_token_set": bool(config.get("consoapi_token")),
+    "energy_provider": str(config.get("energy_provider", "myelectricaldata")),
         "tailscale_enabled": bool(config.get("tailscale_enabled", False)),
         "tailscale_auto_serve": bool(config.get("tailscale_auto_serve", False)),
         "tailscale_hostname": str(config.get("tailscale_hostname") or "ecasa"),
@@ -452,6 +466,38 @@ def validate_med_values(body: dict) -> dict:
                     "L'historique Enedis est limité à 3 ans (1095 jours)"
                 )
             values["med_start"] = start.isoformat()
+    return values
+
+
+def validate_consoapi_values(body: dict) -> dict:
+    """Valide et normalise les champs ConsoAPI d'un formulaire."""
+    values = {}
+    if "consoapi_url" in body:
+        url = str(body.get("consoapi_url") or "").strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            raise ValueError("Adresse ConsoAPI invalide (http:// ou https://)")
+        values["consoapi_url"] = url or "https://conso.boris.sh/api"
+    if "consoapi_pdl" in body:
+        pdl = re.sub(r"\\s+", "", str(body.get("consoapi_pdl") or ""))
+        if pdl and not re.fullmatch(r"\\d{14}", pdl):
+            raise ValueError("PDL invalide : 14 chiffres attendus")
+        values["consoapi_pdl"] = pdl
+    if "consoapi_start" in body:
+        value = str(body.get("consoapi_start") or "").strip()
+        if not value:
+            values["consoapi_start"] = ""
+        else:
+            try:
+                start = datetime.fromisoformat(value[:10]).date()
+            except ValueError as err:
+                raise ValueError("Date de début invalide (AAAA-MM-JJ)") from err
+            today = datetime.now().date()
+            if start > today:
+                raise ValueError("La date de début ne peut pas être future")
+            oldest = today - timedelta(days=MAX_HISTORY_DAYS - 1)
+            if start < oldest:
+                raise ValueError("L'historique Enedis est limité à 3 ans (1095 jours)")
+            values["consoapi_start"] = start.isoformat()
     return values
 
 
@@ -713,6 +759,28 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
     elif body.get("med_token_clear"):
         updated["med_token"] = ""
 
+    # --- Consommation électrique (ConsoAPI par bokup) ---------------------
+    if "consoapi_enabled" in body:
+        updated["consoapi_enabled"] = bool(body.get("consoapi_enabled"))
+    if "consoapi_url" in body:
+        url = str(body.get("consoapi_url") or "").strip().rstrip("/")
+        updated["consoapi_url"] = url or "https://conso.boris.sh/api"
+    if "consoapi_pdl" in body:
+        pdl = re.sub(r"\s+", "", str(body.get("consoapi_pdl") or ""))
+        updated["consoapi_pdl"] = pdl
+    if "consoapi_start" in body:
+        value = str(body.get("consoapi_start") or "").strip()
+        updated["consoapi_start"] = value
+    if body.get("consoapi_token"):
+        updated["consoapi_token"] = str(body["consoapi_token"]).strip()
+    elif body.get("consoapi_token_clear"):
+        updated["consoapi_token"] = ""
+
+    if "energy_provider" in body:
+        provider = str(body.get("energy_provider") or "").strip().lower()
+        if provider in ("myelectricaldata", "consoapi"):
+            updated["energy_provider"] = provider
+
     for key in ("tailscale_enabled", "tailscale_auto_serve", "cache_static",
                 "gzip_enabled"):
         if key in body:
@@ -787,13 +855,22 @@ def merge_pronote_config(current: dict, body: dict) -> dict:
 
 
 def merge_energy_config(current: dict, body: dict) -> dict:
-    """Config MyElectricalData effective pour un test, sans rien enregistrer."""
+    """Config effective pour un test, sans rien enregistrer."""
     config = dict(current)
     config.update(validate_med_values(body))
+    config.update(validate_consoapi_values(body))
     if body.get("med_token"):
         config["med_token"] = str(body["med_token"]).strip()
     if "med_enabled" in body:
         config["med_enabled"] = bool(body.get("med_enabled"))
+    if body.get("consoapi_token"):
+        config["consoapi_token"] = str(body["consoapi_token"]).strip()
+    if "consoapi_enabled" in body:
+        config["consoapi_enabled"] = bool(body.get("consoapi_enabled"))
+    if "energy_provider" in body:
+        provider = str(body.get("energy_provider") or "").strip().lower()
+        if provider in ("myelectricaldata", "consoapi"):
+            config["energy_provider"] = provider
     return config
 
 
@@ -1282,16 +1359,28 @@ def run_daily_sync(
 
     if state.get("energy") != today:
         state["energy"] = today
-        if not _energy_configured(config):
+        provider = str(config.get("energy_provider") or "myelectricaldata").strip().lower()
+        if provider == "consoapi":
+            service = getattr(app, "consoapi_energy", None) or app.energy
+            base_url = str(config.get("consoapi_url") or "https://conso.boris.sh/api").strip() or "https://conso.boris.sh/api"
+            pdl = str(config.get("consoapi_pdl") or config.get("med_pdl") or "").strip()
+            token = str(config.get("consoapi_token") or "").strip()
+            start_val = config.get("consoapi_start")
+            configured = bool(token and pdl and config.get("consoapi_enabled"))
+        else:
+            service = app.energy
+            base_url = str(config.get("med_url") or MED_DEFAULT_URL).strip() or MED_DEFAULT_URL
+            pdl = str(config.get("med_pdl") or "").strip()
+            token = str(config.get("med_token") or "").strip()
+            start_val = config.get("med_start")
+            configured = bool(token and pdl and config.get("med_enabled", True))
+        if not configured:
             result["energy"] = {"ok": False, "skipped": "not_configured"}
         else:
             try:
-                values = app.energy.daily(
-                    str(config.get("med_url") or MED_DEFAULT_URL).strip()
-                    or MED_DEFAULT_URL,
-                    str(config.get("med_pdl") or "").strip(),
-                    str(config.get("med_token") or "").strip(),
-                    parse_med_start(config.get("med_start"), now.date()),
+                values = service.daily(
+                    base_url, pdl, token,
+                    parse_med_start(start_val, now.date()),
                     now.date(),
                     refresh=True,
                 )
@@ -1300,7 +1389,7 @@ def run_daily_sync(
                 result["ok"] = False
                 state["energy_error"] = str(err)
             else:
-                warning = getattr(app.energy, "last_warning", None)
+                warning = getattr(service, "last_warning", None)
                 result["energy"] = {
                     "ok": warning is None,
                     "last_date": max(values) if values else None,
@@ -2750,6 +2839,7 @@ class App:
         self.engine = engine
         self.weather = weather or WeatherService()
         self.energy = energy or EnergyService()
+        self.consoapi_energy = consoapi_energy or EnergyService(provider="consoapi")
         self.static = StaticCache(WEB, gzip_enabled=True)
 
 
@@ -3175,10 +3265,14 @@ class Handler(BaseHTTPRequestHandler):
             refresh = (query.get("refresh") or [""])[0].lower() in (
                 "1", "true", "oui", "yes",
             )
+            config = load_config()
+            provider = str(config.get("energy_provider") or "myelectricaldata").strip().lower()
+            service = (app.consoapi_energy if provider == "consoapi"
+                       else app.energy)
             self._json(
                 200,
                 build_energy(
-                    app.energy, load_config(), view, month, day=day, days=days,
+                    service, config, view, month, day=day, days=days,
                     refresh=refresh,
                 ),
             )
@@ -3261,7 +3355,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as err:
                 self._json(400, {"error": str(err)})
                 return
-            self._json(200, test_energy(config, service=app.energy))
+            provider = str(
+                (body or {}).get("energy_provider")
+                or config.get("energy_provider")
+                or "myelectricaldata"
+            ).strip().lower()
+            service = (app.consoapi_energy if provider == "consoapi"
+                       else app.energy)
+            self._json(200, test_energy(config, service=service))
             return
 
         # ----------------------------------------------------------- tailscale
@@ -4196,6 +4297,7 @@ def main() -> None:
         engine,
         WeatherService(),
         EnergyService(cache_path=str(energy_cache)),
+        EnergyService(provider="consoapi", cache_path=str(energy_cache)),
     )
     app.static.gzip_enabled = bool(config.get("gzip_enabled", True))
     count = app.static.load()

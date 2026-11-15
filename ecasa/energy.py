@@ -113,7 +113,9 @@ class EnergyService:
     ``last_warning`` est renseigné.
     """
 
-    def __init__(self, fetcher=None, cache_path: str | None = None):
+    def __init__(self, fetcher=None, cache_path: str | None = None,
+                 provider: str = "med"):
+        self.provider = (provider or "med").strip().lower()
         self._fetcher = fetcher or _http_json
         self._cache: dict[tuple, tuple[float, dict[str, float]]] = {}
         self._lock = threading.Lock()
@@ -309,16 +311,30 @@ class EnergyService:
 
     def _fetch(self, base: str, pdl: str, token: str, start: date,
                end: date) -> dict[str, float]:
-        headers = {
-            "Authorization": token,
-            "Accept": "application/json",
-            "User-Agent": "eCasa/1.0 (consommation electrique locale)",
-        }
-        quoted_pdl = urllib.parse.quote(pdl, safe="")
-        url = (
-            f"{base}/daily_consumption/{quoted_pdl}/start/"
-            f"{start.isoformat()}/end/{end.isoformat()}"
-        )
+        if self.provider == "consoapi":
+            headers = {
+                "Authorization": "Bearer " + str(token or "").strip(),
+                "Accept": "application/json",
+                "User-Agent": "eCasa/1.0 (consommation electrique locale)",
+            }
+            # ConsoAPI : dateFin exclusive -> on demande end+1 jour.
+            api_end = end + timedelta(days=1)
+            url = (
+                f"{base.rstrip('/')}/consommation_quotidienne"
+                f"?pointId={urllib.parse.quote(str(pdl or '').strip(), safe='')}"
+                f"&dateDebut={start.isoformat()}&dateFin={api_end.isoformat()}"
+            )
+        else:
+            headers = {
+                "Authorization": str(token or "").strip(),
+                "Accept": "application/json",
+                "User-Agent": "eCasa/1.0 (consommation electrique locale)",
+            }
+            quoted_pdl = urllib.parse.quote(str(pdl or "").strip(), safe="")
+            url = (
+                f"{base.rstrip('/')}/daily_consumption/{quoted_pdl}/start/"
+                f"{start.isoformat()}/end/{end.isoformat()}"
+            )
         payload = self._fetcher(url, headers, 20)
         return _parse_daily(payload)
 

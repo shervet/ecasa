@@ -975,44 +975,103 @@ function weatherSection() {
 
 function energySection() {
   const c = cfg();
+  const provider = c.energy_provider || "myelectricaldata";
   return section(
     "energy",
     "Électricité",
     "zap",
     `${row(
-      "Guide de configuration",
-      "Autoriser Enedis, récupérer un token et le coller ici.",
-      `<button class="btn btn-sm" type="button" id="energyHelp">${icon("info", 15)} Ouvrir l'aide</button>`
+      "Fournisseur actif",
+      "Choisis la source utilisée pour la consommation électrique et les statistiques.",
+      `<div class="segmented" id="energyProviderPicker">
+        <button type="button" data-provider="myelectricaldata" class="${provider === "myelectricaldata" ? "is-active" : ""}">MyElectricalData</button>
+        <button type="button" data-provider="consoapi" class="${provider === "consoapi" ? "is-active" : ""}">ConsoAPI</button>
+      </div>
+      <input type="hidden" data-key="energy_provider" value="${escapeHtml(provider)}">`
     )}
-    ${row(
-      "Suivre la consommation",
-      "Graphique multi-années dans les statistiques, via MyElectricalData (Enedis).",
-      toggle("med_enabled", Boolean(c.med_enabled))
-    )}
-    ${textRow("Adresse MyElectricalData", "med_url", c.med_url || "https://www.myelectricaldata.fr", {
-      placeholder: "https://www.myelectricaldata.fr",
-      sub: "Instance publique ou auto-hébergée.",
-    })}
-    ${textRow("Point de livraison (PDL)", "med_pdl", c.med_pdl, {
-      placeholder: "14 chiffres",
-      sub: "Identifiant Enedis du compteur Linky, sans espaces.",
-    })}
-    ${row(
-      "Token MyElectricalData",
-      c.med_token_set
-        ? "Un token est déjà enregistré. Laisse vide pour le conserver."
-        : "Affiché par MyElectricalData après le consentement Enedis (valable un an).",
-      `<input class="input" data-key="med_token" data-secret type="password" autocomplete="new-password" placeholder="${c.med_token_set ? "••••••••" : "token"}" style="width:min(320px,62vw)">`,
-      true
-    )}
-    ${row("Effacer le token", "À faire si le token a expiré ou a été révoqué.", toggle("med_token_clear", false))}
-    ${textRow("Début de l'historique", "med_start", c.med_start, {
-      placeholder: "2023-01-01",
-      sub: "Vide = 3 ans en arrière (limite Enedis). Format AAAA-MM-JJ.",
-    })}
-    <div class="hint" id="energyTestResult"></div>`,
-    `<button class="btn" type="button" data-test="energy">${icon("shield", 16)} Tester la connexion</button>
-     <button class="btn btn-primary" type="button" data-save="energy">${icon("save", 16)} Enregistrer</button>`
+
+    <details class="stack sub-section" style="margin-top:18px" ${provider === "myelectricaldata" ? "open" : ""}>
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("zap", 16)} MyElectricalData (Enedis)</summary>
+      <div style="margin-top:8px">
+        ${row(
+          "Guide de configuration",
+          "Autoriser Enedis, récupérer un token et le coller ici.",
+          `<button class="btn btn-sm" type="button" id="energyHelp">${icon("info", 15)} Ouvrir l'aide</button>`
+        )}
+        ${row(
+          "Suivre la consommation",
+          "Graphique multi-années dans les statistiques, via MyElectricalData (Enedis).",
+          toggle("med_enabled", Boolean(c.med_enabled))
+        )}
+        ${textRow("Adresse MyElectricalData", "med_url", c.med_url || "https://www.myelectricaldata.fr", {
+          placeholder: "https://www.myelectricaldata.fr",
+          sub: "Instance publique ou auto-hébergée.",
+        })}
+        ${textRow("Point de livraison (PDL)", "med_pdl", c.med_pdl, {
+          placeholder: "14 chiffres",
+          sub: "Identifiant Enedis du compteur Linky, sans espaces.",
+        })}
+        ${row(
+          "Token MyElectricalData",
+          c.med_token_set
+            ? "Un token est déjà enregistré. Laisse vide pour le conserver."
+            : "Affiché par MyElectricalData après le consentement Enedis (valable un an).",
+          `<input class="input" data-key="med_token" data-secret type="password" autocomplete="new-password" placeholder="${c.med_token_set ? "••••••••" : "token"}" style="width:min(320px,62vw)">`,
+          true
+        )}
+        ${row("Effacer le token", "À faire si le token a expiré ou a été révoqué.", toggle("med_token_clear", false))}
+        ${textRow("Début de l'historique", "med_start", c.med_start, {
+          placeholder: "2023-01-01",
+          sub: "Vide = 3 ans en arrière (limite Enedis). Format AAAA-MM-JJ.",
+        })}
+        <div class="hint" id="energyTestResult"></div>
+        <div class="row wrap mt-2" style="gap:8px">
+          <button class="btn" type="button" data-test="energy" data-provider="myelectricaldata">${icon("shield", 16)} Tester la connexion</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="stack sub-section" style="margin-top:18px" ${provider === "consoapi" ? "open" : ""}>
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("zap", 16)} ConsoAPI (par bokup)</summary>
+      <div style="margin-top:8px">
+        ${row(
+          "Guide de configuration",
+          "Consentement Enedis via conso.boris.sh, puis token personnel.",
+          `<button class="btn btn-sm" type="button" id="consoapiHelp">${icon("info", 15)} Ouvrir l'aide</button>`
+        )}
+        ${row(
+          "Suivre la consommation",
+          "Graphique multi-années dans les statistiques, via ConsoAPI (bokup).",
+          toggle("consoapi_enabled", Boolean(c.consoapi_enabled))
+        )}
+        ${textRow("Adresse ConsoAPI", "consoapi_url", c.consoapi_url || "https://conso.boris.sh/api", {
+          placeholder: "https://conso.boris.sh/api",
+          sub: "Instance publique (conso.boris.sh) ou auto-hébergée.",
+        })}
+        ${textRow("Point de livraison (PDL)", "consoapi_pdl", c.consoapi_pdl, {
+          placeholder: "14 chiffres",
+          sub: "Identifiant Enedis du compteur Linky, sans espaces.",
+        })}
+        ${row(
+          "Token ConsoAPI",
+          c.consoapi_token_set
+            ? "Un token est déjà enregistré. Laisse vide pour le conserver."
+            : "Token personnel affiché par ConsoAPI après le consentement Enedis.",
+          `<input class="input" data-key="consoapi_token" data-secret type="password" autocomplete="new-password" placeholder="${c.consoapi_token_set ? "••••••••" : "token"}" style="width:min(320px,62vw)">`,
+          true
+        )}
+        ${row("Effacer le token", "À faire si le token a expiré ou a été révoqué.", toggle("consoapi_token_clear", false))}
+        ${textRow("Début de l'historique", "consoapi_start", c.consoapi_start, {
+          placeholder: "2023-01-01",
+          sub: "Vide = 3 ans en arrière. Format AAAA-MM-JJ.",
+        })}
+        <div class="hint" id="consoapiTestResult"></div>
+        <div class="row wrap mt-2" style="gap:8px">
+          <button class="btn" type="button" data-test="energy" data-provider="consoapi">${icon("shield", 16)} Tester la connexion</button>
+        </div>
+      </div>
+    </details>`,
+    `<button class="btn btn-primary" type="button" data-save="energy">${icon("save", 16)} Enregistrer</button>`
   );
 }
 
@@ -1434,6 +1493,17 @@ function bind() {
     button.addEventListener("click", () => testConnection(button.dataset.test, button));
   });
 
+  const energyProviderInput = root.querySelector('[data-key="energy_provider"]');
+  root.querySelectorAll("#energyProviderPicker [data-provider]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const value = button.dataset.provider;
+      if (energyProviderInput) energyProviderInput.value = value;
+      root.querySelectorAll("#energyProviderPicker [data-provider]").forEach((item) =>
+        item.classList.toggle("is-active", item === button)
+      );
+    });
+  });
+
   root.querySelectorAll("[data-sync]").forEach((button) => {
     button.addEventListener("click", async () => {
       button.disabled = true;
@@ -1550,6 +1620,7 @@ function bind() {
   root.querySelector("#tailscaleHelp")?.addEventListener("click", openTailscaleHelp);
   root.querySelector("#tailscaleDnsHelp")?.addEventListener("click", openTailscaleDnsHelp);
   root.querySelector("#energyHelp")?.addEventListener("click", openEnergyHelp);
+  root.querySelector("#consoapiHelp")?.addEventListener("click", openConsoApiHelp);
   root.querySelector("#tsUp")?.addEventListener("click", connectTailscale);
   root.querySelector("#tsServeOn")?.addEventListener("click", () => tailscaleAction("serve/enable"));
   root.querySelector("#tsServeOff")?.addEventListener("click", () => tailscaleAction("serve/disable"));
@@ -1713,7 +1784,9 @@ async function testConnection(kind, button) {
       ? "#atlanticTestResult"
       : kind === "pronote"
         ? "#pronoteTestResult"
-        : "#energyTestResult";
+        : button?.dataset?.provider === "consoapi"
+          ? "#consoapiTestResult"
+          : "#energyTestResult";
   const result = root?.querySelector(resultId);
   if (!result) return;
   button.disabled = true;
@@ -1736,6 +1809,7 @@ async function testConnection(kind, button) {
     } else {
       const container = root.querySelector("#sec-energy");
       const body = collect(container);
+      if (button?.dataset?.provider) body.energy_provider = button.dataset.provider;
       payload = await post("/api/energy/test", body);
     }
 
@@ -1792,6 +1866,31 @@ function openEnergyHelp() {
       <p class="hint mt-2">Liens utiles : <a href="https://www.myelectricaldata.fr/documentation/" target="_blank" rel="noreferrer">Documentation</a> · <a href="https://www.myelectricaldata.fr/faq/" target="_blank" rel="noreferrer">FAQ</a> · <a href="https://www.myelectricaldata.fr/error_code/" target="_blank" rel="noreferrer">Codes d'erreur</a></p>
     </div>`,
     footer: `<a class="btn btn-primary" href="https://www.myelectricaldata.fr" target="_blank" rel="noreferrer">${icon("external", 16)} Ouvrir MyElectricalData</a>`,
+  });
+}
+
+function openConsoApiHelp() {
+  openSheet({
+    title: "Configurer ConsoAPI (bokup)",
+    sub: "Consommation Enedis via ConsoAPI",
+    body: `<div class="stack">
+      <p class="hint">ConsoAPI est une passerelle gratuite et open-source entre Enedis et eCasa, maintenue par bokup. Il faut d'abord autoriser l'accès à tes données Enedis, puis récupérer un token personnel.</p>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">1. Autoriser l'accès à tes données Enedis</div><div class="sr-sub">Sur conso.boris.sh, démarre le consentement, connecte-toi à ton espace Enedis et autorise la passerelle. Le consentement est valable un an.</div></div></div>
+      <a class="btn btn-sm" href="https://conso.boris.sh" target="_blank" rel="noreferrer">${icon("external", 14)} Ouvrir ConsoAPI</a>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">2. Activer la collecte horaire chez Enedis</div><div class="sr-sub">Dans ton espace Enedis, coche « Enregistrement de la consommation horaire » et « Collecte de la consommation horaire ». Sans ça, les données sont incomplètes. À réactiver chaque année.</div></div></div>
+      <a class="btn btn-sm" href="https://mon-compte-particulier.enedis.fr/donnees/" target="_blank" rel="noreferrer">${icon("external", 14)} Ouvrir l'espace Enedis</a>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">3. Récupérer le token</div><div class="sr-sub">Après le consentement, ConsoAPI affiche ton token personnel (format xxx.yyy.zzz). Il est valable un an, puis il faut recommencer l'étape 1.</div></div></div>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">4. Renseigner eCasa</div><div class="sr-sub">Colle le PDL (14 chiffres) et le token dans les champs ci-dessus, puis clique sur « Tester la connexion » avant d'enregistrer. Choisis ensuite ConsoAPI comme fournisseur actif.</div></div></div>
+
+      <div class="settings-row is-stack"><div class="sr-main"><div class="sr-title">Bon à savoir</div><div class="sr-sub">Les données sont livrées par Enedis avec un jour de décalage (vers 8 h). ConsoAPI est gratuit et limité à 5 req/s et 10 000 req/h partagés : une seule requête par jour suffit. Enedis limite l'historique à 3 ans (1095 jours).</div></div></div>
+
+      <p class="hint mt-2">Liens utiles : <a href="https://conso.boris.sh/documentation" target="_blank" rel="noreferrer">Documentation</a> · <a href="https://conso.boris.sh/exemples" target="_blank" rel="noreferrer">Exemples</a></p>
+    </div>`,
+    footer: `<a class="btn btn-primary" href="https://conso.boris.sh" target="_blank" rel="noreferrer">${icon("external", 16)} Ouvrir ConsoAPI</a>`,
   });
 }
 
