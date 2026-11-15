@@ -457,17 +457,28 @@ def build_energy(service, config: dict, view: str = "month", month=None,
 def test_energy(config: dict, service=None, today: date | None = None) -> dict:
     """Teste le token et le PDL sans rien enregistrer."""
     today = today or date.today()
-    token = str(config.get("med_token") or "").strip()
-    pdl = str(config.get("med_pdl") or "").strip()
-    base_url = str(config.get("med_url") or MED_DEFAULT_URL).strip() or MED_DEFAULT_URL
+    provider = str(config.get("energy_provider") or "myelectricaldata").strip().lower()
+    if provider == "consoapi":
+        token = str(config.get("consoapi_token") or "").strip()
+        pdl = str(config.get("consoapi_pdl") or "").strip()
+        base_url = str(config.get("consoapi_url") or "https://conso.boris.sh/api").strip() or "https://conso.boris.sh/api"
+        label = "ConsoAPI"
+        provider_key = "consoapi"
+    else:
+        token = str(config.get("med_token") or "").strip()
+        pdl = str(config.get("med_pdl") or "").strip()
+        base_url = str(config.get("med_url") or MED_DEFAULT_URL).strip() or MED_DEFAULT_URL
+        label = "MyElectricalData"
+        provider_key = "myelectricaldata"
 
     if not token or not pdl:
         return {
             "ok": False,
-            "message": "Renseigne le token et le PDL MyElectricalData.",
+            "message": "Renseigne le token et le PDL %s." % label,
         }
 
-    service = service or EnergyService()
+    if service is None:
+        service = EnergyService(provider=provider_key)
     try:
         values = service.daily(
             base_url, pdl, token, today - timedelta(days=7), today, refresh=True
@@ -475,15 +486,15 @@ def test_energy(config: dict, service=None, today: date | None = None) -> dict:
     except EnergyError as err:
         return {"ok": False, "message": str(err)}
     except Exception as err:  # noqa: BLE001
-        return {"ok": False, "message": f"Connexion impossible : {err}"}
+        return {"ok": False, "message": "Connexion impossible : %s" % err}
 
     warning = getattr(service, "last_warning", None)
     if warning:
         return {
             "ok": False,
             "message": (
-                f"{warning} Données locales conservées"
-                f"{(' (dernière mesure : ' + max(values) + ')') if values else ''}."
+                "%s Données locales conservées%s."
+                % (warning, (" (dernière mesure : " + max(values) + ")") if values else "")
             ),
             "pdl": pdl,
             "samples": len(values),
@@ -493,24 +504,17 @@ def test_energy(config: dict, service=None, today: date | None = None) -> dict:
     if not values:
         return {
             "ok": False,
-            "message": (
-                "Connexion réussie, mais aucune consommation reçue sur les "
-                "7 derniers jours."
-            ),
+            "message": "Aucune donnée reçue de %s pour ce PDL." % label,
             "pdl": pdl,
         }
+
     return {
         "ok": True,
-        "message": f"{len(values)} jour(s) de consommation reçus.",
+        "message": "%d jour(s) de consommation reçus." % len(values),
         "pdl": pdl,
         "samples": len(values),
-        "last_date": max(values),
+        "last_date": max(values) if values else None,
     }
-
-
-# --------------------------------------------------------------------- outils
-
-
 def parse_energy_month(value, today: date | None = None) -> int:
     """Mois sélectionné (1–12), mois courant par défaut."""
     today = today or date.today()
