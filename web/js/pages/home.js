@@ -438,19 +438,25 @@ function paintDisk() {
     { label: "Applications / utilisateurs", value: apps, color: "var(--primary)" },
     { label: "Libre", value: free, color: "var(--ok)" },
   ];
+  const pct = (value) => {
+    if (!total) return "0 %";
+    const p = (Math.max(0, Number(value || 0)) / total) * 100;
+    return `${p >= 10 ? p.toFixed(0) : p.toFixed(1)} %`;
+  };
   const legend = slices
     .map(
       (slice) => `<div class="disk-legend-row">
         <span class="disk-dot" style="background:${slice.color}"></span>
         <span class="disk-label">${escapeHtml(slice.label)}</span>
-        <span class="disk-value">${escapeHtml(fmtBytes(slice.value))}</span>
+        <span class="disk-value">${escapeHtml(fmtBytes(slice.value))} (${escapeHtml(pct(slice.value))})</span>
       </div>`
     )
     .join("");
+  const usedPct = pct(Number(disk.used || (system + apps)));
   host.innerHTML = `<div class="card card-pad">
     <div class="row-between" style="margin-bottom:8px">
       <span class="card-title">${icon("hard-drive", 16)} Disque principal</span>
-      <span class="tiny muted">${escapeHtml(fmtBytes(total))} au total</span>
+      <span class="tiny muted">${escapeHtml(usedPct)} utilisé · ${escapeHtml(fmtBytes(total))} au total</span>
     </div>
     <div class="disk-pie-wrap">
       ${pieChart(slices, total)}
