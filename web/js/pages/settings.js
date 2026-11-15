@@ -308,6 +308,16 @@ function appearanceSection() {
       "Mouvements réduits",
       "Respecte automatiquement le réglage d'accessibilité du système.",
       `<span class="pill pill-ghost">automatique</span>`
+    )}
+    ${row(
+      "Graphique charge CPU",
+      "Affiche la charge CPU sur 60 minutes sur l'accueil (info serveur, non sauvegardée).",
+      `<label class="switch" title="Afficher la charge CPU"><input type="checkbox" data-pref="showCpuLoad" ${store.prefs?.showCpuLoad !== false ? "checked" : ""}><span class="track"></span></label>`
+    )}
+    ${row(
+      "Graphique température CPU",
+      "Affiche la température CPU sur 60 minutes sur l'accueil (info serveur, non sauvegardée).",
+      `<label class="switch" title="Afficher la température CPU"><input type="checkbox" data-pref="showCpuTemp" ${store.prefs?.showCpuTemp !== false ? "checked" : ""}><span class="track"></span></label>`
     )}`
   );
 }
@@ -1385,6 +1395,12 @@ function bind() {
       setPref("theme", theme);
       window.dispatchEvent(new CustomEvent("ecasa:theme", { detail: theme }));
       root.querySelectorAll("[data-theme]").forEach((item) => item.classList.toggle("is-active", item === button));
+    });
+  });
+
+  page.querySelectorAll("[data-pref]").forEach((input) => {
+    input.addEventListener("change", () => {
+      setPref(input.dataset.pref, input.checked);
     });
   });
 

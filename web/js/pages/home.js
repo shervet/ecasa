@@ -3,7 +3,7 @@
 import { icon, modeIcon, weatherIconName } from "../icons.js";
 import { openDeviceSheet } from "../components/device-sheet.js";
 import { setPendingPlanningRoom } from "./planning.js";
-import { applyNow, refreshState, roomSummary, store } from "../state.js";
+import { applyNow, refreshState, roomSummary, store, subscribe } from "../state.js";
 
 let weather = null;
 
@@ -52,6 +52,7 @@ export default {
         <section class="hero" id="homeHero"></section>
         <div class="strip" id="homeStrip"></div>
         <section class="room-grid" id="homeRooms"></section>
+        <section id="homeCpu"></section>
         <section id="homeOther"></section>
       </div>
     `;
@@ -75,6 +76,19 @@ export default {
 
     paint();
     loadWeather().then(() => paint());
+
+    const unsub = subscribe((_, reason) => {
+      if (String(reason || "").startsWith("pref:")) paint();
+    });
+    view.__homeUnsub = unsub;
+  },
+
+  unmount() {
+    const view = document.getElementById("view");
+    if (view?.__homeUnsub) {
+      try { view.__homeUnsub(); } catch { /* ignore */ }
+      view.__homeUnsub = null;
+    }
   },
 
   onState() {
@@ -91,6 +105,7 @@ function paint() {
   paintHero();
   paintStrip();
   paintRooms();
+  paintCpu();
   paintOther();
 }
 
@@ -321,6 +336,82 @@ function paintRooms() {
       }
     });
   });
+}
+
+function paintCpu() {
+  const host = document.getElementById("homeCpu");
+  if (!host) return;
+  const prefs = store.prefs || {};
+  const showLoad = prefs.showCpuLoad !== false;
+  const showTemp = prefs.showCpuTemp !== false;
+  if (!showLoad && !showTemp) {
+    host.innerHTML = "";
+    return;
+  }
+  const cpu = store.state?.cpu || {};
+  const loads = Array.isArray(cpu.load) ? cpu.load : [];
+  const temps = Array.isArray(cpu.temp) ? cpu.temp : [];
+  const lastLoad = [...loads].reverse().find((value) => Number.isFinite(value));
+  const lastTemp = [...temps].reverse().find((value) => Number.isFinite(value));
+
+  const cards = [];
+  if (showLoad) {
+    cards.push(`
+      <div class="card card-pad cpu-card">
+        <div class="row-between" style="margin-bottom:6px">
+          <span class="card-title">${icon("gauge", 16)} Charge CPU</span>
+          <strong>${lastLoad !== undefined ? `${Number(lastLoad).toFixed(1)} %` : "—"}</strong>
+        </div>
+        <div class="cpu-spark-wrap" style="color:var(--primary)">${sparkline(loads)}</div>
+        <p class="tiny muted" style="margin-top:4px">60 dernières minutes · ${loads.length} mesure${loads.length > 1 ? "s" : ""}</p>
+      </div>`);
+  }
+  if (showTemp) {
+    cards.push(`
+      <div class="card card-pad cpu-card">
+        <div class="row-between" style="margin-bottom:6px">
+          <span class="card-title">${icon("thermometer", 16)} Température CPU</span>
+          <strong>${lastTemp !== undefined ? `${Number(lastTemp).toFixed(1)} °C` : "—"}</strong>
+        </div>
+        <div class="cpu-spark-wrap" style="color:var(--warn)">${sparkline(temps)}</div>
+        <p class="tiny muted" style="margin-top:4px">60 dernières minutes · ${temps.length} mesure${temps.length > 1 ? "s" : ""}</p>
+      </div>`);
+  }
+  host.innerHTML = cards.length ? `<div class="cpu-grid">${cards.join("")}</div>` : "";
+}
+
+function sparkline(values) {
+  const list = Array.isArray(values) ? values : [];
+  const points = [];
+  for (let i = 0; i < list.length; i++) {
+    if (Number.isFinite(list[i])) points.push({ i, v: Number(list[i]) });
+  }
+  if (!points.length) {
+    return `<div class="empty" style="padding:10px 8px"><p>Aucune mesure pour le moment.</p></div>`;
+  }
+  let min = Math.min(...points.map((p) => p.v));
+  let max = Math.max(...points.map((p) => p.v));
+  if (max - min < 0.5) {
+    const center = (max + min) / 2;
+    min = center - 0.5;
+    max = center + 0.5;
+  }
+  const pad = (max - min) * 0.1;
+  min -= pad;
+  max += pad;
+  const W = 220;
+  const H = 52;
+  const M = 4;
+  const x = (i) => M + ((W - 2 * M) * i) / Math.max(1, list.length - 1);
+  const y = (v) => H - M - ((H - 2 * M) * (v - min)) / (max - min);
+  const d = points
+    .map((p, idx) => `${idx === 0 ? "M" : "L"} ${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`)
+    .join(" ");
+  const last = points[points.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" class="cpu-spark" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${d}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
+    <circle cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="2.4" fill="currentColor" />
+  </svg>`;
 }
 
 function paintOther() {

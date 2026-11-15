@@ -429,10 +429,24 @@ svg {
   font-weight: 700;
 }
 
-/* Pastille jaune : une mise à jour eCasa est disponible sur origin. */
-.sidebar-nav .nav-badge.is-warn {
-  background: var(--warn);
-  color: #1b1300;
+/* Mini-graphiques CPU sur l'accueil (info serveur, non persistée) */
+.cpu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.cpu-card .cpu-spark-wrap {
+  width: 100%;
+  height: 52px;
+  margin-top: 4px;
+}
+
+.cpu-spark {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .sidebar-foot {

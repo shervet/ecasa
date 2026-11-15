@@ -18,6 +18,8 @@ export const store = {
     target: readPref("target", null),
     week: readPref("week", null),
     day: readPref("day", null),
+    showCpuLoad: readPref("showCpuLoad", true),
+    showCpuTemp: readPref("showCpuTemp", true),
   },
 };
 

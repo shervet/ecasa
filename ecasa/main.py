@@ -2268,13 +2268,134 @@ def refresh_update_state(
     return update_state_snapshot()
 
 
+# -------------------------------------------------------- métriques serveur
+# Historique CPU (charge + température) sur les 60 dernières minutes, gardé en
+# mémoire uniquement : rien n'est persisté, c'est une info serveur transitoire.
+
+_CPU_HISTORY = []
+_CPU_HISTORY_LOCK = threading.Lock()
+_CPU_HISTORY_MAX = 60
+
+
+def _read_cpu_load():
+    """Charge CPU en pourcentage (moyenne sur 1 min, ramenée au nombre de cœurs)."""
+    try:
+        if hasattr(os, "getloadavg"):
+            load1 = float(os.getloadavg()[0])
+            cores = os.cpu_count() or 1
+            return round(load1 / cores * 100.0, 1)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import psutil  # type: ignore
+        return float(psutil.cpu_percent(interval=None))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _read_cpu_temp():
+    """Température CPU en °C (Linux/Pi, puis psutil, puis vcgencmd)."""
+    for path in ("/sys/class/thermal/thermal_zone0/temp",
+                 "/sys/class/hwmon/hwmon0/temp1_input"):
+        try:
+            raw = Path(path).read_text(encoding="utf-8").strip()
+            value = float(raw) / 1000.0
+            if 0 < value < 150:
+                return round(value, 1)
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        import psutil  # type: ignore
+        sensors = getattr(psutil, "sensors_temperatures", None)
+        if sensors:
+            data = sensors() or {}
+            for entries in data.values():
+                for entry in entries or []:
+                    value = getattr(entry, "current", None)
+                    if value is not None and 0 < float(value) < 150:
+                        return round(float(value), 1)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=3
+        )
+        if result.returncode == 0 and "temp=" in (result.stdout or ""):
+            raw = result.stdout.split("temp=", 1)[1].split("'", 1)[0]
+            value = float(raw)
+            if 0 < value < 150:
+                return round(value, 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def cpu_sample(now=None):
+    """Prend une mesure CPU et l'ajoute à l'historique (60 points max)."""
+    now = now or datetime.now()
+    sample = {
+        "ts": now.isoformat(timespec="seconds"),
+        "load": _read_cpu_load(),
+        "temp": _read_cpu_temp(),
+    }
+    with _CPU_HISTORY_LOCK:
+        _CPU_HISTORY.append(sample)
+        if len(_CPU_HISTORY) > _CPU_HISTORY_MAX:
+            del _CPU_HISTORY[:len(_CPU_HISTORY) - _CPU_HISTORY_MAX]
+    return sample
+
+
+def cpu_history_snapshot():
+    """Historique CPU prêt pour l'interface (60 dernières minutes)."""
+    with _CPU_HISTORY_LOCK:
+        samples = list(_CPU_HISTORY)
+    return {
+        "ts": [item["ts"] for item in samples],
+        "load": [item["load"] for item in samples],
+        "temp": [item["temp"] for item in samples],
+    }
+
+
+class CpuSampler:
+    """Fil de fond : échantillonne le CPU toutes les minutes (60 points)."""
+
+    def __init__(self, interval=60.0):
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="cpu-sampler", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _loop(self):
+        cpu_sample()
+        while not self._stop.wait(self.interval):
+            try:
+                cpu_sample()
+            except Exception as err:  # noqa: BLE001
+                print("[cpu] échantillon impossible : %s" % err)
+
+
 def state_snapshot(app) -> dict:
-    """Snapshot du moteur enrichi de l'état de mise à jour."""
+    """Snapshot du moteur enrichi de l'état de mise à jour et des métriques CPU."""
     data = app.engine.snapshot()
     try:
         data["update"] = update_state_snapshot()
     except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
         data["update"] = {"available": False}
+    try:
+        data["cpu"] = cpu_history_snapshot()
+    except Exception:  # noqa: BLE001 - métriques facultatives
+        data["cpu"] = {"ts": [], "load": [], "temp": []}
     return data
 
 
@@ -4028,6 +4149,11 @@ def main() -> None:
     app.update_watch = update_watch
     update_watch.start()
 
+    # Échantillonnage CPU : une mesure par minute, 60 points conservés en mémoire.
+    cpu_sampler = CpuSampler()
+    app.cpu_sampler = cpu_sampler
+    cpu_sampler.start()
+
     tailscale_startup = apply_tailscale_startup(config)
 
     def _stop(signum, frame):  # noqa: ARG001
@@ -4070,6 +4196,7 @@ def main() -> None:
     finally:
         daily_sync.stop()
         update_watch.stop()
+        cpu_sampler.stop()
         engine.stop()
         store.close()
         server.server_close()
