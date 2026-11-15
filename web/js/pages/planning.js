@@ -27,6 +27,11 @@ import {
   weekdayLong,
   weekdayShort,
 } from "../utils.js";
+import {
+  WEEK_PRESETS,
+  WEEK_PRESET_OPTIONS,
+  weekPresetLabel,
+} from "../week-presets.js";
 
 const HOUR_PX = 56;
 
@@ -65,119 +70,6 @@ const PRESETS = {
     { time: "09:00", mode: "heat", temp: 20 },
     { time: "23:30", mode: "off", temp: 17 },
   ],
-};
-
-// Modèles prédéfinis pour toute la semaine
-const WEEK_PRESETS = {
-  vacances: [
-    [ // Lundi
-      { time: "07:00", mode: "heat", temp: 19 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "16:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Mardi
-      { time: "07:00", mode: "heat", temp: 19 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "16:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Mercredi
-      { time: "07:00", mode: "heat", temp: 19 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "16:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Jeudi
-      { time: "07:00", mode: "heat", temp: 19 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "16:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Vendredi
-      { time: "07:00", mode: "heat", temp: 19 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "16:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Samedi
-      { time: "08:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Dimanche
-      { time: "08:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-  ],
-  travail: [
-    [ // Lundi
-      { time: "06:30", mode: "heat", temp: 20 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "17:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Mardi
-      { time: "06:30", mode: "heat", temp: 20 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "17:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Mercredi
-      { time: "06:30", mode: "heat", temp: 20 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "17:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Jeudi
-      { time: "06:30", mode: "heat", temp: 20 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "17:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Vendredi
-      { time: "06:30", mode: "heat", temp: 20 },
-      { time: "09:00", mode: "off", temp: 17 },
-      { time: "17:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Samedi
-      { time: "08:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Dimanche
-      { time: "08:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-  ],
-  weekend: [
-    [ // Lundi - absence jour
-      { time: "08:00", mode: "off", temp: 16 },
-    ],
-    [ // Mardi
-      { time: "08:00", mode: "off", temp: 16 },
-    ],
-    [ // Mercredi
-      { time: "08:00", mode: "off", temp: 16 },
-    ],
-    [ // Jeudi
-      { time: "08:00", mode: "off", temp: 16 },
-    ],
-    [ // Vendredi
-      { time: "08:00", mode: "off", temp: 16 },
-    ],
-    [ // Samedi
-      { time: "08:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-    [ // Dimanche
-      { time: "08:00", mode: "heat", temp: 20 },
-      { time: "23:00", mode: "off", temp: 17 },
-    ],
-  ],
-  absence: Array.from({ length: 7 }, () => [
-    { time: "08:00", mode: "off", temp: 16 },
-    { time: "18:00", mode: "heat", temp: 19 },
-  ]),
 };
 
 let root = null;
@@ -281,10 +173,9 @@ export default {
                 ${targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
               </select>
               <select class="select" id="planWeekPreset" style="width:auto">
-                <option value="vacances">Vacances</option>
-                <option value="travail">Semaine travail</option>
-                <option value="weekend">Week-end prolongé</option>
-                <option value="absence">Absence</option>
+                ${WEEK_PRESET_OPTIONS.map(
+                  ([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`
+                ).join("")}
               </select>
               <button class="btn btn-sm btn-primary" type="button" id="planApplyWeekPreset">${icon("check", 14)} Appliquer (efface la semaine)</button>
             </div>
@@ -1094,7 +985,7 @@ function applyWeekPreset(key) {
   const warning = hasLocked
     ? "Les jours de cours Pronote sont conservés."
     : "Tous les créneaux existants seront effacés.";
-  if (!confirm(`Remplacer la semaine ${week} de ${target.label} par le modèle « ${key} » ? (${warning})`)) {
+  if (!confirm(`Remplacer la semaine ${week} de ${target.label} par le modèle « ${weekPresetLabel(key)} » ? (${warning})`)) {
     return;
   }
   const next = preset.map((daySlots) =>
@@ -1104,7 +995,7 @@ function applyWeekPreset(key) {
   dirty = true;
   paintRooms();
   paintDirty();
-  toast(`Modèle « ${key} » appliqué à toute la semaine ${week}.`, { type: "info", timeout: 2400 });
+  toast(`Modèle « ${weekPresetLabel(key)} » appliqué à toute la semaine ${week}.`, { type: "info", timeout: 2400 });
 }
 
 function dominantMode(slots) {

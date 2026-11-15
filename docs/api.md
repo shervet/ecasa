@@ -116,8 +116,13 @@ l'interface le lit depuis l'état temps réel, sans route dédiée.
 
 | Méthode | Route | Rôle |
 | --- | --- | --- |
-| GET | `/api/update/check` | Vérifie si une mise à jour est disponible sur origin (git fetch + comparaison). |
+| GET | `/api/update/check` | Vérifie si une mise à jour est disponible sur origin (git fetch + comparaison) et rafraîchit le cache quotidien. |
 | POST | `/api/update/apply` | Applique la mise à jour (git pull + dépendances) puis redémarre le serveur. |
+
+Le snapshot `/api/state` expose aussi un objet `update`
+(`available`, `behind`, `current`, `remote`, `branch`, `checked_at`, `error`)
+alimenté par la vérification quotidienne : il permet d'afficher la pastille
+sans lancer git à chaque requête.
 
 ## Exemples
 

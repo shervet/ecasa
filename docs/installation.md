@@ -197,6 +197,16 @@ Une sauvegarde régulière suffit à tout restaurer (y compris les modèles de p
 
 ## Mise à jour
 
+eCasa vérifie une fois par jour (au démarrage puis toutes les 6 h, cache de
+24 h) si le dépôt Git contient de nouveaux commits. Quand c'est le cas :
+
+- une **pastille jaune** apparaît sur « Réglages » dans le menu, et un clic
+  ouvre directement Réglages → Serveur → **Mise à jour** ;
+- une ligne **« Mise à jour disponible »** est ajoutée au journal (une seule
+  fois par commit distant).
+
+La mise à jour peut ensuite être appliquée depuis l'interface, ou à la main :
+
 ```bash
 cd ecasa
 git pull

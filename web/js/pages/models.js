@@ -18,6 +18,11 @@ import {
   weekdayLong,
   weekdayShort,
 } from "../utils.js";
+import {
+  WEEK_PRESETS,
+  WEEK_PRESET_OPTIONS,
+  weekPresetLabel,
+} from "../week-presets.js";
 
 const STORAGE_KEY = "ecasa.weekModels";
 const WEEKS = ["A", "B"];
@@ -234,6 +239,8 @@ function detailView() {
       </div>
     </div>
 
+    ${weekTools(model)}
+
     ${applyPanel(model)}
 
     <div class="card card-pad">
@@ -241,6 +248,68 @@ function detailView() {
       <p class="hint mt-2">Tape un créneau pour le modifier, sur « + » pour en ajouter un. Reviens à la liste puis clique sur « Enregistrer » pour sauvegarder tous les modèles.</p>
     </div>
   </div>`;
+}
+
+function weekTools() {
+  const other = week === "A" ? "B" : "A";
+  return `<div class="card card-pad stack">
+    <div>
+      <div class="card-title">${icon("copy", 18)} Copier une semaine</div>
+      <p class="hint mt-1">Duplique les créneaux d'une semaine sur l'autre : la semaine cible est remplacée.</p>
+    </div>
+    <div class="row wrap" style="gap:8px">
+      <button class="btn btn-sm" type="button" data-copy="A">${icon("copy", 15)} Copier A → B</button>
+      <button class="btn btn-sm" type="button" data-copy="B">${icon("copy", 15)} Copier B → A</button>
+      <button class="btn btn-sm btn-ghost" type="button" data-clear-week>${icon("trash", 15)} Vider la semaine ${week}</button>
+    </div>
+    <div class="row wrap" style="gap:8px;align-items:center;margin-top:6px">
+      <select class="select" data-preset style="width:auto;flex:1 1 220px">
+        ${WEEK_PRESET_OPTIONS.map(
+          ([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`
+        ).join("")}
+      </select>
+      <button class="btn btn-sm" type="button" data-preset-apply>
+        ${icon("check", 15)} Appliquer à la semaine ${week}
+      </button>
+    </div>
+    <p class="hint">La semaine ${other} n'est pas modifiée par ces actions.</p>
+  </div>`;
+}
+
+function copyWeekTo(source) {
+  const model = currentModel();
+  if (!model) return;
+  const from = source === "B" ? "B" : "A";
+  const to = from === "A" ? "B" : "A";
+  if (!confirm(`Remplacer la semaine ${to} de « ${model.name} » par la semaine ${from} ?`)) return;
+  model.days[to] = cloneWeek(model.days[from]);
+  markDirty();
+  week = to;
+  render();
+  toast(`Semaine ${from} copiée sur la semaine ${to}.`);
+}
+
+function applyPresetToWeek(key) {
+  const model = currentModel();
+  const preset = WEEK_PRESETS[key];
+  if (!model || !preset) return;
+  if (!confirm(`Remplacer la semaine ${week} de « ${model.name} » par le modèle « ${weekPresetLabel(key)} » ?`)) {
+    return;
+  }
+  model.days[week] = cloneWeek(preset);
+  markDirty();
+  render();
+  toast(`Modèle « ${weekPresetLabel(key)} » appliqué à la semaine ${week}.`, { type: "info" });
+}
+
+function clearWeek() {
+  const model = currentModel();
+  if (!model) return;
+  if (!confirm(`Vider la semaine ${week} de « ${model.name} » ?`)) return;
+  model.days[week] = emptyWeek();
+  markDirty();
+  render();
+  toast(`Semaine ${week} vidée.`, { type: "info" });
 }
 
 function applyPanel(model) {
@@ -591,6 +660,15 @@ function bind() {
   });
 
   page.querySelector("[data-apply-run]")?.addEventListener("click", applyToRooms);
+
+  page.querySelectorAll("[data-copy]").forEach((button) => {
+    button.addEventListener("click", () => copyWeekTo(button.dataset.copy));
+  });
+  page.querySelector("[data-preset-apply]")?.addEventListener("click", () => {
+    const select = page.querySelector("[data-preset]");
+    if (select) applyPresetToWeek(select.value);
+  });
+  page.querySelector("[data-clear-week]")?.addEventListener("click", clearWeek);
 
   page.querySelectorAll("[data-day]").forEach((slot) => {
     slot.addEventListener("click", () => {

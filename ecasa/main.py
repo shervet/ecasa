@@ -2103,6 +2103,215 @@ def ecasa_update_check() -> dict:
     return result
 
 
+# --------------------------------------------------- veille des mises à jour
+# Un fil de fond vérifie une fois par jour si origin contient de nouveaux
+# commits. Le résultat est mis en cache sur disque et injecté dans le snapshot
+# /api/state : l'interface peut donc afficher une pastille jaune sans jamais
+# lancer git (donc sans bloquer les requêtes HTTP).
+
+UPDATE_CHECK_FILE = DATA_DIR / "update-check.json"
+UPDATE_CHECK_INTERVAL = 6 * 3600   # nouvelle tentative au plus toutes les 6 h
+UPDATE_CHECK_MAX_AGE = 24 * 3600   # un contrôle par jour suffit
+UPDATE_CHECK_LOCK = threading.Lock()
+_UPDATE_STATE: dict | None = None
+
+
+def _update_state_path(path=None) -> Path:
+    return Path(path) if path else UPDATE_CHECK_FILE
+
+
+def load_update_state(path=None) -> dict:
+    """État persisté de la dernière vérification de mise à jour."""
+    try:
+        data = json.loads(_update_state_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_update_state(state: dict, path=None) -> bool:
+    """Écrit l'état de mise à jour de façon atomique. Ne lève jamais."""
+    target = _update_state_path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(
+            json.dumps(state, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        tmp.replace(target)
+    except OSError as err:
+        print(f"[update] état non enregistré : {err}")
+        return False
+    return True
+
+
+def update_state_snapshot() -> dict:
+    """État de mise à jour lisible par l'interface (lecture seule, sans git)."""
+    global _UPDATE_STATE
+    with UPDATE_CHECK_LOCK:
+        state = _UPDATE_STATE
+        if state is None:
+            state = load_update_state()
+            _UPDATE_STATE = state
+    return {
+        "available": bool(state.get("available")),
+        "behind": int(state.get("behind") or 0),
+        "current": str(state.get("current") or ""),
+        "remote": str(state.get("remote") or ""),
+        "branch": str(state.get("branch") or ""),
+        "checked_at": str(state.get("checked_at") or ""),
+        "error": state.get("error"),
+    }
+
+
+def _parse_timestamp(value) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_update_state(
+    result: dict,
+    store=None,
+    now: datetime | None = None,
+    path=None,
+    previous: dict | None = None,
+) -> dict:
+    """Mémorise un résultat de vérification et journalise l'avertissement.
+
+    L'avertissement n'est écrit qu'une fois par commit distant : un contrôle
+    quotidien ne doit pas remplir le journal.
+    """
+    global _UPDATE_STATE
+    now = now or datetime.now()
+    prev = load_update_state(path) if previous is None else previous
+    state = {
+        "checked_at": now.isoformat(timespec="seconds"),
+        "available": bool(result.get("available")),
+        "behind": int(result.get("behind") or 0),
+        "current": str(result.get("current") or ""),
+        "remote": str(result.get("remote") or ""),
+        "branch": str(result.get("branch") or ""),
+        "error": result.get("error"),
+        "notified_remote": str(prev.get("notified_remote") or ""),
+    }
+    remote_key = state["remote"] or (
+        f"{state['behind']} commit(s) en attente" if state["behind"] else ""
+    )
+    if state["available"] and not state["error"] and remote_key:
+        if store is not None and state["notified_remote"] != remote_key:
+            message = (
+                f"Mise à jour disponible : {state['behind']} commit(s)"
+                f" ({state['current'] or '?'} → {state['remote'] or 'origin'})."
+                " Ouvrir Réglages → Mise à jour."
+            )
+            try:
+                store.log("avertissement", message)
+                state["notified_remote"] = remote_key
+            except Exception as err:  # noqa: BLE001 - journal indisponible
+                print(f"[update] avertissement non journalisé : {err}")
+    elif not state["available"]:
+        state["notified_remote"] = ""
+    with UPDATE_CHECK_LOCK:
+        _UPDATE_STATE = state
+    save_update_state(state, path)
+    if state["available"]:
+        print(
+            f"[update] mise à jour disponible : {state['behind']} commit(s)"
+            f" ({state['current'] or '?'} → {state['remote'] or 'origin'})"
+        )
+    return state
+
+
+def refresh_update_state(
+    store=None, now: datetime | None = None, force: bool = False, path=None
+) -> dict:
+    """Vérifie les mises à jour si le cache a plus de 24 h (ou si ``force``).
+
+    Ne lève jamais. Retourne l'état prêt pour l'interface.
+    """
+    now = now or datetime.now()
+    previous = load_update_state(path)
+    checked = _parse_timestamp(previous.get("checked_at"))
+    fresh = (
+        checked is not None
+        and abs((now - checked).total_seconds()) < UPDATE_CHECK_MAX_AGE
+    )
+    if fresh and previous.get("current"):
+        # Une mise à jour appliquée puis un redémarrage rendent le cache
+        # obsolète : le commit courant ne correspond plus.
+        try:
+            if previous["current"] != ecasa_current_commit():
+                fresh = False
+        except Exception:  # noqa: BLE001
+            pass
+    if fresh and not force:
+        global _UPDATE_STATE
+        with UPDATE_CHECK_LOCK:
+            _UPDATE_STATE = previous
+        return update_state_snapshot()
+
+    try:
+        result = ecasa_update_check()
+    except Exception as err:  # noqa: BLE001 - réseau, git absent…
+        result = {
+            "available": False,
+            "behind": 0,
+            "current": ecasa_current_commit(),
+            "remote": "",
+            "branch": "",
+            "error": str(err),
+        }
+    _record_update_state(result, store=store, now=now, path=path, previous=previous)
+    return update_state_snapshot()
+
+
+def state_snapshot(app) -> dict:
+    """Snapshot du moteur enrichi de l'état de mise à jour."""
+    data = app.engine.snapshot()
+    try:
+        data["update"] = update_state_snapshot()
+    except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
+        data["update"] = {"available": False}
+    return data
+
+
+class UpdateWatcher:
+    """Fil de fond : vérifie une fois par jour les mises à jour disponibles."""
+
+    def __init__(self, app, first_delay: float = 30,
+                 interval: float = UPDATE_CHECK_INTERVAL):
+        self.app = app
+        self.first_delay = first_delay
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="update-watch", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        if self._stop.wait(self.first_delay):
+            return
+        while not self._stop.is_set():
+            try:
+                refresh_update_state(self.app.store)
+            except Exception as err:  # noqa: BLE001 - ne doit jamais tuer le fil
+                print(f"[update] vérification impossible : {err}")
+            self._stop.wait(self.interval)
+
+
 def ecasa_update_apply() -> dict:
     """Applique la mise à jour (git pull) + dépendances, sans redémarrer."""
     root = ecasa_git_root()
@@ -2684,7 +2893,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if method == "GET" and path == "/api/state":
-            self._json(200, app.engine.snapshot())
+            self._json(200, state_snapshot(app))
             return
 
         if method == "GET" and path == "/api/system":
@@ -2991,6 +3200,13 @@ class Handler(BaseHTTPRequestHandler):
                     self.app.store.log(
                         "warn", f"Vérification de mise à jour : {result['error']}"
                     )
+                elif result.get("is_git"):
+                    # Le contrôle manuel met aussi à jour le cache quotidien
+                    # (pastille jaune + avertissement dans le journal).
+                    try:
+                        _record_update_state(result, store=self.app.store)
+                    except Exception as err:  # noqa: BLE001
+                        print(f"[update] état non mémorisé : {err}")
                 self._json(200, result)
             except Exception as err:  # noqa: BLE001
                 self.app.store.log("warn", f"Vérification de mise à jour : {err}")
@@ -3053,7 +3269,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "POST" and path == "/api/apply":
             app.engine.tick(force=True)
-            self._json(200, app.engine.snapshot())
+            self._json(200, state_snapshot(app))
             return
 
         # ------------------------------------------- planning depuis Pronote
@@ -3292,7 +3508,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST" and path == "/api/sync":
             app.engine.poll()
             app.engine.seed_demo()
-            self._json(200, app.engine.snapshot())
+            self._json(200, state_snapshot(app))
             return
 
         if method == "GET" and path == "/api/discover":
@@ -3554,7 +3770,7 @@ class Handler(BaseHTTPRequestHandler):
                 msg = f"Mode forcé {mode_lbl} {temp:g} °C jusqu'à {until:%H:%M}"
             app.store.log("info", msg, device_id)
             app.engine.tick(force=True)
-            self._json(200, app.engine.snapshot())
+            self._json(200, state_snapshot(app))
             return
 
         match = re.fullmatch(r"/api/override/(\d+)", path)
@@ -3806,6 +4022,12 @@ def main() -> None:
     app.daily_sync = daily_sync
     daily_sync.start()
 
+    # Veille des mises à jour : première vérification ~30 s après le démarrage,
+    # puis une tentative toutes les 6 h (le cache limite à un contrôle par jour).
+    update_watch = UpdateWatcher(app)
+    app.update_watch = update_watch
+    update_watch.start()
+
     tailscale_startup = apply_tailscale_startup(config)
 
     def _stop(signum, frame):  # noqa: ARG001
@@ -3847,6 +4069,7 @@ def main() -> None:
         print("\nArrêt.")
     finally:
         daily_sync.stop()
+        update_watch.stop()
         engine.stop()
         store.close()
         server.server_close()

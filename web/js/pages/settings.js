@@ -171,6 +171,7 @@ export default {
 
   async mount(view) {
     root = view;
+    window.addEventListener("ecasa:jump", onWindowJump);
     if (!store.config) await refreshConfig({ silent: true });
 
     const navItems = [
@@ -255,6 +256,7 @@ export default {
   },
 
   unmount() {
+    window.removeEventListener("ecasa:jump", onWindowJump);
     closeSheet();
     root = null;
   },
@@ -1181,6 +1183,7 @@ function updateSection() {
   const available = Boolean(data?.available);
   const behind = data?.behind || 0;
   const remote = data?.remote || "";
+  const checked = store.state?.update?.checked_at || "";
   const disabled = checking || !available;
   return section(
     "update",
@@ -1205,6 +1208,7 @@ function updateSection() {
       <button class="btn btn-sm" type="button" id="updateCheck">${icon("refresh", 14)} Vérifier</button>
       <button class="btn btn-primary" type="button" id="updateApply" ${disabled ? "disabled" : ""}>${icon("download", 14)} Mettre à jour</button>
     </div>
+    ${checked ? `<p class="hint mt-1">Dernier contrôle automatique : ${escapeHtml(fmtDateTime(checked))}.</p>` : ""}
     ${available ? '<p class="hint mt-1">La mise à jour télécharge le code, installe les dépendances, puis redémarre le serveur (quelques secondes d\'interruption).</p>' : '<p class="hint mt-1">Le bouton est désactivé tant qu\'aucune mise à jour n\'est disponible.</p>'}`,
     ""
   );
@@ -1242,6 +1246,14 @@ function supportSection() {
 function jumpToSection(id, instant = false) {
   const target = root?.querySelector(`#sec-${id}`);
   if (!target) return;
+  // Certaines sections sont repliées dans un <details> (ex. Mise à jour dans
+  // Serveur) : on déplie les ancêtres avant de mesurer la position.
+  let node = target;
+  while (node && node !== root) {
+    const parent = node.parentElement;
+    if (parent && parent.tagName === "DETAILS") parent.open = true;
+    node = parent;
+  }
   // Laisse la place au bandeau supérieur pour que le titre de la section
   // reste visible après le défilement.
   const topbar = document.querySelector(".topbar, header, .app-bar, .navbar");
@@ -1255,6 +1267,11 @@ function jumpToSection(id, instant = false) {
   root.querySelectorAll("[data-jump]").forEach((item) => {
     item.classList.toggle("is-active", item.dataset.jump === id);
   });
+}
+
+function onWindowJump(event) {
+  const id = String(event?.detail || "");
+  if (id) jumpToSection(id, false);
 }
 
 function bind() {

@@ -76,7 +76,7 @@ function renderNav() {
     sidebar.innerHTML = NAV.map(
       (item) => `<a href="#/${item.id}" data-nav="${item.id}">
         ${icon(item.icon, 20)}<span>${item.label}</span>
-        ${item.id === "settings" ? '<span class="nav-badge" id="navLogBadge" hidden>0</span>' : ""}
+        ${item.id === "settings" ? '<span class="nav-badges"><span class="nav-badge is-warn" id="navUpdateBadge" hidden>!</span><span class="nav-badge" id="navLogBadge" hidden>0</span></span>' : ""}
       </a>`
     ).join("");
     // Clic sur l'entree deja active : on remonte la page (utile pour revenir
@@ -221,6 +221,19 @@ function updateChrome() {
     badge.title = unseen ? `${unseen} nouvelle(s) erreur(s) dans le journal` : "Aucune nouvelle erreur";
   }
 
+  const updateBadge = $("#navUpdateBadge");
+  if (updateBadge) {
+    const update = state?.update;
+    const available = Boolean(update?.available);
+    updateBadge.hidden = !available;
+    if (available) {
+      const behind = Number(update?.behind || 0);
+      updateBadge.title = `Mise à jour disponible${behind ? ` : ${behind} commit${behind > 1 ? "s" : ""} en attente` : ""} — cliquer pour ouvrir Réglages → Mise à jour`;
+    } else {
+      updateBadge.title = "Aucune mise à jour disponible";
+    }
+  }
+
   const sidebarStatus = $("#sidebarStatus");
   if (sidebarStatus) {
     if (!store.connected) {
@@ -322,6 +335,19 @@ async function boot() {
     event.preventDefault();
     event.stopPropagation();
     location.hash = "#/logs";
+  });
+  $("#navUpdateBadge")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (activeId === "settings") {
+      // Déjà dans Réglages : mountRoute ne rejouerait pas le lien profond.
+      window.dispatchEvent(new CustomEvent("ecasa:jump", { detail: "update" }));
+      if (location.hash !== "#/settings/update") {
+        history.replaceState(null, "", "#/settings/update");
+      }
+    } else {
+      location.hash = "#/settings/update";
+    }
   });
   setupInstall();
 

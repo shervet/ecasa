@@ -409,8 +409,14 @@ svg {
   opacity: 1;
 }
 
-.sidebar-nav .nav-badge {
+.sidebar-nav .nav-badges {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-nav .nav-badge {
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
@@ -421,6 +427,12 @@ svg {
   color: #fff;
   font-size: 11px;
   font-weight: 700;
+}
+
+/* Pastille jaune : une mise à jour eCasa est disponible sur origin. */
+.sidebar-nav .nav-badge.is-warn {
+  background: var(--warn);
+  color: #1b1300;
 }
 
 .sidebar-foot {
