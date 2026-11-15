@@ -364,7 +364,7 @@ function paintCpu() {
           <span class="card-title">${icon("gauge", 16)} Charge CPU</span>
           <strong>${lastLoad !== undefined ? `${Number(lastLoad).toFixed(1)} %` : "—"}</strong>
         </div>
-        <div class="cpu-spark-wrap" style="color:var(--primary)">${sparkline(loads)}</div>
+        ${sparkline(loads, "%", "var(--primary)")}
         <p class="tiny muted" style="margin-top:4px">60 dernières minutes · ${loads.length} mesure${loads.length > 1 ? "s" : ""}</p>
       </div>`);
   }
@@ -375,14 +375,14 @@ function paintCpu() {
           <span class="card-title">${icon("thermometer", 16)} Température CPU</span>
           <strong>${lastTemp !== undefined ? `${Number(lastTemp).toFixed(1)} °C` : "—"}</strong>
         </div>
-        <div class="cpu-spark-wrap" style="color:var(--warn)">${sparkline(temps)}</div>
+        ${sparkline(temps, "°C", "var(--warn)")}
         <p class="tiny muted" style="margin-top:4px">60 dernières minutes · ${temps.length} mesure${temps.length > 1 ? "s" : ""}</p>
       </div>`);
   }
   host.innerHTML = cards.length ? `<div class="cpu-grid">${cards.join("")}</div>` : "";
 }
 
-function sparkline(values) {
+function sparkline(values, unit = "", color = "currentColor") {
   const list = Array.isArray(values) ? values : [];
   const points = [];
   for (let i = 0; i < list.length; i++) {
@@ -410,10 +410,26 @@ function sparkline(values) {
     .map((p, idx) => `${idx === 0 ? "M" : "L"} ${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`)
     .join(" ");
   const last = points[points.length - 1];
-  return `<svg viewBox="0 0 ${W} ${H}" class="cpu-spark" preserveAspectRatio="none" aria-hidden="true">
+  const fmtAxis = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "—";
+    const abs = Math.abs(n);
+    const digits = abs >= 100 ? 0 : (abs >= 10 ? 0 : 1);
+    return `${n.toFixed(digits)} ${unit}`.trim();
+  };
+  const mid = (min + max) / 2;
+  const svg = `<svg viewBox="0 0 ${W} ${H}" class="cpu-spark" preserveAspectRatio="none" aria-hidden="true">
     <path d="${d}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" />
     <circle cx="${x(last.i).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="2.4" fill="currentColor" />
   </svg>`;
+  return `<div class="cpu-chart" style="color:${color}">
+    <div class="cpu-yaxis">
+      <span>${escapeHtml(fmtAxis(max))}</span>
+      <span>${escapeHtml(fmtAxis(mid))}</span>
+      <span>${escapeHtml(fmtAxis(min))}</span>
+    </div>
+    <div class="cpu-spark-wrap">${svg}</div>
+  </div>`;
 }
 
 function paintDisk() {

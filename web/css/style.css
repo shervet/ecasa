@@ -443,6 +443,39 @@ svg {
   margin-top: 4px;
 }
 
+.cpu-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.cpu-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 42px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  text-align: right;
+  padding: 2px 0;
+  flex: none;
+}
+
+.cpu-chart .cpu-spark-wrap {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  margin-top: 0;
+}
+
+.cpu-chart .cpu-spark {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .disk-pie-wrap {
   display: flex;
   align-items: center;
