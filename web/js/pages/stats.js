@@ -594,15 +594,21 @@ function paintEnergy(payload) {
     const series = payload.series || [];
     const labels = payload.labels || [];
     const hasByYear = Array.isArray(summary.by_year) && summary.by_year.length;
+    const outdoor = payload.outdoor_temp && Array.isArray(payload.outdoor_temp.values)
+      ? payload.outdoor_temp : null;
+    const legendItems = outdoor
+      ? [...series, { label: outdoor.label || "Temp. ext. moy.", color: "var(--warn, #f59e0b)" }]
+      : series;
     body = `
       ${barChart({
         labels,
         series,
         height: 280,
         unit: "kWh",
-        ariaLabel: "Consommation électrique par année",
+        ariaLabel: "Consommation électrique",
+        outdoor,
       })}
-      ${chartLegend(series)}
+      ${chartLegend(legendItems)}
       ${hasByYear ? energyTable(payload) : energyKpiGrid(summary)}
       <p class="hint mt-2">
         Source ${escapeHtml(payload.source || "fournisseur d'énergie")}${

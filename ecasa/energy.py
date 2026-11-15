@@ -339,9 +339,100 @@ class EnergyService:
         return _parse_daily(payload)
 
 
+def _outdoor_temps(weather_service, config: dict, view: str, payload: dict,
+                    today: date) -> dict | None:
+    """Température extérieure moyenne alignée sur les labels du graphe énergie."""
+    if not config.get("weather_enabled", True):
+        return None
+    try:
+        latitude = float(config.get("weather_latitude"))
+        longitude = float(config.get("weather_longitude"))
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None
+
+    window = payload.get("window") or {}
+    labels = payload.get("labels") or []
+    if not labels:
+        return None
+
+    if view == "day":
+        start = _parse_day(window.get("start_iso"))
+        end = _parse_day(window.get("end_iso"))
+        if start is None or end is None or end < start:
+            return None
+        result = weather_service.hourly(latitude, longitude, start, end)
+        hours = getattr(result, "hours", None) or {}
+        values = []
+        cur = start
+        for _ in range(len(labels)):
+            bucket = hours.get(cur.isoformat()) or {}
+            nums = [float(v) for v in bucket.values() if v is not None]
+            values.append(round(sum(nums) / len(nums), 1) if nums else None)
+            cur += timedelta(days=1)
+    elif view == "week":
+        start = _parse_day(window.get("start_iso"))
+        end = _parse_day(window.get("end_iso"))
+        if start is None or end is None or end < start:
+            return None
+        result = weather_service.hourly(latitude, longitude, start, end)
+        hours = getattr(result, "hours", None) or {}
+        values = []
+        cur = start
+        for _ in range(len(labels)):
+            week_end = cur + timedelta(days=6)
+            nums = []
+            d = cur
+            while d <= week_end:
+                bucket = hours.get(d.isoformat()) or {}
+                nums.extend(float(v) for v in bucket.values() if v is not None)
+                d += timedelta(days=1)
+            values.append(round(sum(nums) / len(nums), 1) if nums else None)
+            cur += timedelta(days=7)
+    elif view == "month":
+        months = window.get("months") or []
+        if not months or len(months) != len(labels):
+            return None
+        first = months[0]
+        last = months[-1]
+        try:
+            start = date(int(first["year"]), int(first["month"]), 1)
+            last_year = int(last["year"])
+            last_month = int(last["month"])
+            last_day = calendar.monthrange(last_year, last_month)[1]
+            end = date(last_year, last_month, last_day)
+        except Exception:  # noqa: BLE001
+            return None
+        if end < start:
+            return None
+        result = weather_service.hourly(latitude, longitude, start, end)
+        hours = getattr(result, "hours", None) or {}
+        values = []
+        for col in months:
+            try:
+                y = int(col["year"])
+                m = int(col["month"])
+                dim = calendar.monthrange(y, m)[1]
+            except Exception:  # noqa: BLE001
+                values.append(None)
+                continue
+            nums = []
+            for day_num in range(1, dim + 1):
+                bucket = hours.get(date(y, m, day_num).isoformat()) or {}
+                nums.extend(float(v) for v in bucket.values() if v is not None)
+            values.append(round(sum(nums) / len(nums), 1) if nums else None)
+    else:
+        return None
+
+    if not any(v is not None for v in values):
+        return None
+    return {"label": "Temp. ext. moy.", "unit": "°C", "values": values}
+
+
 def build_energy(service, config: dict, view: str = "month", month=None,
                  today: date | None = None, day=None, days=None,
-                 refresh: bool = False) -> dict:
+                 refresh: bool = False, weather_service=None) -> dict:
     """Construit la réponse de ``GET /api/energy``.
 
     ``view`` vaut ``day``, ``week``, ``month`` ou ``year``. Les séries sont
@@ -463,6 +554,13 @@ def build_energy(service, config: dict, view: str = "month", month=None,
             points, month, parse_energy_year(day, today), today
         )
     _fill_view(payload, points, view, month, today, window)
+    outdoor = None
+    if weather_service is not None and view in ("day", "week", "month"):
+        try:
+            outdoor = _outdoor_temps(weather_service, config, view, payload, today)
+        except Exception:  # noqa: BLE001 - météo facultative
+            outdoor = None
+    payload["outdoor_temp"] = outdoor
     payload["summary"] = _summary(points, view, month, today, window)
     return payload
 

@@ -143,6 +143,7 @@ export function lineChart({
 /**
  * Barres groupées multi-séries (une série par année).
  * series: [{ key, label, color, values: (number|null)[] }]
+ * outdoor (optionnel): { label, unit, values: (number|null)[] } — courbe température, axe droit.
  */
 export function barChart({
   labels = [],
@@ -151,6 +152,7 @@ export function barChart({
   unit = "kWh",
   maxLabels = 12,
   ariaLabel = "Graphique en barres",
+  outdoor = null,
 } = {}) {
   const visible = series.filter(
     (item) => Array.isArray(item.values) && item.values.length
@@ -163,10 +165,15 @@ export function barChart({
     </div>`;
   }
 
+  const tempValues = Array.isArray(outdoor?.values) ? outdoor.values : [];
+  const tempNums = tempValues.filter((value) => Number.isFinite(value));
+  const hasTemp = tempNums.length > 0;
+  const right = hasTemp ? 42 : M.right;
+
   const H = height;
   const count = Math.max(labels.length, ...visible.map((item) => item.values.length), 1);
   const svgWidth = count > 20 ? Math.max(W, count * 22) : W;
-  const innerW = svgWidth - M.left - M.right;
+  const innerW = svgWidth - M.left - right;
   const innerH = H - M.top - M.bottom;
   const max = niceMax(Math.max(...all));
   const groupW = innerW / count;
@@ -206,7 +213,7 @@ export function barChart({
   for (let i = 0; i <= gridCount; i += 1) {
     const value = (max * i) / gridCount;
     const py = y(value);
-    grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${svgWidth - M.right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
+    grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${svgWidth - right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
     grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="var(--faint)">${fmtNumber(value, Number.isInteger(value) ? 0 : 1)}${i === gridCount ? unit : ""}</text>`;
   }
 
@@ -225,6 +232,40 @@ export function barChart({
       bars += `<rect class="chart-bar" x="${x.toFixed(1)}" y="${(M.top + innerH - barH).toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="2" fill="${item.color}" data-index="${index}" data-label="${escapeHtml(labels[index] ?? index)}" data-series="${escapeHtml(item.label)}" data-value="${Number(value)}" role="img" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title></rect>`;
     });
   });
+
+  let tempLayer = "";
+  if (hasTemp) {
+    let tMin = Math.min(...tempNums);
+    let tMax = Math.max(...tempNums);
+    if (tMax - tMin < 1) {
+      const c = (tMax + tMin) / 2;
+      tMin = c - 0.5;
+      tMax = c + 0.5;
+    }
+    const tPad = (tMax - tMin) * 0.12;
+    tMin -= tPad;
+    tMax += tPad;
+    const ty = (value) => M.top + innerH - ((value - tMin) / (tMax - tMin)) * innerH;
+    const tUnit = outdoor.unit || "°C";
+    for (let i = 0; i <= gridCount; i += 1) {
+      const value = tMin + ((tMax - tMin) * i) / gridCount;
+      const py = ty(value);
+      tempLayer += `<text x="${svgWidth - right + 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="start" font-size="10.5" fill="var(--faint)">${fmtNumber(value, 0)}${tUnit}</text>`;
+    }
+    const pts = [];
+    for (let i = 0; i < count; i += 1) {
+      const v = tempValues[i];
+      if (!Number.isFinite(v)) continue;
+      pts.push({ x: M.left + groupW * i + groupW / 2, y: ty(v) });
+    }
+    if (pts.length >= 2) {
+      const d = `M ${pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
+      tempLayer += `<path d="${d}" fill="none" stroke="var(--warn, #f59e0b)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }
+    for (const p of pts) {
+      tempLayer += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4" fill="var(--warn, #f59e0b)"/>`;
+    }
+  }
 
   const step = Math.max(1, Math.ceil(count / maxLabels));
   let xLabels = "";
@@ -245,6 +286,7 @@ export function barChart({
     <svg viewBox="0 0 ${svgWidth} ${H}" role="img" aria-label="${escapeHtml(ariaLabel)}"${scroll ? ` style="width:${svgWidth}px;max-width:none"` : ""}>
       ${grid}
       ${bars}
+      ${tempLayer}
       ${xLabels}
     </svg>
   </div>`;

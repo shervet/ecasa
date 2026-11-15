@@ -3274,7 +3274,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 build_energy(
                     service, config, view, month, day=day, days=days,
-                    refresh=refresh,
+                    refresh=refresh, weather_service=app.weather,
                 ),
             )
             return
