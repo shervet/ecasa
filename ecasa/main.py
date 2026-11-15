@@ -478,8 +478,8 @@ def validate_consoapi_values(body: dict) -> dict:
             raise ValueError("Adresse ConsoAPI invalide (http:// ou https://)")
         values["consoapi_url"] = url or "https://conso.boris.sh/api"
     if "consoapi_pdl" in body:
-        pdl = re.sub(r"\\s+", "", str(body.get("consoapi_pdl") or ""))
-        if pdl and not re.fullmatch(r"\\d{14}", pdl):
+        pdl = re.sub(r"\s+", "", str(body.get("consoapi_pdl") or ""))
+        if pdl and not re.fullmatch(r"\d{14}", pdl):
             raise ValueError("PDL invalide : 14 chiffres attendus")
         values["consoapi_pdl"] = pdl
     if "consoapi_start" in body:
