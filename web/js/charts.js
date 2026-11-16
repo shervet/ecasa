@@ -98,7 +98,7 @@ export function lineChart({
 
     for (const segment of segments) {
       if (segment.length === 1) {
-        paths += `<circle cx="${segment[0].x.toFixed(1)}" cy="${segment[0].y.toFixed(1)}" r="2.6" fill="${color}"/>`;
+        paths += `<circle cx="${segment[0].x.toFixed(1)}" cy="${segment[0].y.toFixed(1)}" r="2.6" fill="${color}" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
         continue;
       }
 
@@ -106,7 +106,7 @@ export function lineChart({
         const first = segment[0].x.toFixed(1);
         const last = segment[segment.length - 1].x.toFixed(1);
         const base = y(Math.max(min, Math.min(max, min)));
-        paths += `<path d="M ${first} ${base} L ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} L ${last} ${base} Z" fill="${color}" opacity="0.09"/>`;
+        paths += `<path d="M ${first} ${base} L ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} L ${last} ${base} Z" fill="${color}" opacity="0.09" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
       }
 
       let d;
@@ -119,13 +119,13 @@ export function lineChart({
       } else {
         d = `M ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
       }
-      paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" ${item.dashed ? 'stroke-dasharray="5 5"' : ""}/>`;
+      paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" ${item.dashed ? 'stroke-dasharray="5 5"' : ""} data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
     }
 
     if (showPoints) {
       item.values.forEach((value, index) => {
         if (!Number.isFinite(value)) return;
-        points += `<circle cx="${x(index).toFixed(1)}" cy="${y(value).toFixed(1)}" r="2.4" fill="${color}"><title>${escapeHtml(item.label)} : ${fmtNumber(value, 1)} ${unit}</title></circle>`;
+        points += `<circle cx="${x(index).toFixed(1)}" cy="${y(value).toFixed(1)}" r="2.4" fill="${color}" data-series="${escapeHtml(item.key)}" class="chart-series"><title>${escapeHtml(item.label)} : ${fmtNumber(value, 1)} ${unit}</title></circle>`;
       });
     }
   }
@@ -265,11 +265,11 @@ export function barChart({
       }
       if (pts.length >= 2) {
         const d = `M ${pts.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
-        tempLayer += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.95"/>`;
+        tempLayer += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.95" data-series="${escapeHtml(ts.key || ts.label || "")}" class="chart-series"/>`;
       }
       for (const p of pts) {
         const title = `${labels[p.i] ?? ""} · ${ts.label || "Temp. ext."} : ${fmtNumber(p.v, 1)} ${tUnit}`;
-        tempLayer += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4" fill="${color}"><title>${escapeHtml(title)}</title></circle>`;
+        tempLayer += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.4" fill="${color}" data-series="${escapeHtml(ts.key || ts.label || "")}" class="chart-series"><title>${escapeHtml(title)}</title></circle>`;
       }
     });
   }
@@ -303,7 +303,7 @@ export function chartLegend(series = []) {
   return `<div class="chart-legend">${series
     .map(
       (item) =>
-        `<span class="lg" style="--c:${item.color || "var(--primary)"}">${escapeHtml(item.label)}</span>`
+        `<span class="lg" data-key="${escapeHtml(item.key || item.label)}" style="--c:${item.color || "var(--primary)"}">${escapeHtml(item.label)}</span>`
     )
     .join("")}</div>`;
 }

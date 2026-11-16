@@ -2256,6 +2256,13 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chart-legend .lg.is-hidden {
+  opacity: 0.35;
+  text-decoration: line-through;
 }
 
 .chart-legend .lg::before {

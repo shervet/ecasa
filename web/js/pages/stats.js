@@ -62,6 +62,8 @@ let energyInitial = true;
 let energyRequestId = 0;
 let energyPayload = null;
 let temperatureTooltipAbort = null;
+const hiddenTempSeries = new Set();
+const hiddenEnergySeries = new Set();
 
 export default {
   title: "Statistiques",
@@ -324,6 +326,8 @@ function paint() {
 
   attachChartTooltip();
 
+  bindChartLegend(host, hiddenTempSeries);
+
   const details = host.querySelector(".card-details");
   if (details) {
     details.addEventListener("toggle", () => {
@@ -338,6 +342,33 @@ function kpi(iconName, label, value, sub) {
     <div class="k-value">${escapeHtml(value)}</div>
     <div class="k-sub">${escapeHtml(sub)}</div>
   </div>`;
+}
+
+function bindChartLegend(host, hiddenSet) {
+  if (!host) return;
+  const apply = () => {
+    host.querySelectorAll(".chart-legend .lg").forEach((lg) => {
+      const key = lg.dataset.key;
+      if (hiddenSet.has(key)) lg.classList.add("is-hidden");
+      else lg.classList.remove("is-hidden");
+    });
+    host.querySelectorAll(".chart-wrap").forEach((wrap) => {
+      wrap.querySelectorAll("[data-series]").forEach((el) => {
+        const key = el.getAttribute("data-series");
+        if (hiddenSet.has(key)) el.style.display = "none";
+        else el.style.display = "";
+      });
+    });
+  };
+  apply();
+  host.querySelectorAll(".chart-legend .lg").forEach((lg) => {
+    lg.addEventListener("click", () => {
+      const key = lg.dataset.key;
+      if (hiddenSet.has(key)) hiddenSet.delete(key);
+      else hiddenSet.add(key);
+      apply();
+    });
+  });
 }
 
 function attachChartTooltip() {
@@ -597,7 +628,7 @@ function paintEnergy(payload) {
     const outdoor = Array.isArray(payload.outdoor_temp) ? payload.outdoor_temp : null;
     const hasOutdoor = outdoor && outdoor.some((s) => Array.isArray(s.values) && s.values.some((v) => Number.isFinite(v)));
     const tempLegend = hasOutdoor
-      ? outdoor.map((s) => ({ label: `T° ext. ${s.label || s.key || ""}`.trim(), color: s.color || "var(--warn, #f59e0b)" }))
+    ? outdoor.map((s) => ({ key: s.key || s.label, label: `T° ext. ${s.label || s.key || ""}`.trim(), color: s.color || "var(--warn, #f59e0b)" }))
       : [];
     const legendItems = [...series, ...tempLegend];
     body = `
@@ -678,6 +709,7 @@ function paintEnergy(payload) {
     // change de bloc — même geste qu'un défilement en restant appuyé.
     if (isNav) attachEnergyDrag(barWrap);
   }
+  bindChartLegend(host, hiddenEnergySeries);
 }
 
 /* ------------------------------------------------ navigation consommation */

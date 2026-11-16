@@ -281,6 +281,9 @@ function detailView() {
 
     <div class="card card-pad">
       ${gridHtml(days)}
+      <div class="row wrap mt-2" style="gap:8px;justify-content:flex-end">
+        <button class="btn btn-primary" type="button" data-save>${icon("save", 15)} Enregistrer</button>
+      </div>
       <p class="hint mt-2">Tape un créneau pour le modifier, sur « + » pour en ajouter un. Reviens à la liste puis clique sur « Enregistrer » pour sauvegarder tous les modèles.</p>
     </div>
   </div>`;
@@ -586,7 +589,9 @@ function bind() {
   const page = root;
   if (!page) return;
 
-  page.querySelector("[data-save]")?.addEventListener("click", saveAllModels);
+  page.querySelectorAll("[data-save]").forEach((btn) => {
+    btn.addEventListener("click", saveAllModels);
+  });
   page.querySelector("[data-new]")?.addEventListener("click", createModel);
   page.querySelector("[data-back]")?.addEventListener("click", () => {
     selectedIndex = null;
