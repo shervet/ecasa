@@ -1115,6 +1115,11 @@ svg {
   color: var(--accent);
 }
 
+.pill-model {
+  background: color-mix(in srgb, var(--series-4) 16%, transparent);
+  color: var(--series-4);
+}
+
 .pill-ghost {
   background: transparent;
   border: 1px solid var(--line);
@@ -3336,6 +3341,16 @@ details.brand-panel.is-locked > :not(summary) {
   gap: 6px;
   align-items: center;
   margin: 8px 0;
+}
+
+.room-plan-model-row .btn-model-sync {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.room-plan-model-row .pill-model {
+  flex: 0 0 auto;
 }
 
 .room-plan-head {

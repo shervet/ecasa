@@ -29,6 +29,7 @@ const WEEKS = ["A", "B"];
 
 let root = null;
 let models = [];
+let links = {};
 let selectedIndex = null;
 let week = "A";
 let applyWeeks = new Set(["A"]);
@@ -60,9 +61,23 @@ function normalizeModels(raw) {
   return (Array.isArray(raw) ? raw : [])
     .filter((model) => model && typeof model === "object")
     .map((model) => ({
+      id: String(model.id || ""),
       name: String(model.name || "Sans nom"),
       days: { A: cloneWeek(model.days?.A), B: cloneWeek(model.days?.B) },
     }));
+}
+
+function normalizeLinks(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [roomId, link] of Object.entries(raw)) {
+    if (!link || typeof link !== "object") continue;
+    out[String(roomId)] = {
+      model_id: String(link.model_id || ""),
+      pending: Boolean(link.pending),
+    };
+  }
+  return out;
 }
 
 function loadLocalModels() {
@@ -77,6 +92,7 @@ async function loadModels() {
   try {
     const payload = await get("/api/models");
     models = normalizeModels(payload?.models);
+    links = normalizeLinks(payload?.links);
   } catch {
     models = loadLocalModels();
     return;
@@ -126,6 +142,7 @@ async function saveAllModels() {
   try {
     const payload = await put("/api/models", { models });
     models = normalizeModels(payload?.models);
+    links = normalizeLinks(payload?.links);
     dirty = false;
     localStorage.removeItem(STORAGE_KEY);
     toast("Modèles enregistrés.");
@@ -159,11 +176,21 @@ function roomTargets() {
 
 /* ------------------------------------------------------------------ vues */
 
+function linkedRoomCount(modelId) {
+  const id = String(modelId || "");
+  if (!id) return 0;
+  return Object.values(links).filter((link) => link.model_id === id).length;
+}
+
 function summary(model) {
   const parts = WEEKS.map((key) => {
     const count = countSlots(model.days?.[key]);
     return `Semaine ${key} : ${count ? `${count} créneau${count > 1 ? "x" : ""}` : "vide"}`;
   });
+  const linked = linkedRoomCount(model.id);
+  if (linked) {
+    parts.push(`lié à ${linked} pièce${linked > 1 ? "s" : ""}`);
+  }
   return parts.join(" · ");
 }
 
@@ -557,7 +584,15 @@ async function applyToRooms() {
   }
   const target = rooms.map((room) => room.label).join(", ");
   const label = weeks.map((key) => `semaine ${key}`).join(" et ");
-  if (!confirm(`Remplacer la ${label} de ${target} par « ${model.name} » ?`)) return;
+  // Les pièces liées à un autre modèle passeront en « à synchroniser ».
+  const relinked = rooms.filter((room) => {
+    const link = links[String(room.id)];
+    return link && String(link.model_id) !== String(model.id);
+  });
+  const extra = relinked.length
+    ? `\n\n${relinked.length} pièce${relinked.length > 1 ? "s sont liées" : " est liée"} à un autre modèle : elle${relinked.length > 1 ? "s seront marquées" : " sera marquée"} « à synchroniser ».`
+    : "";
+  if (!confirm(`Remplacer la ${label} de ${target} par « ${model.name} » ?${extra}`)) return;
 
   try {
     for (const room of rooms) {

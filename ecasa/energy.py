@@ -450,7 +450,12 @@ def _outdoor_temps(weather_service, config: dict, view: str, payload: dict,
         if not needed:
             continue
         start = min(needed)
-        end = max(needed)
+        # Le mois en cours peut se terminer dans le futur : le service météo
+        # refuse une date de fin postérieure à aujourd'hui.
+        end = min(max(needed), today)
+        if start > today:
+            hours_cache[y] = {}
+            continue
         try:
             result = weather_service.hourly(latitude, longitude, start, end)
             hours_cache[y] = getattr(result, "hours", None) or {}

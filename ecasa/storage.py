@@ -100,6 +100,8 @@ class MemoryStore:
         self._overrides: dict[int, dict] = {}
         self._events: list[dict] = []
         self._week_models: list[dict] = []
+        # Liaisons pièce -> modèle : {"<room_id>": {"model_id": "...", "pending": bool}}
+        self._model_links: dict[str, dict] = {}
         self._samples: dict[int, dict[str, dict[str, dict]]] = {}
         self._pending_history: set[tuple[int, str, str]] = set()
         self._last_sample_at: dict[int, datetime] = {}
@@ -248,6 +250,28 @@ class MemoryStore:
             self._week_models = [
                 copy.deepcopy(item) for item in models if isinstance(item, dict)
             ]
+            for model in self._week_models:
+                model["days"] = self._clean_model_days(model.get("days"), strict=False)
+            self._ensure_model_ids()
+
+        links = payload.get("model_links")
+        if isinstance(links, dict):
+            known = {str(model.get("id")) for model in self._week_models}
+            for key, value in links.items():
+                if not isinstance(value, dict):
+                    continue
+                model_id = str(value.get("model_id") or "").strip()
+                if model_id not in known:
+                    continue
+                try:
+                    room_id = str(int(key))
+                except (TypeError, ValueError):
+                    continue
+                self._model_links[room_id] = {
+                    "model_id": model_id,
+                    "pending": bool(value.get("pending")),
+                }
+        self._prune_model_links()
 
     def _load_history(self) -> None:
         if not self.history_dir or not os.path.isdir(self.history_dir):
@@ -344,6 +368,7 @@ class MemoryStore:
                 "overrides": copy.deepcopy(self._overrides),
                 "events": copy.deepcopy(self._events[-MAX_EVENTS:]),
                 "week_models": copy.deepcopy(self._week_models),
+                "model_links": copy.deepcopy(self._model_links),
             }
             self._structural_dirty = False
             self._last_state_save = time.monotonic()
@@ -531,6 +556,7 @@ class MemoryStore:
             for device in self._devices.values():
                 if device.get("room_id") == int(room_id):
                     device["room_id"] = None
+            self._model_links.pop(str(int(room_id)), None)
             self.mark_structure()
             return True
 
@@ -580,18 +606,101 @@ class MemoryStore:
 
     # ------------------------------------------------------------- week models
 
+    def _ensure_model_ids(self) -> None:
+        """Donne un identifiant stable à chaque modèle (migration des états existants)."""
+        used: set[str] = set()
+        for model in self._week_models:
+            raw = str(model.get("id") or "").strip()
+            if raw and raw not in used:
+                model["id"] = raw
+                used.add(raw)
+            else:
+                model["id"] = self._next_model_id(used)
+                used.add(model["id"])
+
+    @staticmethod
+    def _next_model_id(used: set[str]) -> str:
+        index = 1
+        while f"model-{index}" in used:
+            index += 1
+        return f"model-{index}"
+
+    def _prune_model_links(self) -> None:
+        """Supprime les liaisons orphelines (pièce ou modèle disparu)."""
+        rooms = {str(int(room["id"])) for room in self._rooms}
+        models = {str(model.get("id")) for model in self._week_models}
+        for key in list(self._model_links):
+            link = self._model_links[key]
+            if key not in rooms or str(link.get("model_id")) not in models:
+                self._model_links.pop(key, None)
+
     def week_models(self) -> list[dict]:
         with self._lock:
             return copy.deepcopy(self._week_models)
 
-    def set_week_models(self, models) -> list[dict]:
-        if not isinstance(models, list):
-            raise ValueError("Liste de modèles invalide")
+    def week_model(self, model_id) -> dict | None:
+        target = str(model_id or "")
+        with self._lock:
+            model = next(
+                (item for item in self._week_models if str(item.get("id")) == target),
+                None,
+            )
+            return copy.deepcopy(model) if model else None
 
-        def clean_week(raw):
-            week = []
+    def room_model_links(self) -> dict:
+        with self._lock:
+            return copy.deepcopy(self._model_links)
+
+    def link_for_room(self, room_id) -> dict | None:
+        with self._lock:
+            link = self._model_links.get(str(int(room_id)))
+            return copy.deepcopy(link) if link else None
+
+    def set_room_model_link(self, room_id, model_id, pending: bool = False) -> dict:
+        """Lie (ou délie si ``model_id`` est vide) une pièce à un modèle."""
+        key = str(int(room_id))
+        if not model_id:
+            with self._lock:
+                self._model_links.pop(key, None)
+                self.mark_structure()
+            return self.room_model_links()
+        if self.week_model(model_id) is None:
+            raise ValueError("Modèle inconnu")
+        with self._lock:
+            self._model_links[key] = {
+                "model_id": str(model_id),
+                "pending": bool(pending),
+            }
+            self.mark_structure()
+            return self.room_model_links()
+
+    def set_model_link_pending(self, room_id, pending: bool) -> None:
+        with self._lock:
+            link = self._model_links.get(str(int(room_id)))
+            if link and bool(link.get("pending")) != bool(pending):
+                link["pending"] = bool(pending)
+                self.mark_structure()
+
+    @staticmethod
+    def _clean_model_days(days, strict: bool = True) -> dict:
+        """Normalise les 7 jours A/B d'un modèle.
+
+        ``strict`` valide les modes (sinon ``ValueError``) : indispensable avant
+        toute écriture, un mode invalide ferait échouer ``set_slots`` en cours
+        de route et laisserait un planning tronqué. En mode non strict (lecture
+        d'un état existant), les créneaux invalides sont simplement ignorés.
+        """
+        days = days if isinstance(days, dict) else {}
+        cleaned: dict[str, list[list[dict]]] = {}
+        for week_key in ("A", "B"):
+            raw = days.get(week_key)
+            week: list[list[dict]] = []
             for index in range(7):
-                slots = raw[index] if isinstance(raw, list) and index < len(raw) and isinstance(raw[index], list) else []
+                slots = (
+                    raw[index]
+                    if isinstance(raw, list) and index < len(raw) and isinstance(raw[index], list)
+                    else []
+                )
                 day_slots = []
                 for slot in slots:
                     if not isinstance(slot, dict):
@@ -600,6 +709,10 @@ class MemoryStore:
                     if not time:
                         continue
                     mode = str(slot.get("mode") or "heat")
+                    if mode not in VALID_MODES:
+                        if strict:
+                            raise ValueError(f"Mode inconnu : {mode}")
+                        continue
                     try:
                         temp = float(slot.get("temp", 20))
                     except (TypeError, ValueError):
@@ -607,25 +720,231 @@ class MemoryStore:
                     day_slots.append({"time": time, "mode": mode, "temp": round(temp, 1)})
                 day_slots.sort(key=lambda s: s.get("time", "00:00"))
                 week.append(day_slots)
-            return week
+            cleaned[week_key] = week
+        return cleaned
+
+    def set_week_models(self, models, locked_days=None,
+                        propagate: bool = True) -> list[dict]:
+        if not isinstance(models, list):
+            raise ValueError("Liste de modèles invalide")
 
         cleaned: list[dict] = []
+        used: set[str] = set()
         for model in models:
             if not isinstance(model, dict):
                 continue
             name = str(model.get("name") or "Sans nom").strip() or "Sans nom"
-            days = model.get("days") if isinstance(model.get("days"), dict) else {}
+            model_id = str(model.get("id") or "").strip()
+            if not model_id or model_id in used:
+                model_id = self._next_model_id(used)
+            used.add(model_id)
             cleaned.append({
+                "id": model_id,
                 "name": name,
-                "days": {
-                    "A": clean_week(days.get("A")),
-                    "B": clean_week(days.get("B")),
-                },
+                "days": self._clean_model_days(model.get("days")),
             })
+
         with self._lock:
+            previous = {
+                str(item.get("id")): copy.deepcopy(item.get("days"))
+                for item in self._week_models
+            }
+            changed = [
+                item["id"] for item in cleaned
+                if previous.get(item["id"]) != item["days"]
+            ]
             self._week_models = cleaned
+            self._prune_model_links()
             self.mark_structure()
+
+        # Un modèle modifié met à jour le planning des pièces liées, en
+        # conservant leurs jours de cours Pronote (transmis par main.py).
+        if propagate and changed:
+            for room_key, link in self.room_model_links().items():
+                if link.get("model_id") not in changed:
+                    continue
+                locks = (locked_days or {}).get(room_key)
+                try:
+                    self.apply_model_to_room(int(room_key), link["model_id"], locks)
+                except (TypeError, ValueError):
+                    continue
         return self.week_models()
+
+    # --------------------------------------------------- liaisons modèles/pièces
+
+    def _has_room_slots(self, room_id) -> bool:
+        """Vrai si la pièce possède au moins un créneau qui lui est rattaché."""
+        try:
+            target = int(room_id)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            return any(
+                int(item.get("room_id") or 0) == target for item in self._slots
+            )
+
+    def _room_slot_days(self, room_id, week: str) -> list[list[dict]]:
+        """Planning d'une pièce sous forme de 7 listes de créneaux {time, mode, temp}."""
+        rows = self.slots(room_id=int(room_id), week=week)
+        if not rows and not self._has_room_slots(room_id):
+            # Anciennes données : créneaux rattachés à l'appareil actionneur.
+            # Le repli ne s'applique que si la pièce n'a AUCUN créneau propre
+            # (toutes semaines), sinon une semaine volontairement vidée ferait
+            # réapparaître d'anciens créneaux d'appareil.
+            with self._lock:
+                room = next(
+                    (item for item in self._rooms if int(item["id"]) == int(room_id)),
+                    None,
+                )
+                related = set()
+                if room:
+                    for key in ("actuator_device_id", "thermostat_device_id"):
+                        value = room.get(key)
+                        if value not in (None, "", 0, "0"):
+                            try:
+                                related.add(int(value))
+                            except (TypeError, ValueError):
+                                pass
+                rows = [
+                    copy.deepcopy(item) for item in self._slots
+                    if item.get("week") == week
+                    and item.get("device_id") in related
+                    and item.get("room_id") in (None, "", 0, "0")
+                ]
+        days: list[list[dict]] = [[] for _ in range(7)]
+        for slot in rows:
+            index = int(slot.get("weekday", 0))
+            if not 0 <= index < 7:
+                continue
+            days[index].append({
+                "time": _from_minutes(int(slot.get("minutes", 0))),
+                "mode": str(slot.get("mode") or "off"),
+                "temp": round(float(slot.get("temp", 20)), 1),
+            })
+        for day in days:
+            day.sort(key=lambda item: item["time"])
+        return days
+
+    @staticmethod
+    def _model_days(model: dict, week: str) -> list[list[dict]]:
+        raw = (model.get("days") or {}).get(week) or []
+        days: list[list[dict]] = []
+        for index in range(7):
+            slots = raw[index] if isinstance(raw, list) and index < len(raw) else []
+            days.append([
+                {
+                    "time": str(slot.get("time")),
+                    "mode": str(slot.get("mode") or "off"),
+                    "temp": round(float(slot.get("temp", 20)), 1),
+                }
+                for slot in slots
+                if isinstance(slot, dict) and slot.get("time")
+            ])
+        return days
+
+    @staticmethod
+    def _day_key(day) -> list[tuple]:
+        items = []
+        for slot in day or []:
+            if not isinstance(slot, dict) or not slot.get("time"):
+                continue
+            try:
+                temp = round(float(slot.get("temp", 20)), 1)
+            except (TypeError, ValueError):
+                temp = 20.0
+            items.append((
+                _to_minutes(slot.get("time")),
+                str(slot.get("mode") or "off"),
+                temp,
+            ))
+        items.sort()
+        return items
+
+    def room_matches_model(self, room_id, model_id, ignore_days=None) -> bool:
+        """Vrai si le planning de la pièce est identique au modèle.
+
+        ``ignore_days`` permet d'ignorer les jours verrouillés par Pronote
+        (``{"A": [bool]*7, "B": [...]}``), qui diffèrent par nature.
+        """
+        model = self.week_model(model_id)
+        if not model:
+            return False
+        ignore_days = ignore_days or {}
+        for week in ("A", "B"):
+            room_days = self._room_slot_days(room_id, week)
+            model_days = self._model_days(model, week)
+            ignore = ignore_days.get(week) or []
+            for index in range(7):
+                if index < len(ignore) and ignore[index]:
+                    continue
+                if self._day_key(room_days[index]) != self._day_key(model_days[index]):
+                    return False
+        return True
+
+    def apply_model_to_room(self, room_id, model_id, locked_days=None) -> bool:
+        """Remplace le planning de la pièce par le modèle, jours verrouillés exclus."""
+        model = self.week_model(model_id)
+        if not model or self.room(int(room_id)) is None:
+            return False
+        locked_days = locked_days or {}
+        for week in ("A", "B"):
+            current = self._room_slot_days(room_id, week)
+            model_days = self._model_days(model, week)
+            locked = locked_days.get(week) or []
+            days = []
+            for index in range(7):
+                if index < len(locked) and locked[index]:
+                    days.append([dict(slot) for slot in current[index]])
+                else:
+                    days.append([dict(slot) for slot in model_days[index]])
+            self.set_slots(room_id=int(room_id), week=week, days=days)
+        # `set_slots` borne les consignes à la plage de l'appareil : l'état réel
+        # de synchronisation est donc recalculé, jamais supposé.
+        matches = self.room_matches_model(room_id, model_id, locked_days)
+        with self._lock:
+            link = self._model_links.get(str(int(room_id)))
+            if link and str(link.get("model_id")) == str(model_id):
+                link["pending"] = not matches
+            self.mark_structure()
+        return True
+
+    def update_model_from_room(self, room_id, model_id, skip_days=None) -> dict | None:
+        """Copie le planning de la pièce dans son modèle (jours Pronote ignorés)."""
+        skip_days = skip_days or {}
+        with self._lock:
+            model = next(
+                (item for item in self._week_models if str(item.get("id")) == str(model_id)),
+                None,
+            )
+        if model is None:
+            return None
+        days = {}
+        for week in ("A", "B"):
+            room_days = self._room_slot_days(room_id, week)
+            old_days = self._model_days(model, week)
+            skip = skip_days.get(week) or []
+            merged = []
+            for index in range(7):
+                if index < len(skip) and skip[index]:
+                    merged.append([dict(slot) for slot in old_days[index]])
+                else:
+                    merged.append([dict(slot) for slot in room_days[index]])
+            days[week] = merged
+        with self._lock:
+            for item in self._week_models:
+                if str(item.get("id")) == str(model_id):
+                    item["days"] = days
+                    break
+            self.mark_structure()
+        # Le modèle vient d'être aligné sur la pièce : seul un écart résiduel
+        # (arrondi, verrou Pronote mal déclaré) doit rester « à synchroniser ».
+        matches = self.room_matches_model(room_id, model_id, skip_days)
+        with self._lock:
+            link = self._model_links.get(str(int(room_id)))
+            if link and str(link.get("model_id")) == str(model_id):
+                link["pending"] = not matches
+            self.mark_structure()
+        return self.week_model(model_id)
 
     # --------------------------------------------------------------- appareils
 

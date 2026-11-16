@@ -1,12 +1,15 @@
-"""Tests du suivi de consommation électrique MyElectricalData."""
+﻿"""Tests du suivi de consommation électrique MyElectricalData."""
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -16,6 +19,7 @@ from ecasa.energy import (  # noqa: E402
     EnergyError,
     EnergyHTTPError,
     EnergyService,
+    _outdoor_temps,
     _parse_daily,
     build_energy,
     parse_energy_day,
@@ -23,7 +27,12 @@ from ecasa.energy import (  # noqa: E402
     parse_energy_month,
     parse_energy_year,
     parse_med_start,
-    test_energy,
+    test_energy as check_energy,
+)
+from ecasa.weather import (  # noqa: E402
+    MAX_METEOFRANCE_PAST_DAYS,
+    WeatherError,
+    WeatherService,
 )
 
 DAILY = {
@@ -751,6 +760,154 @@ class BuildTests(unittest.TestCase):
         self.assertIn("token refusé", payload["error"])
 
 
+WEATHER_CONFIG = {
+    "weather_enabled": True,
+    "weather_latitude": 48.85,
+    "weather_longitude": 2.35,
+}
+
+
+class FakeWeatherService:
+    """Service météo factice : refuse toute fin de plage future.
+
+    Reproduit le HTTP 400 de l'archive Open-Meteo quand ``end_date`` dépasse
+    aujourd'hui.
+    """
+
+    def __init__(self, today: date | None = None):
+        self.today = today or date.today()
+        self.calls: list[tuple[date, date]] = []
+
+    def hourly(self, latitude, longitude, start, end):
+        self.calls.append((start, end))
+        if end > self.today:
+            raise WeatherError(
+                f"end_date is out of allowed range : {end.isoformat()}"
+            )
+        hours = {}
+        cur = start
+        while cur <= end:
+            hours[cur.isoformat()] = {0: 8.5, 12: 12.5}
+            cur += timedelta(days=1)
+        return SimpleNamespace(hours=hours)
+
+
+class OutdoorTempTests(unittest.TestCase):
+    def month_payload(self) -> dict:
+        return {
+            "labels": ["Déc 24", "Jan 25", "Fév 25", "Mar 25"],
+            "years": [2024, 2025],
+            "series": [{"key": "2024"}, {"key": "2025"}],
+            "window": {
+                "months": [
+                    {"year": 2024, "month": 12},
+                    {"year": 2025, "month": 1},
+                    {"year": 2025, "month": 2},
+                    {"year": 2025, "month": 3},
+                ],
+            },
+        }
+
+    def test_month_view_clamps_end_to_today(self):
+        fake = FakeWeatherService(today=TODAY)
+        series = _outdoor_temps(
+            fake, WEATHER_CONFIG, "month", self.month_payload(), TODAY
+        )
+        self.assertIsNotNone(series)
+        self.assertEqual(len(fake.calls), 2)
+        for start, end in fake.calls:
+            self.assertLessEqual(start, end)
+            self.assertLessEqual(end, TODAY)
+        # Le mois courant (mars 2025) se termine le 31 : la requête est
+        # ramenée au 15 pour que le service météo accepte la plage.
+        self.assertEqual(fake.calls[-1][1], TODAY)
+        self.assertEqual(fake.calls[-1][0], date(2025, 1, 1))
+        self.assertTrue(
+            all(
+                value is None or math.isfinite(value)
+                for item in series
+                for value in item["values"]
+            )
+        )
+        self.assertIsNotNone(series[1]["values"][3])  # mars 2025
+
+    def test_day_view_clamps_end_to_today(self):
+        payload = {
+            "labels": [str(number) for number in range(1, 13)],
+            "years": [2025],
+            "series": [{"key": "2025"}],
+            "window": {"start_iso": "2025-03-09", "end_iso": "2025-03-20"},
+        }
+        fake = FakeWeatherService(today=TODAY)
+        series = _outdoor_temps(fake, WEATHER_CONFIG, "day", payload, TODAY)
+        self.assertIsNotNone(series)
+        self.assertEqual(fake.calls, [(date(2025, 3, 9), TODAY)])
+
+
+class WeatherMergeTests(unittest.TestCase):
+    @staticmethod
+    def payload_for(params: dict) -> dict:
+        if "start_date" in params:
+            start = date.fromisoformat(params["start_date"])
+            end = date.fromisoformat(params["end_date"])
+        else:
+            end = datetime.now().date()
+            start = end - timedelta(days=int(params["past_days"]))
+        times = []
+        values = []
+        cur = start
+        while cur <= end:
+            for hour in (0, 12):
+                times.append(f"{cur.isoformat()}T{hour:02d}:00")
+                values.append(round((cur.toordinal() % 25) / 2, 1))
+            cur += timedelta(days=1)
+        return {"hourly": {"time": times, "temperature_2m": values}}
+
+    def test_spanning_range_merges_both_sources(self):
+        today = date.today()
+        limit = today - timedelta(days=MAX_METEOFRANCE_PAST_DAYS)
+        calls = []
+
+        def fake_json(url, params):
+            calls.append((url, dict(params)))
+            return self.payload_for(params)
+
+        service = WeatherService()
+        with mock.patch.object(
+            WeatherService, "_http_json", staticmethod(fake_json)
+        ):
+            result = service.hourly(
+                48.85, 2.35, today - timedelta(days=100),
+                today + timedelta(days=5),
+            )
+
+        self.assertEqual(result.source, "Réanalyse ERA5 + Météo-France")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("archive-api", calls[0][0])
+        self.assertEqual(calls[0][1]["end_date"], limit.isoformat())
+        self.assertIn("meteofrance", calls[1][0])
+        self.assertEqual(
+            calls[1][1]["past_days"], str(MAX_METEOFRANCE_PAST_DAYS - 1)
+        )
+        # Fin future ramenée à aujourd'hui, aucun jour au-delà.
+        self.assertEqual(sorted(result.hours)[0], (today - timedelta(days=100)).isoformat())
+        self.assertEqual(sorted(result.hours)[-1], today.isoformat())
+        self.assertNotIn((today + timedelta(days=1)).isoformat(), result.hours)
+
+    def test_future_range_is_rejected_before_network(self):
+        def boom(*args, **kwargs):
+            raise AssertionError("appel réseau inattendu")
+
+        service = WeatherService()
+        with mock.patch.object(WeatherService, "_http_json", staticmethod(boom)):
+            with self.assertRaises(WeatherError) as caught:
+                service._download(
+                    48.85, 2.35, date.today() + timedelta(days=1),
+                    date.today() + timedelta(days=2),
+                )
+        self.assertIn("invalide", str(caught.exception))
+
+
 class HelpersTests(unittest.TestCase):
     def test_parse_energy_month(self):
         self.assertEqual(parse_energy_month("3", TODAY), 3)
@@ -795,13 +952,13 @@ class HelpersTests(unittest.TestCase):
 class TestConnectionTests(unittest.TestCase):
     def test_success(self):
         service = EnergyService(fetcher=FakeFetcher())
-        result = test_energy(CONFIG, service=service, today=TODAY)
+        result = check_energy(CONFIG, service=service, today=TODAY)
         self.assertTrue(result["ok"])
         self.assertEqual(result["pdl"], CONFIG["med_pdl"])
         self.assertIn("jour", result["message"])
 
     def test_missing_credentials(self):
-        result = test_energy(
+        result = check_energy(
             {**CONFIG, "med_token": "", "med_pdl": ""}, today=TODAY
         )
         self.assertFalse(result["ok"])
@@ -812,7 +969,7 @@ class TestConnectionTests(unittest.TestCase):
         service = EnergyService(fetcher=FakeFetcher(
             fail={primary: EnergyError("injoignable")}
         ))
-        result = test_energy(CONFIG, service=service, today=TODAY)
+        result = check_energy(CONFIG, service=service, today=TODAY)
         self.assertFalse(result["ok"])
         self.assertIn("injoignable", result["message"])
 

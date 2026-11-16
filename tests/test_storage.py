@@ -198,6 +198,124 @@ class SlotsTests(StoreTestCase):
         self.assertEqual(len(store.slots(room_id=1, week="A")), 0)
 
 
+class ModelLinkTests(StoreTestCase):
+    """Liaison pièce ↔ modèle : propagation, verrouillage, persistance."""
+
+    def make_linked(self, store=None, model_days=None, room_id=1):
+        store = store or self.make_store()
+        days = model_days or week_days()
+        saved = store.set_week_models([{"name": "Confort", "days": {"A": days, "B": days}}])
+        model_id = saved[0]["id"]
+        store.set_room_model_link(room_id, model_id)
+        return store, model_id
+
+    def test_models_get_stable_ids(self):
+        store = self.make_store()
+        saved = store.set_week_models([
+            {"name": "A", "days": {"A": week_days(), "B": week_days()}},
+            {"name": "B", "days": {"A": week_days(), "B": week_days()}},
+        ])
+        self.assertEqual([model["id"] for model in saved], ["model-1", "model-2"])
+        # Un enregistrement sans id ne doit pas casser les identifiants connus.
+        saved = store.set_week_models(saved)
+        self.assertEqual([model["id"] for model in saved], ["model-1", "model-2"])
+
+    def test_link_applies_model_to_room(self):
+        store, model_id = self.make_linked()
+        self.assertTrue(store.apply_model_to_room(1, model_id))
+        self.assertEqual(len(store.slots(room_id=1, week="A")), 4)
+        self.assertEqual(len(store.slots(room_id=1, week="B")), 4)
+        self.assertTrue(store.room_matches_model(1, model_id))
+
+    def test_model_edit_propagates_to_linked_room(self):
+        store, model_id = self.make_linked()
+        store.apply_model_to_room(1, model_id)
+        new_days = [[{"time": "06:00", "mode": "heat", "temp": 21}]] + [[]] * 6
+        store.set_week_models([
+            {"id": model_id, "name": "Confort",
+             "days": {"A": new_days, "B": new_days}},
+        ])
+        slots = store.slots(room_id=1, week="A")
+        self.assertEqual([(slot["minutes"], slot["temp"]) for slot in slots], [(360, 21.0)])
+
+    def test_pronote_locked_days_preserved(self):
+        store, model_id = self.make_linked()
+        locked = [[{"time": "08:00", "mode": "off", "temp": 16}]] + [[]] * 6
+        store.set_slots(room_id=1, week="A", days=locked)
+        store.apply_model_to_room(
+            1, model_id, {"A": [True] + [False] * 6, "B": [False] * 7}
+        )
+        self.assertEqual(store.slots(room_id=1, week="A")[0]["minutes"], 480)
+        self.assertTrue(
+            store.room_matches_model(
+                1, model_id, {"A": [True] + [False] * 6, "B": [False] * 7}
+            )
+        )
+
+    def test_update_model_from_room_and_pending_cleared(self):
+        store, model_id = self.make_linked()
+        store.apply_model_to_room(1, model_id)
+        edited = [[{"time": "07:30", "mode": "cool", "temp": 23}]] + [[]] * 6
+        store.set_slots(room_id=1, week="A", days=edited)
+        self.assertFalse(store.room_matches_model(1, model_id))
+        store.set_model_link_pending(1, True)
+        self.assertTrue(store.link_for_room(1)["pending"])
+        model = store.update_model_from_room(1, model_id)
+        self.assertEqual(model["days"]["A"][0][0]["time"], "07:30")
+        self.assertFalse(store.link_for_room(1)["pending"])
+
+    def test_links_survive_reload(self):
+        store, model_id = self.make_linked()
+        store.flush(force=True)
+        reloaded = self.make_store()
+        self.assertEqual(reloaded.link_for_room(1)["model_id"], model_id)
+        self.assertEqual(reloaded.week_models()[0]["id"], model_id)
+
+    def test_deleting_model_drops_link(self):
+        store, model_id = self.make_linked()
+        store.set_week_models([])
+        self.assertIsNone(store.link_for_room(1))
+
+    def test_invalid_mode_rejected_before_write(self):
+        # Un mode inconnu doit être refusé avant toute propagation : sinon les
+        # pièces liées se retrouveraient avec un planning tronqué.
+        store, model_id = self.make_linked()
+        store.apply_model_to_room(1, model_id)
+        before = store.slots(room_id=1, week="A")
+        bad = [[{"time": "06:00", "mode": "turbo", "temp": 20}]] + [[]] * 6
+        with self.assertRaises(ValueError):
+            store.set_week_models([
+                {"id": model_id, "name": "Confort", "days": {"A": bad, "B": bad}},
+            ])
+        self.assertEqual(store.slots(room_id=1, week="A"), before)
+
+    def test_invalid_mode_ignored_on_reload(self):
+        # Un état édité à la main peut contenir un mode inconnu : il est ignoré
+        # au chargement plutôt que de casser les écritures suivantes.
+        store = self.make_store()
+        store.set_week_models([
+            {"id": "model-1", "name": "Confort",
+             "days": {"A": [[{"time": "06:00", "mode": "heat", "temp": 20}]] + [[]] * 6,
+                      "B": [[]] * 7}},
+        ])
+        store.flush(force=True)
+        with open(self.state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["week_models"][0]["days"]["A"][0][0]["mode"] = "turbo"
+        with open(self.state_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        reloaded = self.make_store()
+        self.assertEqual(reloaded.week_models()[0]["days"]["A"][0], [])
+
+    def test_emptied_week_does_not_resurrect_device_slots(self):
+        store, model_id = self.make_linked()
+        store.apply_model_to_room(1, model_id)
+        self.assertTrue(store.room_matches_model(1, model_id))
+        store.set_slots(room_id=1, week="A", days=[[]] * 7)
+        days = store._room_slot_days(1, "A")
+        self.assertEqual([slot for day in days for slot in day], [])
+
+
 class OverrideTests(StoreTestCase):
     def test_set_and_clear(self):
         store = self.make_store()

@@ -193,6 +193,46 @@ class WeatherService:
     def _download(self, latitude: float, longitude: float, start: date,
                   end: date) -> WeatherResult:
         today = datetime.now().date()
+        # Une fin future (mois en cours) est rejetée par l'API : on la ramène
+        # à aujourd'hui avant tout appel réseau.
+        end = min(end, today)
+        if start > end:
+            raise WeatherError("Période météo invalide")
+
+        limit = today - timedelta(days=MAX_METEOFRANCE_PAST_DAYS)
+        if start < limit and end > limit:
+            # La plage chevauche la limite des deux sources : archive pour la
+            # partie ancienne, Météo-France pour la partie récente. Les heures
+            # récentes écrasent les valeurs d'archive sur les jours communs.
+            hours, _, res_lat, res_lon = self._download_range(
+                latitude, longitude, start, limit
+            )
+            recent, _, rec_lat, rec_lon = self._download_range(
+                latitude, longitude, limit + timedelta(days=1), end
+            )
+            for day, bucket in recent.items():
+                hours.setdefault(day, {}).update(bucket)
+            if not hours:
+                raise WeatherError(
+                    "Aucune température extérieure reçue du service météo"
+                )
+            return WeatherResult(
+                hours,
+                "Réanalyse ERA5 + Météo-France",
+                rec_lat or res_lat,
+                rec_lon or res_lon,
+            )
+
+        hours, source, res_lat, res_lon = self._download_range(
+            latitude, longitude, start, end
+        )
+        return WeatherResult(hours, source, res_lat, res_lon)
+
+    def _download_range(
+        self, latitude: float, longitude: float, start: date, end: date
+    ) -> tuple[dict[str, dict[int, float]], str, float, float]:
+        """Télécharge une plage homogène et renvoie ``(heures, source, lat, lon)``."""
+        today = datetime.now().date()
         use_meteofrance = start >= today - timedelta(days=MAX_METEOFRANCE_PAST_DAYS)
 
         if use_meteofrance:
@@ -223,10 +263,9 @@ class WeatherService:
         hours = _parse_hourly(payload, start, end)
         if not hours:
             raise WeatherError("Aucune température extérieure reçue du service météo")
-
         resolved_lat = float(payload.get("latitude") or latitude)
         resolved_lon = float(payload.get("longitude") or longitude)
-        return WeatherResult(hours, source, resolved_lat, resolved_lon)
+        return hours, source, resolved_lat, resolved_lon
 
     @staticmethod
     def _http_json(url: str, params: dict) -> dict:

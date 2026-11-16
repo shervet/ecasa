@@ -1,6 +1,6 @@
 // Planning hebdomadaire : agenda tactile, éditeur de créneaux, imports Pronote/Wiser.
 
-import { get, post, put } from "../api.js";
+import { del, get, post, put } from "../api.js";
 import { icon, modeIcon } from "../icons.js";
 import { openSheet, closeSheet } from "../sheet.js";
 import { devicesInRoom, refreshConfig, refreshState, setPref, store } from "../state.js";
@@ -38,14 +38,22 @@ import {
 const HOUR_PX = 56;
 
 let allModels = [];
+let modelLinks = {};
 
 async function loadAllModels() {
   try {
     const payload = await get("/api/models");
     allModels = Array.isArray(payload?.models) ? payload.models : [];
+    modelLinks = payload?.links && typeof payload.links === "object" ? payload.links : {};
   } catch {
     allModels = [];
+    modelLinks = {};
   }
+}
+
+function modelById(modelId) {
+  if (!modelId) return null;
+  return allModels.find((model) => String(model.id) === String(modelId)) || null;
 }
 const PRESETS = {
   Matin: [
@@ -81,8 +89,6 @@ let models = {};
 let week = "A";
 let day = todayIndex();
 let dirty = false;
-let appliedModelByTarget = {};
-let selectedModelByTarget = {};
 let viewMode = "day"; // "day" | "week"
 let modelEdit = null; // { index, name, room, model, original }
 let pendingRoomId = null; // roomId (targetId) demandé via deep-link (device sheet → Modifier)
@@ -273,6 +279,19 @@ export default {
 
   onState() {
     if (!root) return;
+    const nextLinks = store.state?.model_links;
+    if (nextLinks && typeof nextLinks === "object") {
+      const changed = JSON.stringify(nextLinks) !== JSON.stringify(modelLinks);
+      modelLinks = nextLinks;
+      // Ne jamais repeindre sous une feuille modale ouverte : cela détruirait
+      // l'édition en cours.
+      const sheetOpen = !!document.querySelector(".sheet.is-open");
+      if (changed && !dirty && !sheetOpen) {
+        buildTargets();
+        rebuildModels();
+        paintRooms();
+      }
+    }
     paintLive();
   },
 };
@@ -303,6 +322,7 @@ function buildTargets() {
       label: room.name,
       sub: `${devices.length} appareil${devices.length > 1 ? "s" : ""}`,
       pronoteLinked: linkedRooms.includes(Number(room.id)),
+      modelLink: modelLinks[String(room.id)] || null,
     });
   }
 
@@ -347,6 +367,21 @@ function rebuildModels() {
       B: cloneDays(programs.B),
     };
   }
+}
+
+/** Vrai si au moins une pièce a des modifications non enregistrées. */
+function hasPendingEdits() {
+  for (const t of targets) {
+    const local = models[t.id];
+    if (!local) continue;
+    const programs = t.device?.programs || {};
+    for (const key of ["A", "B"]) {
+      if (JSON.stringify(cloneDays(local[key])) !== JSON.stringify(cloneDays(programs[key]))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /* --------------------------------------------------------------- rendu */
@@ -416,6 +451,32 @@ function lockedDaysFor(t, weekKey) {
 function keepLockedDays(t, weekKey, previous, next) {
   const locked = lockedDaysFor(t, weekKey);
   return next.map((slots, index) => (locked[index] ? cloneDays([previous?.[index] ?? []])[0] : slots));
+}
+
+/** Signature comparable d'une journée de créneaux (heure, mode, consigne). */
+function dayKey(slots) {
+  return (slots || [])
+    .filter((slot) => slot && slot.time)
+    .map(
+      (slot) =>
+        `${timeToMinutes(slot.time)}|${slot.mode || "off"}|${Number(slot.temp ?? 20).toFixed(1)}`
+    )
+    .sort()
+    .join(";");
+}
+
+/** Vrai si le planning local de la pièce diffère du modèle (jours Pronote exclus). */
+function modelDiffers(t, model) {
+  const local = models[t.id];
+  if (!local || !model) return false;
+  for (const key of ["A", "B"]) {
+    const locked = lockedDaysFor(t, key);
+    for (let index = 0; index < 7; index += 1) {
+      if (locked[index]) continue;
+      if (dayKey(local[key]?.[index]) !== dayKey(model.days?.[key]?.[index])) return true;
+    }
+  }
+  return false;
 }
 
 function paintPlanNav() {
@@ -533,8 +594,6 @@ function paintRooms() {
     const programs = t.device?.programs || {};
     const model = models[t.id];
     const days = cloneDays((model || programs)[week] ?? (model || programs).A);
-    const appliedIdx = appliedModelByTarget[t.id];
-    const selVal = selectedModelByTarget[t.id] ?? "";
     const hasDevices = (t.devices || []).length > 1;
     let deviceSelect = "";
     if (hasDevices) {
@@ -548,16 +607,38 @@ function paintRooms() {
       deviceSelect = '<span class="tiny muted">' + escapeHtml(t.device?.name || "") + ' · Semaine ' + escapeHtml(week) + '</span>';
     }
 
-    // model select
-    const savedModels = allModels;
-    let modelSelect = '<select class="select plan-model-select" data-target="' + t.id + '" style="width:auto;min-width:150px"><option value="">— modèle —</option>';
-    for (let i = 0; i < savedModels.length; i++) {
-      const sel = String(i) === String(selVal) ? " selected" : "";
-      modelSelect += '<option value="' + i + '"' + sel + '>' + escapeHtml(savedModels[i].name) + '</option>';
+    // Liaison persistante pièce ↔ modèle : badge + actions de synchronisation.
+    const link = t.kind === "room" ? modelLinks[String(t.targetId)] : null;
+    const linkedModel = link ? modelById(link.model_id) : null;
+    const modelDiffersNow = linkedModel ? modelDiffers(t, linkedModel) : false;
+    const needsModelUpdate = !!linkedModel && (!!link.pending || modelDiffersNow);
+    let modelRow = "";
+    if (linkedModel) {
+      modelRow += '<div class="room-plan-model-row">';
+      if (needsModelUpdate) {
+        modelRow += '<button class="btn btn-sm btn-model-sync" type="button" data-update-model="' + t.id + '" title="Le planning de cette pièce a changé : reporter dans le modèle">' + icon("refresh", 14) + " Mettre à jour le modèle</button>";
+      } else {
+        modelRow += '<span class="tiny muted">Synchronisé avec le modèle</span>';
+      }
+      modelRow += '<button class="btn btn-sm btn-ghost btn-icon" type="button" data-unlink-model="' + t.id + '" title="Délier cette pièce du modèle" aria-label="Délier">' + icon("unlink", 14) + "</button>";
+      modelRow += "</div>";
+    } else if (link) {
+      // Lien pointant vers un modèle qui n'est plus chargé : on garde la
+      // possibilité de délier, sinon la liaison resterait invisible.
+      modelRow += '<div class="room-plan-model-row">';
+      modelRow += '<span class="tiny muted">Modèle lié introuvable</span>';
+      modelRow += '<button class="btn btn-sm btn-ghost btn-icon" type="button" data-unlink-model="' + t.id + '" title="Délier cette pièce du modèle" aria-label="Délier">' + icon("unlink", 14) + "</button>";
+      modelRow += "</div>";
+    } else if (t.kind === "room" && allModels.length) {
+      let modelSelect = '<select class="select plan-model-select" data-target="' + t.id + '" style="width:auto;min-width:150px"><option value="">— modèle —</option>';
+      for (const saved of allModels) {
+        modelSelect += '<option value="' + escapeHtml(saved.id) + '">' + escapeHtml(saved.name) + "</option>";
+      }
+      modelSelect += "</select>";
+      modelRow += '<div class="room-plan-model-row">' + modelSelect;
+      modelRow += '<button class="btn btn-sm" type="button" data-link-model="' + t.id + '" title="Lier cette pièce à un modèle">' + icon("link", 14) + " Lier</button>";
+      modelRow += "</div>";
     }
-    modelSelect += "</select>";
-        const isApplied = selVal !== "" && appliedIdx !== undefined && Number(appliedIdx) === Number(selVal);
-    const applyBtnClass = "btn btn-sm plan-apply-btn" + (isApplied ? " is-applied" : "");
 
     const isLinked = !!t.pronoteLinked;
     // Le verrouillage Pronote est par SEMAINE : une semaine non liée reste
@@ -570,14 +651,11 @@ function paintRooms() {
       : [false, false, false, false, false, false, false];
     html += '<div class="room-plan' + (isLinkedWeek ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '" style="scroll-margin-top: calc(var(--topbar-h) + 56px)">';
     html += '<div class="room-plan-head">';
-    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + '</div>';
+    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + (linkedModel ? ' <span class="pill pill-model" style="margin-left:6px">' + icon("link", 12) + ' ' + escapeHtml(linkedModel.name) + '</span>' : '') + '</div>';
     html += deviceSelect;
     html += '<button class="btn btn-sm btn-danger btn-icon" type="button" data-clear-room="' + t.id + '" title="Vider cette pièce" aria-label="Vider cette pièce">' + icon("trash", 14) + '</button>';
     html += '</div>';
-    html += '<div class="room-plan-model-row">';
-    html += modelSelect;
-    html += '<button class="' + applyBtnClass + '" type="button" data-apply-model="' + t.id + '"' + (isApplied ? " disabled" : "") + ' title="Appliquer le modèle">' + icon("check", 14) + '</button>';
-    html += '</div>';
+    html += modelRow;
     let columns = "";
     for (let index = 0; index < days.length; index++) {
       const date = dates[index];
@@ -665,31 +743,54 @@ function paintRooms() {
     });
   });
 
-  // Wire apply model buttons
-  host.querySelectorAll("[data-apply-model]").forEach((btn) => {
+  // Liaison / déliaison / synchronisation des modèles
+  host.querySelectorAll("[data-link-model]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const tid = btn.dataset.applyModel;
+      const tid = btn.dataset.linkModel;
       const t = targets.find((x) => x.id === tid);
-      if (!t) return;
       const sel = host.querySelector(`.plan-model-select[data-target="${tid}"]`);
-      const idx = Number(sel?.value);
-      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      const saved = allModels;
-      const m = saved[idx];
-      if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
-      if (!confirm(`Appliquer le modèle « ${m.name} » à ${t.label} ?`)) return;
-      t.device.programs = t.device.programs || {};
-      const previous = { A: cloneDays(models[tid]?.A ?? t.device.programs.A), B: cloneDays(models[tid]?.B ?? t.device.programs.B) };
-      // Les jours de cours Pronote restent intacts dans les semaines liées.
-      t.device.programs.A = keepLockedDays(t, "A", previous.A, cloneDays(m.days?.A));
-      t.device.programs.B = keepLockedDays(t, "B", previous.B, cloneDays(m.days?.B));
-      models[tid] = { A: cloneDays(t.device.programs.A), B: cloneDays(t.device.programs.B) };
-      selectedModelByTarget[tid] = idx;
-      appliedModelByTarget[tid] = idx;
-      dirty = true;
-      paintRooms();
-      paintDirty();
-      toast(`Modèle « ${m.name} » appliqué.`);
+      const modelId = sel?.value;
+      if (!t || !modelId) {
+        toast("Choisis un modèle.", { type: "warn" });
+        return;
+      }
+      const model = modelById(modelId);
+      if (!model) return;
+      if (
+        !confirm(
+          `Lier ${t.label} au modèle « ${model.name} » ?\nLe planning de la pièce sera remplacé par le modèle et suivra ensuite ses modifications.`
+        )
+      ) {
+        return;
+      }
+      linkRoomToModel(t, model);
+    });
+  });
+
+  host.querySelectorAll("[data-unlink-model]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const t = targets.find((x) => x.id === btn.dataset.unlinkModel);
+      if (!t) return;
+      if (!confirm(`Délier ${t.label} de son modèle ?\nLe planning actuel est conservé.`)) return;
+      unlinkRoomFromModel(t);
+    });
+  });
+
+  host.querySelectorAll("[data-update-model]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const t = targets.find((x) => x.id === btn.dataset.updateModel);
+      if (!t) return;
+      const link = modelLinks[String(t.targetId)];
+      const model = link ? modelById(link.model_id) : null;
+      if (!model) return;
+      if (
+        !confirm(
+          `Reporter le planning de ${t.label} dans le modèle « ${model.name} » ?\nLes autres pièces liées à ce modèle seront aussi mises à jour.`
+        )
+      ) {
+        return;
+      }
+      updateModelFromRoom(t, model);
     });
   });
 
@@ -700,22 +801,6 @@ function paintRooms() {
       if (!t) return;
       target = t;
       clearRoom(t);
-    });
-  });
-
-  // Reset applied state when model selection changes
-  host.querySelectorAll(".plan-model-select").forEach((sel) => {
-    sel.addEventListener("change", () => {
-      const tid = sel.dataset.target;
-      selectedModelByTarget[tid] = sel.value;
-      if (String(appliedModelByTarget[tid]) !== String(sel.value)) {
-        delete appliedModelByTarget[tid];
-      }
-      const btn = host.querySelector(`[data-apply-model="${tid}"]`);
-      if (btn) {
-        btn.classList.remove("is-applied");
-        btn.disabled = false;
-      }
     });
   });
 }
@@ -1024,6 +1109,75 @@ function dominantMode(slots) {
 
 /* --------------------------------------------------------------- actions */
 
+async function linkRoomToModel(t, model) {
+  if (!t || t.kind !== "room" || !model) return;
+  try {
+    await put(`/api/model-links/${t.targetId}`, { model_id: model.id });
+    await loadAllModels();
+    await refreshState({ silent: true });
+    rebuildModels();
+    dirty = false;
+    paintRooms();
+    paintDirty();
+    toast(`« ${t.label} » liée au modèle « ${model.name} ».`);
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function unlinkRoomFromModel(t) {
+  try {
+    await del(`/api/model-links/${t.targetId}`);
+    await loadAllModels();
+    await refreshState({ silent: true });
+    paintRooms();
+    toast(`« ${t.label} » déliée du modèle.`, { type: "info" });
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function saveTarget(t) {
+  const local = models[t.id];
+  if (!local) return;
+  for (const key of ["A", "B"]) {
+    await put(`/api/programs/${t.targetId}/${key}`, { days: local[key] });
+  }
+}
+
+async function updateModelFromRoom(t, model) {
+  try {
+    // Enregistrement ciblé : les éditions en attente des autres pièces ne sont
+    // ni perdues ni imposées au modèle.
+    await saveTarget(t);
+    await post(`/api/model-links/${t.targetId}/update-model`);
+    await loadAllModels();
+    await refreshState({ silent: true });
+    // Rafraîchit uniquement les pièces concernées : la pièce source et ses
+    // pairs liées au même modèle (réappliquées par le serveur).
+    buildTargets();
+    const affected = new Set([t.id]);
+    for (const other of targets) {
+      const otherLink = modelLinks[String(other.targetId)];
+      if (otherLink && String(otherLink.model_id) === String(model.id)) {
+        affected.add(other.id);
+      }
+    }
+    for (const id of affected) {
+      const item = targets.find((x) => x.id === id);
+      if (!item) continue;
+      const programs = item.device?.programs || {};
+      models[id] = { A: cloneDays(programs.A), B: cloneDays(programs.B) };
+    }
+    dirty = hasPendingEdits();
+    paintRooms();
+    paintDirty();
+    toast(`Modèle « ${model.name} » mis à jour depuis ${t.label}.`);
+  } catch (err) {
+    toastError(err);
+  }
+}
+
 async function save() {
   const button = root?.querySelector("#planSave");
   if (button) button.disabled = true;
@@ -1039,7 +1193,11 @@ async function save() {
     dirty = false;
     toast(`Planning ${week} enregistré.`);
     await refreshState({ silent: true });
+    if (store.state?.model_links) modelLinks = store.state.model_links;
     reloadFromState();
+    // Le serveur borne parfois les consignes : on ne se fie pas au flag.
+    dirty = hasPendingEdits();
+    paintDirty();
   } catch (err) {
     toastError(err);
     paintDirty();
@@ -1426,6 +1584,9 @@ function openWiserSheet() {
 
 function reloadFromState() {
   if (store.prefs.week === "A" || store.prefs.week === "B") week = store.prefs.week;
+  if (store.state?.model_links && typeof store.state.model_links === "object") {
+    modelLinks = store.state.model_links;
+  }
   buildTargets();
   if (!targets.length) return;
   target = pickTarget();

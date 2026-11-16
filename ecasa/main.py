@@ -1192,6 +1192,18 @@ def import_pronote_weeks(
             if target not in ("A", "B"):
                 room_days.setdefault(target, [False] * 7)
             room_days[target] = school_flags
+            # La pièce a été modifiée par Pronote (import manuel ou synchro
+            # nocturne) : si elle est liée à un modèle, l'écart est signalé.
+            link = store.link_for_room(target_id)
+            if link:
+                store.set_model_link_pending(
+                    target_id,
+                    not store.room_matches_model(
+                        target_id,
+                        link.get("model_id"),
+                        _pronote_locked_days(config, target_id),
+                    ),
+                )
         else:
             store.set_slots(target_id, target, days)
         week_starts[target] = source_start.isoformat()
@@ -2532,9 +2544,70 @@ def disk_usage_snapshot() -> dict:
     }
 
 
+def _pronote_locked_days(config: dict, room_id) -> dict:
+    """Jours de cours Pronote verrouillés pour une pièce, par semaine (A/B).
+
+    Les modèles appliqués à une pièce liée ne doivent jamais écraser ces
+    journées : on les conserve telles quelles.
+    """
+    try:
+        room_id = int(room_id)
+    except (TypeError, ValueError):
+        return {}
+    raw_ids = config.get("pronote_room_ids")
+    if isinstance(raw_ids, list):
+        linked = []
+        for value in raw_ids:
+            try:
+                linked.append(int(value))
+            except (TypeError, ValueError):
+                continue
+    else:
+        try:
+            linked = [int(config.get("pronote_room_id") or 0)]
+        except (TypeError, ValueError):
+            linked = []
+    if room_id not in linked:
+        return {}
+    weeks = []
+    for value in config.get("pronote_weeks") or []:
+        key = str(value).strip().upper()
+        if key in ("A", "B") and key not in weeks:
+            weeks.append(key)
+    school_map = config.get("pronote_school_days") or {}
+    per_room = school_map.get(str(room_id)) or {}
+    if not weeks:
+        for key in ("A", "B"):
+            if any(bool(item) for item in (per_room.get(key) or [])):
+                weeks.append(key)
+    result = {}
+    for week in weeks:
+        days = per_room.get(week) or []
+        result[week] = [
+            bool(days[index]) if index < len(days) else False
+            for index in range(7)
+        ]
+    return result
+
+
+def _refresh_model_link(app, room_id) -> None:
+    """Met à jour l'état « à synchroniser » d'une pièce liée à un modèle."""
+    link = app.store.link_for_room(room_id)
+    if not link:
+        return
+    config = load_config()
+    locks = _pronote_locked_days(config, room_id)
+    matches = app.store.room_matches_model(room_id, link.get("model_id"), locks)
+    app.store.set_model_link_pending(room_id, not matches)
+
+
 def state_snapshot(app) -> dict:
     """Snapshot du moteur enrichi de l'état de mise à jour et des métriques CPU."""
     data = app.engine.snapshot()
+    try:
+        data["model_links"] = app.store.room_model_links()
+    except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
+        data["model_links"] = {}
     try:
         data["update"] = update_state_snapshot()
     except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
@@ -3772,6 +3845,8 @@ class Handler(BaseHTTPRequestHandler):
                 f"semaine {target} (du {start})"
                 for target, start in week_starts.items()
             )
+            if use_room:
+                _refresh_model_link(app, target_id)
             target_label = "pièce" if use_room else "appareil"
             app.store.log(
                 "info",
@@ -3925,6 +4000,9 @@ class Handler(BaseHTTPRequestHandler):
             days = schedule.get("days") or [[] for _ in range(7)]
             for target in weeks:
                 app.store.set_slots(device_id, target, days)
+            device_info = app.store.device(device_id) or {}
+            if device_info.get("room_id"):
+                _refresh_model_link(app, device_info["room_id"])
 
             app.store.log(
                 "info",
@@ -3941,7 +4019,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if method == "GET" and path == "/api/models":
-            self._json(200, {"models": app.store.week_models()})
+            self._json(200, {
+                "models": app.store.week_models(),
+                "links": app.store.room_model_links(),
+            })
             return
 
         if method == "PUT" and path == "/api/models":
@@ -3949,13 +4030,123 @@ class Handler(BaseHTTPRequestHandler):
             models = body.get("models")
             if models is None:
                 models = body if isinstance(body, list) else []
+            # Jours Pronote à préserver lors de la propagation aux pièces liées.
+            config = load_config()
+            locks = {
+                key: _pronote_locked_days(config, key)
+                for key in app.store.room_model_links()
+            }
             try:
-                saved = app.store.set_week_models(models)
+                saved = app.store.set_week_models(models, locked_days=locks)
             except ValueError as err:
                 self._json(400, {"error": str(err)})
                 return
+            app.engine.tick(force=True)
             app.store.flush(force=True)
-            self._json(200, {"models": saved})
+            self._json(200, {
+                "models": saved,
+                "links": app.store.room_model_links(),
+            })
+            return
+
+        match = re.fullmatch(r"/api/model-links/(\d+)", path)
+        if match and method in ("POST", "PUT"):
+            room_id = int(match.group(1))
+            if app.store.room(room_id) is None:
+                self._json(404, {"error": "Pièce inconnue"})
+                return
+            body = self._body() or {}
+            model_id = str(body.get("model_id") or "").strip() or None
+            try:
+                app.store.set_room_model_link(room_id, model_id)
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                return
+            if model_id:
+                config = load_config()
+                app.store.apply_model_to_room(
+                    room_id, model_id, _pronote_locked_days(config, room_id)
+                )
+                model = app.store.week_model(model_id)
+                app.store.log(
+                    "info",
+                    f"Pièce liée au modèle « {(model or {}).get('name', model_id)} »",
+                    None,
+                )
+            else:
+                app.store.log("info", "Pièce déliée de son modèle", None)
+            app.engine.tick(force=True)
+            app.store.flush(force=True)
+            self._json(200, {
+                "ok": True,
+                "links": app.store.room_model_links(),
+                "models": app.store.week_models(),
+            })
+            return
+
+        if match and method == "DELETE":
+            room_id = int(match.group(1))
+            if app.store.room(room_id) is None:
+                self._json(404, {"error": "Pièce inconnue"})
+                return
+            app.store.set_room_model_link(room_id, None)
+            app.store.flush(force=True)
+            self._json(200, {
+                "ok": True,
+                "links": app.store.room_model_links(),
+            })
+            return
+
+        match = re.fullmatch(r"/api/model-links/(\d+)/update-model", path)
+        if match and method == "POST":
+            room_id = int(match.group(1))
+            link = app.store.link_for_room(room_id)
+            if not link:
+                self._json(404, {"error": "Cette pièce n'est liée à aucun modèle"})
+                return
+            config = load_config()
+            model = app.store.update_model_from_room(
+                room_id, link.get("model_id"),
+                _pronote_locked_days(config, room_id),
+            )
+            if model is None:
+                self._json(404, {"error": "Modèle introuvable"})
+                return
+            # Le modèle est la source de vérité : on propage la mise à jour à
+            # toutes les autres pièces liées au même modèle, en préservant
+            # toujours leurs journées Pronote verrouillées.
+            target_model_id = link.get("model_id")
+            propagated = 0
+            for key, other in app.store.room_model_links().items():
+                try:
+                    other_room_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if other_room_id == room_id:
+                    continue
+                other_model_id = (other or {}).get("model_id")
+                if str(other_model_id) != str(target_model_id):
+                    continue
+                if app.store.apply_model_to_room(
+                    other_room_id,
+                    other_model_id,
+                    _pronote_locked_days(config, key),
+                ):
+                    propagated += 1
+            app.store.log(
+                "info",
+                f"Modèle « {model.get('name')} » mis à jour depuis la pièce "
+                f"({propagated} pièce(s) liée(s) synchronisée(s))",
+                None,
+            )
+            app.engine.tick(force=True)
+            app.store.flush(force=True)
+            self._json(200, {
+                "ok": True,
+                "model": model,
+                "models": app.store.week_models(),
+                "links": app.store.room_model_links(),
+            })
             return
 
         if method == "PUT" and path == "/api/settings":
@@ -4013,6 +4204,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if room:
                     app.store.set_slots(room_id=target_id, week=week, days=days)
+                    _refresh_model_link(app, target_id)
                     app.store.log(
                         "info",
                         f"Planning Semaine {week} enregistré "
