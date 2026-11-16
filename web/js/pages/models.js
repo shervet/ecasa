@@ -1,7 +1,8 @@
-// Modèles de planning : liste pleine page, édition au clic, application à
-// plusieurs pièces. Les modèles sont persistés côté serveur.
+// Modèles de planning : liste pleine page, édition au clic, liaison aux pièces
+// (cocher une pièce applique le modèle et le maintient synchronisé). Les
+// modèles et leurs liaisons sont persistés côté serveur.
 
-import { get, put } from "../api.js";
+import { del, get, put } from "../api.js";
 import { icon, modeIcon } from "../icons.js";
 import { openSheet, closeSheet } from "../sheet.js";
 import { devicesInRoom, refreshState, store } from "../state.js";
@@ -18,11 +19,6 @@ import {
   weekdayLong,
   weekdayShort,
 } from "../utils.js";
-import {
-  WEEK_PRESETS,
-  WEEK_PRESET_OPTIONS,
-  weekPresetLabel,
-} from "../week-presets.js";
 
 const STORAGE_KEY = "ecasa.weekModels";
 const WEEKS = ["A", "B"];
@@ -32,8 +28,6 @@ let models = [];
 let links = {};
 let selectedIndex = null;
 let week = "A";
-let applyWeeks = new Set(["A"]);
-let chosenRooms = new Set();
 let dirty = false;
 let saving = false;
 
@@ -176,10 +170,25 @@ function roomTargets() {
 
 /* ------------------------------------------------------------------ vues */
 
-function linkedRoomCount(modelId) {
+function roomLabel(roomId) {
+  const id = String(roomId);
+  const room = (store.state?.rooms || []).find((item) => String(item.id) === id);
+  return room ? room.name || `Pièce ${room.id}` : "";
+}
+
+/** Noms des pièces liées au modèle, dans l'ordre d'affichage des pièces. */
+function linkedRooms(modelId) {
   const id = String(modelId || "");
-  if (!id) return 0;
-  return Object.values(links).filter((link) => link.model_id === id).length;
+  if (!id) return [];
+  const wanted = new Set(
+    Object.entries(links)
+      .filter(([, link]) => String(link.model_id) === id)
+      .map(([roomId]) => String(roomId))
+  );
+  if (!wanted.size) return [];
+  return sortByPosition(store.state?.rooms || [])
+    .filter((room) => wanted.has(String(room.id)))
+    .map((room) => room.name || `Pièce ${room.id}`);
 }
 
 function summary(model) {
@@ -187,9 +196,9 @@ function summary(model) {
     const count = countSlots(model.days?.[key]);
     return `Semaine ${key} : ${count ? `${count} créneau${count > 1 ? "x" : ""}` : "vide"}`;
   });
-  const linked = linkedRoomCount(model.id);
-  if (linked) {
-    parts.push(`lié à ${linked} pièce${linked > 1 ? "s" : ""}`);
+  const linked = linkedRooms(model.id);
+  if (linked.length) {
+    parts.push(`Lié à ${linked.join(", ")}`);
   }
   return parts.join(" · ");
 }
@@ -219,7 +228,7 @@ function listView() {
     <div class="page-head">
       <div>
         <h1 class="page-title">Modèles</h1>
-        <p class="page-sub">Un modèle = un planning A/B réutilisable. Tape une ligne pour l'éditer, puis applique-la à plusieurs pièces.</p>
+        <p class="page-sub">Un modèle = un planning A/B réutilisable. Tape une ligne pour l'éditer, puis coche les pièces à y associer.</p>
       </div>
       <div class="page-actions">
         <button class="btn" type="button" data-save ${dirty ? "" : "disabled"}>${icon("save", 17)} Enregistrer</button>
@@ -268,7 +277,7 @@ function detailView() {
 
     ${weekTools(model)}
 
-    ${applyPanel(model)}
+    ${linkPanel(model)}
 
     <div class="card card-pad">
       ${gridHtml(days)}
@@ -289,16 +298,6 @@ function weekTools() {
       <button class="btn btn-sm" type="button" data-copy="B">${icon("copy", 15)} Copier B → A</button>
       <button class="btn btn-sm btn-ghost" type="button" data-clear-week>${icon("trash", 15)} Vider la semaine ${week}</button>
     </div>
-    <div class="row wrap" style="gap:8px;align-items:center;margin-top:6px">
-      <select class="select" data-preset style="width:auto;flex:1 1 220px">
-        ${WEEK_PRESET_OPTIONS.map(
-          ([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`
-        ).join("")}
-      </select>
-      <button class="btn btn-sm" type="button" data-preset-apply>
-        ${icon("check", 15)} Appliquer à la semaine ${week}
-      </button>
-    </div>
     <p class="hint">La semaine ${other} n'est pas modifiée par ces actions.</p>
   </div>`;
 }
@@ -316,19 +315,6 @@ function copyWeekTo(source) {
   toast(`Semaine ${from} copiée sur la semaine ${to}.`);
 }
 
-function applyPresetToWeek(key) {
-  const model = currentModel();
-  const preset = WEEK_PRESETS[key];
-  if (!model || !preset) return;
-  if (!confirm(`Remplacer la semaine ${week} de « ${model.name} » par le modèle « ${weekPresetLabel(key)} » ?`)) {
-    return;
-  }
-  model.days[week] = cloneWeek(preset);
-  markDirty();
-  render();
-  toast(`Modèle « ${weekPresetLabel(key)} » appliqué à la semaine ${week}.`, { type: "info" });
-}
-
 function clearWeek() {
   const model = currentModel();
   if (!model) return;
@@ -339,44 +325,45 @@ function clearWeek() {
   toast(`Semaine ${week} vidée.`, { type: "info" });
 }
 
-function applyPanel(model) {
+function linkPanel(model) {
   const rooms = roomTargets();
-  const weeks = [...applyWeeks];
-  const filled = weeks.filter((key) => countSlots(model.days[key]) > 0);
+  const canLink = Boolean(model.id) && !dirty;
 
   const rows = rooms.length
     ? rooms
-        .map(
-          (room) => `<div class="list-row model-pick${chosenRooms.has(String(room.id)) ? " is-on" : ""}">
-            <button class="li-main model-room" type="button" data-room="${room.id}">
-              <span class="li-check">${icon("check", 14)}</span>
+        .map((room) => {
+          const link = links[String(room.id)];
+          const checked = Boolean(link) && String(link.model_id) === String(model.id);
+          const other = link && !checked ? modelName(link.model_id) : "";
+          return `<label class="list-row model-pick${checked ? " is-on" : ""}">
+            <span class="li-main model-room">
+              <input class="model-link-check" type="checkbox" data-link-room="${room.id}"${checked ? " checked" : ""}${canLink ? "" : " disabled"}>
               <span class="li-title">${escapeHtml(room.label)}</span>
-            </button>
-          </div>`
-        )
+              ${other ? `<span class="li-sub">liée à « ${escapeHtml(other)} »</span>` : ""}
+            </span>
+          </label>`;
+        })
         .join("")
     : '<p class="hint">Aucune pièce pilotable pour le moment.</p>';
 
-  const disabled = !chosenRooms.size || !filled.length;
+  const hint = !model.id
+    ? "Enregistre le modèle pour pouvoir le lier à des pièces."
+    : dirty
+      ? "Enregistre tes modifications avant de lier des pièces."
+      : "Cocher une pièce y applique le modèle et suit ensuite ses modifications. Décocher délie la pièce (son planning est conservé).";
 
   return `<div class="card card-pad stack">
-    <div class="row-between wrap" style="gap:10px">
-      <div>
-        <div class="card-title">${icon("sliders", 18)} Appliquer « ${escapeHtml(model.name)} »</div>
-        <p class="hint mt-1">Choisis les semaines et les pièces : chaque semaine cochée est remplacée par le modèle.</p>
-      </div>
-      <div class="segmented" data-apply-weeks>
-        ${WEEKS.map(
-          (key) =>
-            `<button type="button" data-aw="${key}" class="${applyWeeks.has(key) ? "is-active" : ""}">Semaine ${key}</button>`
-        ).join("")}
-      </div>
+    <div>
+      <div class="card-title">${icon("link", 18)} Pièces liées à « ${escapeHtml(model.name)} »</div>
+      <p class="hint mt-1">${hint}</p>
     </div>
     <div class="list">${rows}</div>
-    <button class="btn btn-primary btn-block" type="button" data-apply-run${disabled ? " disabled" : ""}>
-      ${icon("check", 17)} Appliquer${chosenRooms.size ? ` à ${chosenRooms.size} pièce${chosenRooms.size > 1 ? "s" : ""}` : ""}
-    </button>
   </div>`;
+}
+
+function modelName(modelId) {
+  const found = models.find((item) => String(item.id) === String(modelId));
+  return found ? found.name : "";
 }
 
 function gridHtml(days) {
@@ -426,7 +413,6 @@ function createModel() {
   markDirty();
   selectedIndex = models.length - 1;
   week = "A";
-  chosenRooms.clear();
   render();
   const input = root?.querySelector("[data-rename]");
   input?.focus();
@@ -455,7 +441,6 @@ function deleteModel() {
   models.splice(selectedIndex, 1);
   markDirty();
   selectedIndex = null;
-  chosenRooms.clear();
   render();
   toast("Modèle supprimé.", { type: "info" });
 }
@@ -569,45 +554,29 @@ function openSlotEditor(dayIndex, slotIndex) {
   });
 }
 
-async function applyToRooms() {
-  const model = currentModel();
-  if (!model) return;
-  const rooms = roomTargets().filter((room) => chosenRooms.has(String(room.id)));
-  const weeks = [...applyWeeks].filter((key) => countSlots(model.days[key]) > 0);
-  if (!rooms.length) {
-    toast("Choisis au moins une pièce.", { type: "warn" });
-    return;
-  }
-  if (!weeks.length) {
-    toast("Le modèle est vide : ajoute des créneaux d'abord.", { type: "warn" });
-    return;
-  }
-  const target = rooms.map((room) => room.label).join(", ");
-  const label = weeks.map((key) => `semaine ${key}`).join(" et ");
-  // Les pièces liées à un autre modèle passeront en « à synchroniser ».
-  const relinked = rooms.filter((room) => {
-    const link = links[String(room.id)];
-    return link && String(link.model_id) !== String(model.id);
-  });
-  const extra = relinked.length
-    ? `\n\n${relinked.length} pièce${relinked.length > 1 ? "s sont liées" : " est liée"} à un autre modèle : elle${relinked.length > 1 ? "s seront marquées" : " sera marquée"} « à synchroniser ».`
-    : "";
-  if (!confirm(`Remplacer la ${label} de ${target} par « ${model.name} » ?${extra}`)) return;
-
+async function toggleRoomLink(roomId, linked, model) {
+  if (!model?.id) return;
+  const input = root?.querySelector(`[data-link-room="${roomId}"]`);
+  if (input) input.disabled = true;
+  const label = roomLabel(roomId) || `pièce ${roomId}`;
   try {
-    for (const room of rooms) {
-      for (const key of weeks) {
-        await put(`/api/programs/${room.id}/${key}`, {
-          days: cloneWeek(model.days[key]),
-        });
-      }
+    if (linked) {
+      await put(`/api/model-links/${roomId}`, { model_id: model.id });
+    } else {
+      await del(`/api/model-links/${roomId}`);
     }
-    toast(`Modèle « ${model.name} » appliqué à ${rooms.length} pièce${rooms.length > 1 ? "s" : ""}.`);
+    await loadModels();
     await refreshState({ silent: true });
-    chosenRooms.clear();
     render();
+    toast(
+      linked
+        ? `« ${model.name} » lié à ${label}.`
+        : `${label} déliée du modèle (planning conservé).`,
+      { type: linked ? "ok" : "info" }
+    );
   } catch (err) {
     toastError(err);
+    render();
   }
 }
 
@@ -621,14 +590,12 @@ function bind() {
   page.querySelector("[data-new]")?.addEventListener("click", createModel);
   page.querySelector("[data-back]")?.addEventListener("click", () => {
     selectedIndex = null;
-    chosenRooms.clear();
     render();
   });
 
   page.querySelectorAll("[data-open]").forEach((button) => {
     button.addEventListener("click", () => {
       selectedIndex = Number(button.dataset.open);
-      chosenRooms.clear();
       render();
     });
   });
@@ -675,33 +642,16 @@ function bind() {
   page.querySelector("[data-duplicate]")?.addEventListener("click", duplicateModel);
   page.querySelector("[data-delete]")?.addEventListener("click", deleteModel);
 
-  page.querySelectorAll("[data-aw]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const key = button.dataset.aw === "B" ? "B" : "A";
-      if (applyWeeks.has(key)) applyWeeks.delete(key);
-      else applyWeeks.add(key);
-      if (!applyWeeks.size) applyWeeks.add(key);
-      render();
+  page.querySelectorAll("[data-link-room]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const model = currentModel();
+      if (!model) return;
+      toggleRoomLink(input.dataset.linkRoom, input.checked, model);
     });
   });
-
-  page.querySelectorAll("[data-room]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const id = button.dataset.room;
-      if (chosenRooms.has(id)) chosenRooms.delete(id);
-      else chosenRooms.add(id);
-      render();
-    });
-  });
-
-  page.querySelector("[data-apply-run]")?.addEventListener("click", applyToRooms);
 
   page.querySelectorAll("[data-copy]").forEach((button) => {
     button.addEventListener("click", () => copyWeekTo(button.dataset.copy));
-  });
-  page.querySelector("[data-preset-apply]")?.addEventListener("click", () => {
-    const select = page.querySelector("[data-preset]");
-    if (select) applyPresetToWeek(select.value);
   });
   page.querySelector("[data-clear-week]")?.addEventListener("click", clearWeek);
 
@@ -726,8 +676,6 @@ export default {
     await loadModels();
     selectedIndex = null;
     week = "A";
-    chosenRooms.clear();
-    applyWeeks = new Set(["A"]);
     dirty = false;
     render();
   },

@@ -29,11 +29,6 @@ import {
   weekdayLong,
   weekdayShort,
 } from "../utils.js";
-import {
-  WEEK_PRESETS,
-  WEEK_PRESET_OPTIONS,
-  weekPresetLabel,
-} from "../week-presets.js";
 
 const HOUR_PX = 56;
 
@@ -173,26 +168,6 @@ export default {
         <div class="card card-pad">
           <div class="row-between wrap" style="gap:10px">
             <div>
-              <div class="card-title">${icon("sparkles", 18)} Modèles de semaine</div>
-              <p class="hint mt-1">Remplace toute la semaine d'une pièce par un modèle prédéfini.</p>
-            </div>
-            <div class="row wrap" style="gap:8px;align-items:center">
-              <select class="select" id="planPresetRoom" style="width:auto">
-                ${targets.map((t) => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
-              </select>
-              <select class="select" id="planWeekPreset" style="width:auto">
-                ${WEEK_PRESET_OPTIONS.map(
-                  ([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`
-                ).join("")}
-              </select>
-              <button class="btn btn-sm btn-primary" type="button" id="planApplyWeekPreset">${icon("check", 14)} Appliquer (efface la semaine)</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card card-pad">
-          <div class="row-between wrap" style="gap:10px">
-            <div>
               <div class="card-title">${icon("sliders", 18)} Modèles</div>
               <p class="hint mt-1">Crée, édite et applique un planning à plusieurs pièces depuis la page Modèles.</p>
             </div>
@@ -255,17 +230,6 @@ export default {
         console.error(err);
         toastError(err);
       }
-    });
-
-    // Appliquer un modèle prédéfini pour toute la semaine
-    view.querySelector("#planApplyWeekPreset")?.addEventListener("click", () => {
-      const roomId = view.querySelector("#planPresetRoom")?.value;
-      const presetKey = view.querySelector("#planWeekPreset")?.value;
-      const t = targets.find((x) => x.id === roomId);
-      if (!t) { toast("Choisis d'abord une pièce.", { type: "warn" }); return; }
-      target = t;
-      rebuildModels();
-      applyWeekPreset(presetKey);
     });
 
     window.addEventListener("beforeunload", warnUnload);
@@ -1069,28 +1033,6 @@ function applyPreset(name) {
   paintRooms();
   paintDirty();
   toast(`Modèle « ${name} » appliqué.`, { type: "info", timeout: 2400 });
-}
-
-function applyWeekPreset(key) {
-  const preset = WEEK_PRESETS[key];
-  if (!preset || !target) return;
-  const model = models[target.id];
-  if (!model) return;
-  const hasLocked = lockedDaysFor(target, week).some(Boolean);
-  const warning = hasLocked
-    ? "Les jours de cours Pronote sont conservés."
-    : "Tous les créneaux existants seront effacés.";
-  if (!confirm(`Remplacer la semaine ${week} de ${target.label} par le modèle « ${weekPresetLabel(key)} » ? (${warning})`)) {
-    return;
-  }
-  const next = preset.map((daySlots) =>
-    Array.isArray(daySlots) ? daySlots.map((slot) => ({ ...slot })).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time)) : []
-  );
-  model[week] = keepLockedDays(target, week, model[week], next);
-  dirty = true;
-  paintRooms();
-  paintDirty();
-  toast(`Modèle « ${weekPresetLabel(key)} » appliqué à toute la semaine ${week}.`, { type: "info", timeout: 2400 });
 }
 
 function dominantMode(slots) {

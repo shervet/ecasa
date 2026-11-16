@@ -3397,7 +3397,14 @@ details.brand-panel.is-locked > :not(summary) {
   .week-grid { grid-template-columns: repeat(7, minmax(68px, 1fr)); overflow-x: auto; }
 }
 
-/* --------------------------------------------------------------- modèles */
+.model-pick .model-link-check {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  flex: none;
+  cursor: pointer;
+  margin: 0;
+}
 
 /* Lignes cliquables (liste des modèles, choix des pièces) : la sélection se
    fait au tap, sans menu déroulant. Le bouton occupe toute la ligne, donc pas
