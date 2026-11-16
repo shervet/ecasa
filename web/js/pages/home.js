@@ -1,11 +1,29 @@
 // Accueil : vue d'ensemble de la maison et réglage rapide.
 
 import { icon, modeIcon, weatherIconName } from "../icons.js";
+import { get } from "../api.js";
 import { openDeviceSheet } from "../components/device-sheet.js";
+import { openSheet } from "../sheet.js";
 import { setPendingPlanningRoom } from "./planning.js";
 import { applyNow, refreshState, roomSummary, store, subscribe } from "../state.js";
 
 let weather = null;
+let modelNames = {};
+let pronoteRoomIds = [];
+
+async function loadLinks() {
+  try {
+    const payload = await get("/api/models");
+    const list = Array.isArray(payload?.models) ? payload.models : [];
+    modelNames = Object.fromEntries(list.map((model) => [String(model.id), model.name]));
+  } catch {
+    modelNames = {};
+  }
+  const ids = store.config?.pronote_room_ids;
+  pronoteRoomIds = Array.isArray(ids)
+    ? ids.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    : [];
+}
 
 async function loadWeather() {
   try {
@@ -77,6 +95,7 @@ export default {
 
     paint();
     loadWeather().then(() => paint());
+    loadLinks().then(() => paint());
 
     const unsub = subscribe((_, reason) => {
       if (String(reason || "").startsWith("pref:")) paint();
@@ -95,10 +114,12 @@ export default {
   onState() {
     // Ne pas écraser le DOM pendant une interaction (tap/bouton) en cours :
     // le prochain poll rattrapera la mise à jour.
-    const active = document.activeElement;
-    const view = document.getElementById("view");
-    if (active && view && view.contains(active)) return;
-    paint();
+    loadLinks().then(() => {
+      const active = document.activeElement;
+      const view = document.getElementById("view");
+      if (active && view && view.contains(active)) return;
+      paint();
+    });
   },
 };
 
@@ -277,6 +298,21 @@ function paintRooms() {
     const override = summary.override;
     const label = modeLabel(mode, store.meta);
 
+    // Indicateurs de liaison : modèle de planning et/ou Pronote.
+    const badges = [];
+    if (pronoteRoomIds.includes(Number(room.id))) {
+      badges.push(
+        `<span class="pill pill-accent" title="Planning lié à Pronote">${icon("school", 13)} Pronote</span>`
+      );
+    }
+    const link = state.model_links?.[String(room.id)];
+    if (link) {
+      const name = modelNames[String(link.model_id)] || "Modèle";
+      badges.push(
+        `<span class="pill pill-model" title="Planning lié au modèle « ${escapeHtml(name)} »">${icon("link", 13)} ${escapeHtml(name)}</span>`
+      );
+    }
+
     cards.push(`
       <article class="room-card" data-mode="${escapeHtml(mode)}">
         <div class="room-head">
@@ -284,11 +320,14 @@ function paintRooms() {
             <div class="room-name">${escapeHtml(room.name)}</div>
             <div class="room-devices">${summary.devices.length} appareil${summary.devices.length > 1 ? "s" : ""} · ${escapeHtml(summary.primary?.name || "")}</div>
           </div>
-          <span class="pill" style="background:color-mix(in srgb, ${modeColor(mode)} 14%, transparent);color:${modeColor(mode)}">${modeIcon(mode, 13)} ${escapeHtml(label)}</span>
+          <div class="row wrap" style="gap:6px;justify-content:flex-end">
+            ${badges.join("")}
+            <span class="pill" style="background:color-mix(in srgb, ${modeColor(mode)} 14%, transparent);color:${modeColor(mode)}">${modeIcon(mode, 13)} ${escapeHtml(label)}</span>
+          </div>
         </div>
 
         <div class="room-main">
-          <div class="room-temp">
+          <div class="room-temp" data-cal-room="${room.id}" role="button" tabindex="0" title="Voir le planning de la semaine">
             <span class="value">${fmtTemp(summary.ambient)}</span><span class="unit">°C</span>
           </div>
           <div class="room-target" data-goto-room="${room.id}" role="button" tabindex="0" title="Ouvrir le planning de cette pièce">
@@ -338,6 +377,103 @@ function paintRooms() {
       }
     });
   });
+
+  host.querySelectorAll("[data-cal-room]").forEach((node) => {
+    const open = () => openPlanningCalendar(Number(node.dataset.calRoom));
+    node.addEventListener("click", open);
+    node.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+}
+
+function slotAt(daySlots, hour) {
+  let active = null;
+  for (const slot of daySlots || []) {
+    const [h] = String(slot.time).split(":").map(Number);
+    if (Number.isFinite(h) && h <= hour) active = slot;
+    else break;
+  }
+  return active;
+}
+
+function calendarCellClass(slot) {
+  if (!slot || !slot.mode || slot.mode === "off") return "pl-off";
+  const temp = Number(slot.temp);
+  if (!Number.isFinite(temp)) return "pl-off";
+  if (temp < 18) return "pl-cold";
+  if (temp <= 20) return "pl-mild";
+  return "pl-hot";
+}
+
+/** Fenêtre « calendrier » : jours en colonnes, heures en lignes, températures en cases. */
+function openPlanningCalendar(roomId) {
+  const state = store.state;
+  const room = (state?.rooms || []).find((item) => Number(item.id) === Number(roomId));
+  if (!room) return;
+  const device = (state?.devices || []).find((item) => Number(item.room_id) === Number(roomId));
+  const programs = device?.programs || {};
+  let week = state?.week === "B" ? "B" : "A";
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <div class="segmented" data-cal-week>
+      <button type="button" data-cal-w="A" class="${week === "A" ? "is-active" : ""}">Semaine A</button>
+      <button type="button" data-cal-w="B" class="${week === "B" ? "is-active" : ""}">Semaine B</button>
+    </div>
+    <div class="planning-cal-wrap" data-cal-wrap></div>
+    <p class="hint">Cases colorées par température : <span class="pl-dot pl-cold"></span> &lt; 18 °C,
+      <span class="pl-dot pl-mild"></span> 18–20 °C, <span class="pl-dot pl-hot"></span> &gt; 20 °C,
+      <span class="pl-dot pl-off"></span> arrêt.</p>
+  `;
+
+  const sheet = openSheet({
+    title: `Planning · ${room.name}`,
+    sub: "Semaine type : jours en colonnes, heures en lignes",
+    body,
+  });
+
+  const paint = () => {
+    const days = programs[week] || [];
+    const wrap = body.querySelector("[data-cal-wrap]");
+    if (!wrap) return;
+    let html = '<table class="planning-cal"><thead><tr><th></th>';
+    for (let d = 0; d < 7; d += 1) {
+      html += `<th>${weekdayShort(d)}</th>`;
+    }
+    html += "</tr></thead><tbody>";
+    for (let hour = 0; hour < 24; hour += 1) {
+      html += `<tr><th>${String(hour).padStart(2, "0")}h</th>`;
+      for (let d = 0; d < 7; d += 1) {
+        const slot = slotAt(days[d], hour);
+        const cls = calendarCellClass(slot);
+        const text = slot && slot.mode !== "off" ? fmtTemp(slot.temp, 0) : "·";
+        const label = slot
+          ? `${weekdayShort(d)} ${String(hour).padStart(2, "0")}h · ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`
+          : `${weekdayShort(d)} ${String(hour).padStart(2, "0")}h · arrêt`;
+        html += `<td><span class="pl-cell ${cls}" title="${escapeHtml(label)}">${text}</span></td>`;
+      }
+      html += "</tr>";
+    }
+    html += "</tbody></table>";
+    wrap.innerHTML = html;
+    body.querySelectorAll("[data-cal-w]").forEach((btn) => {
+      btn.classList.toggle("is-active", btn.dataset.calW === week);
+    });
+  };
+
+  body.querySelectorAll("[data-cal-w]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      week = btn.dataset.calW === "B" ? "B" : "A";
+      paint();
+    });
+  });
+  paint();
+  return sheet;
 }
 
 function paintCpu() {

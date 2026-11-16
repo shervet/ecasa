@@ -1,6 +1,6 @@
 /* Service worker eCasa : coquille en cache, API toujours en réseau. */
 
-const VERSION = "ecasa-v96";
+const VERSION = "ecasa-v97";
 const SHELL = [
   "/",
   "/index.html",
