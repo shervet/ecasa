@@ -627,9 +627,14 @@ function paintEnergy(payload) {
     const hasByYear = Array.isArray(summary.by_year) && summary.by_year.length;
     const outdoor = Array.isArray(payload.outdoor_temp) ? payload.outdoor_temp : null;
     const hasOutdoor = outdoor && outdoor.some((s) => Array.isArray(s.values) && s.values.some((v) => Number.isFinite(v)));
-    const tempLegend = hasOutdoor
-    ? outdoor.map((s) => ({ key: s.key || s.label, label: `T° ext. ${s.label || s.key || ""}`.trim(), color: s.color || "var(--warn, #f59e0b)" }))
-      : [];
+  // Clés distinctes des barres (années) pour que masquer une T° ext. ne masque
+  // pas la barre de la même année, et vice-versa.
+  const outdoorChart = hasOutdoor
+    ? outdoor.map((s) => ({ ...s, key: `temp-${s.key || s.label}` }))
+    : null;
+  const tempLegend = hasOutdoor
+    ? outdoor.map((s) => ({ key: `temp-${s.key || s.label}`, label: `T° ext. ${s.label || s.key || ""}`.trim(), color: s.color || "var(--warn, #f59e0b)" }))
+    : [];
     const legendItems = [...series, ...tempLegend];
     body = `
       ${barChart({
@@ -638,7 +643,7 @@ function paintEnergy(payload) {
         height: 280,
         unit: "kWh",
         ariaLabel: "Consommation électrique",
-        outdoor: hasOutdoor ? outdoor : null,
+        outdoor: hasOutdoor ? outdoorChart : null,
       })}
       ${chartLegend(legendItems)}
       ${hasByYear ? energyTable(payload) : energyKpiGrid(summary)}
