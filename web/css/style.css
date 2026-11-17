@@ -1640,12 +1640,22 @@ svg {
   background: var(--surface-2);
   color: var(--faint);
 }
-/* Boîte fusionnée (rowspan) : elle remplit toute la hauteur de sa zone. */
+/* Boîte fusionnée (rowspan) : la cellule sert de repère de position et la
+   boîte se remplit en absolu. height:100% ne se résout jamais sur une
+   cellule de tableau à hauteur auto : les blocs restaient hauts de 19px
+   et laissaient des trous blancs dans la zone. */
+.planning-cal td[rowspan] {
+  position: relative;
+}
 .planning-cal td[rowspan] > .pl-cell {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
 }
 .pl-cold {
   background: color-mix(in srgb, var(--series-4) 20%, transparent);
