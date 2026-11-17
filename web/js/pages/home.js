@@ -455,27 +455,43 @@ function openPlanningCalendar(roomId) {
       resolved.push(hours);
     }
 
-    // Regroupe les heures consécutives de même zone et même mode en une seule boîte.
+    // Regroupe les heures consécutives ayant la même température de display.
+// Laisser le mode changer au sein d'un groupe (règle B).
     const columns = [];
     for (let d = 0; d < 7; d += 1) {
       const groups = [];
       for (let hour = 0; hour < 24; hour += 1) {
         const { slot, inherited } = resolved[d][hour];
-        const cls = calendarCellClass(slot);
         const mode = slot && slot.mode ? slot.mode : "off";
-        const temp = cls === "pl-off" ? null : Number(slot.temp);
+        const temp = slot ? Number(slot.temp) : null;
+        
         const group = groups[groups.length - 1];
-        if (group && group.cls === cls && group.mode === mode) {
+        // Règle B: même température → même groupe, même si le mode change
+        if (group && group.temps[group.temps.length - 1] === temp) {
+          // Même température que le dernier horaire ajouté → agrandir le groupe
           group.end = hour;
           group.slots.push(slot);
           group.temps.push(temp);
           group.inherited.push(inherited);
         } else {
+          // Nouveau groupe : déterminer la classe de couleur
+          let cls;
+          if (mode === "off") {
+            cls = "pl-off";
+          } else if (!Number.isFinite(temp)) {
+            cls = "pl-off";
+          } else if (temp < 18) {
+            cls = "pl-cold";
+          } else if (temp <= 20) {
+            cls = "pl-mild";
+          } else {
+            cls = "pl-hot";
+          }
           groups.push({
             start: hour,
             end: hour,
             cls,
-            mode,
+            mode, // mode de la première heure du groupe
             slots: [slot],
             temps: [temp],
             inherited: [inherited],
@@ -485,37 +501,62 @@ function openPlanningCalendar(roomId) {
       columns.push(groups);
     }
 
+    // Vérifier si des températures sontKnown pour chaque journée
+    const dayKnownTemp = new Array(7).fill(false);
+    for (let d = 0; d < 7; d += 1) {
+      for (const group of columns[d]) {
+        for (const t of group.temps) {
+          if (Number.isFinite(t)) {
+            dayKnownTemp[d] = true;
+            break;
+          }
+        }
+        if (dayKnownTemp[d]) break;
+      }
+    }
+
     for (let hour = 0; hour < 24; hour += 1) {
       html += `<tr><th>${String(hour).padStart(2, "0")}h</th>`;
       for (let d = 0; d < 7; d += 1) {
-        const group = columns[d].find((item) => item.start === hour);
+        const dayGroups = columns[d];
+        const group = dayGroups.find((item) => item.start === hour);
         if (!group) continue;
-        const span = group.end - group.start + 1;
+
+        // Chaque heure appartient à une boîte (rule C)
+        // Construire le texte
+        let text;
+        if (dayKnownTemp[d]) {
+          // Montrer la température si connue pour la journée
+          if (Number.isFinite(group.temps[group.temps.length - 1])) {
+            text = `${fmtTemp(group.temps[group.temps.length - 1], 0)}°`;
+          } else {
+            text = "—";
+          }
+        } else {
+          text = "—";
+        }
+        
+        // Build tooltip with per-hour details (rule E)
         const stamps = [];
-        const temps = [];
         for (let h = group.start; h <= group.end; h += 1) {
           const slot = group.slots[h - group.start];
           const kept = group.inherited[h - group.start];
-          const value = group.temps[h - group.start];
-          const stamp = `${weekdayShort(d)} ${String(h).padStart(2, "0")}h`;
-          stamps.push(
-            slot
-              ? kept
-                ? `${stamp} · maintien du dernier réglage · ${fmtTemp(slot.temp)} °C`
-                : `${stamp} · ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`
-              : `${stamp} · arrêt`,
-          );
-          if (Number.isFinite(value)) temps.push(value);
+          const s = `${weekdayShort(d)} ${String(h).padStart(2, "0")}h`;
+          if (slot) {
+            if (kept) {
+              stamps.push(`${s} maintien du dernier réglage · ${fmtTemp(slot.temp)} °C`);
+            } else {
+              stamps.push(`${s} ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`);
+            }
+          } else {
+            stamps.push(`${s} arrêt`);
+          }
         }
-        const shown = [...new Set(temps.map((value) => fmtTemp(value, 0)))];
-        let text = "·";
-        if (group.mode !== "off") {
-          if (shown.length === 1) text = `${shown[0]}°`;
-          else if (shown.length) text = `${fmtTemp(Math.min(...temps), 0)}→${fmtTemp(Math.max(...temps), 0)}°`;
-          else text = "—";
-        }
+        const title = escapeHtml(stamps.join("\n"));
+        
+        const span = group.end - group.start + 1;
         const rowspan = span > 1 ? ` rowspan="${span}"` : "";
-        html += `<td${rowspan}><span class="pl-cell ${group.cls}" title="${escapeHtml(stamps.join("\n"))}">${text}</span></td>`;
+        html += `<td${rowspan}><span class="pl-cell ${group.cls}" title="${title}">${text}</span></td>`;
       }
       html += "</tr>";
     }

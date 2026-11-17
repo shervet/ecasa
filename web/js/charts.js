@@ -3,7 +3,18 @@
 import { escapeHtml, fmtNumber } from "./utils.js";
 
 const W = 760;
-const M = { top: 16, right: 14, bottom: 30, left: 42 };
+
+// Détection tactile / largeurs étroites : utilisée pour agrandir les axes
+const TOUCH = typeof matchMedia === "function" && matchMedia("(max-width: 900px), (pointer: coarse)").matches;
+const K = TOUCH ? 2.9 : 1;
+const primaryFont = Math.round(10.5 * K * 10) / 10;
+const secondaryFont = Math.round(9.5 * K * 10) / 10;
+const M = {
+  top: 16,
+  right: 14,
+  bottom: TOUCH ? 70 : 30,
+  left: TOUCH ? 76 : 42,
+};
 
 function niceMax(value, divisions = 4) {
   if (!(value > 0)) return 1;
@@ -62,7 +73,8 @@ export function lineChart({
     const value = min + ((max - min) * i) / gridCount;
     const py = y(value);
     grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${W - M.right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
-    grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="var(--faint)">${fmtNumber(value, 0)}${i === gridCount ? unit : ""}</text>`;
+    const gridFont = primaryFont;
+  grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${gridFont}" fill="var(--faint)">${fmtNumber(value, 0)}${i === gridCount ? unit : ""}</text>`;
   }
 
   const step = Math.max(1, Math.ceil(count / 8));
@@ -71,10 +83,12 @@ export function lineChart({
     const label = labels[i];
     if (label === undefined) continue;
     const parts = String(label).split("|");
+    const textFont = primaryFont;
+    const tspanFont = secondaryFont;
     if (parts.length > 1) {
-      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 20}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x(i).toFixed(1)}" dy="12" font-size="9.5">${escapeHtml(parts[1])}</tspan></text>`;
+      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - (TOUCH ? primaryFont + secondaryFont + 5 : 20)}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x(i).toFixed(1)}" dy="${TOUCH ? Math.round(0.9 * secondaryFont) : 12}" font-size="${tspanFont}">${escapeHtml(parts[1])}</tspan></text>`;
     } else {
-      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(label)}</text>`;
+      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(label)}</text>`;
     }
   }
 
@@ -212,11 +226,12 @@ export function barChart({
 
   const gridCount = 4;
   let grid = "";
+  const gridFont = primaryFont;
   for (let i = 0; i <= gridCount; i += 1) {
     const value = (max * i) / gridCount;
     const py = y(value);
     grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${svgWidth - right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
-    grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="var(--faint)">${fmtNumber(value, Number.isInteger(value) ? 0 : 1)}${i === gridCount ? unit : ""}</text>`;
+    grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${gridFont}" fill="var(--faint)">${fmtNumber(value, Number.isInteger(value) ? 0 : 1)}${i === gridCount ? unit : ""}</text>`;
   }
 
   let bars = "";
@@ -252,7 +267,7 @@ export function barChart({
     for (let i = 0; i <= gridCount; i += 1) {
       const value = tMin + ((tMax - tMin) * i) / gridCount;
       const py = ty(value);
-      tempLayer += `<text x="${svgWidth - right + 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="start" font-size="10.5" fill="var(--faint)">${fmtNumber(value, 0)}${tUnit}</text>`;
+      tempLayer += `<text x="${svgWidth - right + 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="start" font-size="${gridFont}" fill="var(--faint)">${fmtNumber(value, 0)}${tUnit}</text>`;
     }
     tempSeries.forEach((ts) => {
       const vals = Array.isArray(ts.values) ? ts.values : [];
@@ -276,15 +291,17 @@ export function barChart({
 
   const step = Math.max(1, Math.ceil(count / maxLabels));
   let xLabels = "";
+  const textFont = primaryFont;
+  const tspanFont = secondaryFont;
   for (let i = 0; i < count; i += step) {
     const label = labels[i];
     if (label === undefined) continue;
     const x = M.left + groupW * i + groupW / 2;
     const parts = String(label).split("|");
     if (parts.length > 1) {
-      xLabels += `<text x="${x.toFixed(1)}" y="${H - 20}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x.toFixed(1)}" dy="12" font-size="9.5">${escapeHtml(parts[1])}</tspan></text>`;
+      xLabels += `<text x="${x.toFixed(1)}" y="${H - (TOUCH ? primaryFont + secondaryFont + 5 : 20)}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x.toFixed(1)}" dy="${TOUCH ? Math.round(0.9 * secondaryFont) : 12}" font-size="${tspanFont}">${escapeHtml(parts[1])}</tspan></text>`;
     } else {
-      xLabels += `<text x="${x.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="var(--faint)">${escapeHtml(label)}</text>`;
+      xLabels += `<text x="${x.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(label)}</text>`;
     }
   }
 

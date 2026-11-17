@@ -2374,8 +2374,10 @@ svg {
     width: 18px;
     height: 4px;
   }
+  /* Source de vérité des tailles de texte : charts.js gère la taille
+   adaptative (touch vs desktop). Cette règle est conservée en
+   commentaire pour référence mais ne s'applique plus. */
 }
-
 .stats-table {
   width: 100%;
   border-collapse: collapse;
