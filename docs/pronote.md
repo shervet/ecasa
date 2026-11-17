@@ -73,6 +73,13 @@ Si le dernier cours se termine avant **13:30** (mercredi type), eCasa n'écrit q
 **début** de la journée (nuit, lever, cours, retour à la maison). L'après-midi reste
 ton planning.
 
+L'option `pronote_direct_return` (désactivée par défaut) modifie ce comportement :
+désactivée, la pause de cantine est prolongée jusqu'à 13:30 + trajet pour un
+demi-pensionnaire et l'après-midi reste laissé à ton planning ; activée, l'enfant
+rentre après le dernier cours + trajet, la pièce repasse en confort jusqu'au coucher
+et toute la journée est gérée par Pronote (portée `full`). Le vendredi et le lundi de
+bascule gardent leur logique de garde alternée.
+
 ## Mise à jour automatique
 
 Dans **Réglages → Pronote** :

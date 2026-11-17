@@ -845,6 +845,11 @@ function pronoteSection() {  const c = cfg();
         <input class="input" data-key="pronote_travel_minutes" data-number type="number" min="0" max="180" value="${escapeHtml(c.pronote_travel_minutes ?? 20)}">
       </label>
     </div>
+    ${row(
+      "Retour direct (jour sans cours l'après-midi)",
+      "Un jour dont le dernier cours se termine avant 13:30 : la pièce repasse en confort juste après le dernier cours + trajet, sans attendre la fin de la pause de cantine, et Pronote gère la journée jusqu'au coucher. Désactivé, la pause de cantine (13:30 + trajet) est prolongée et l'après-midi reste votre planning.",
+      toggle("pronote_direct_return", c.pronote_direct_return === true)
+    )}
     <div class="field">
       <span class="label">Pièces liées au planning (import automatique)</span>
       <div class="stack" style="gap:6px">

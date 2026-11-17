@@ -27,6 +27,7 @@
   "pronote_weeks": [],
   "pronote_switch_day": "monday",
   "pronote_auto_enabled": true,
+  "pronote_direct_return": false,
   "pronote_sync_minutes": 180,
   "weather_enabled": true,
   "weather_city": "",

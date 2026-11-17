@@ -113,6 +113,7 @@ DEFAULT_CONFIG = {
     # Mise à jour automatique du planning Pronote : heure (minutes après
     # minuit) et activation. Désactivée = import manuel uniquement.
     "pronote_auto_enabled": True,
+    "pronote_direct_return": False,
     "pronote_sync_minutes": 3 * 60,
     # Connecteurs d'autres systèmes (Daikin, Bosch, Netatmo, Mitsubishi) :
     # réglages enregistrés dès maintenant, pilotes livrés progressivement.
@@ -388,6 +389,7 @@ def public_config(config: dict) -> dict:
             else "monday"
         ),
         "pronote_auto_enabled": _truthy(config.get("pronote_auto_enabled"), True),
+        "pronote_direct_return": _truthy(config.get("pronote_direct_return"), False),
         "pronote_sync_minutes": _minutes_of_day(
             config.get("pronote_sync_minutes"), 3 * 60
         ),
@@ -709,6 +711,11 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
     if "pronote_auto_enabled" in body:
         updated["pronote_auto_enabled"] = _truthy(
             body.get("pronote_auto_enabled"), True
+        )
+
+    if "pronote_direct_return" in body:
+        updated["pronote_direct_return"] = _truthy(
+            body.get("pronote_direct_return"), False
         )
 
     if "pronote_sync_minutes" in body:

@@ -64,6 +64,7 @@ source de vérité au démarrage et reste modifiable à la main si besoin.
 | `pronote_switch_day` | `monday` | Jour d'alternance : `monday` ou `friday`. |
 | `pronote_room_overrides` | `{}` | Réglages confort/réduit par pièce (`{"1": {"comfort_mode": "cool", "comfort_temp": 24}}`). Les clés absentes héritent des réglages globaux. |
 | `pronote_auto_enabled` | `true` | Mise à jour automatique quotidienne. |
+| `pronote_direct_return` | `false` | Retour direct : un jour sans cours l'après-midi (dernier cours avant 13:30) se termine au dernier cours + trajet puis passe en confort jusqu'au coucher (sans prolongation cantine, journée gérée par Pronote). |
 | `pronote_sync_minutes` | `180` (03:00) | Heure de la mise à jour automatique. |
 
 `pronote_room_id` (valeur unique) reste accepté pour la compatibilité avec les anciennes

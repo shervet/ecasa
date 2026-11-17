@@ -717,6 +717,7 @@ def _day_scope(
     student_status: str,
     switch_day: str,
     last_lesson_end: int = 0,
+    direct_return: bool = False,
 ) -> tuple[str, int]:
     """Part de la journee que l'import Pronote a le droit de reecrire.
 
@@ -762,6 +763,10 @@ def _day_scope(
     # cours, retour a la maison). Le reste de la journee reste celui de
     # l'utilisateur.
     if last_lesson_end and last_lesson_end <= MORNING_END_MINUTES:
+        # Retour direct : la journee est geree par Pronote en entier
+        # (retour apres le dernier cours + trajet, confort jusqu'au coucher).
+        if direct_return:
+            return ("full", 0)
         boundary = occupied[-1][1] if occupied else last_lesson_end
         index = next(
             (
@@ -788,6 +793,7 @@ def build_days(
     bedtime_minutes: int = 22 * 60,
     switch_day: str = "monday",
     scopes: list | None = None,
+    direct_return: bool = False,
 ) -> list[list[dict]]:
     """Construit les 7 listes de creneaux a partir des cours normalises.
 
@@ -802,6 +808,9 @@ def build_days(
     seule absence continue : pas de confort le midi. Si les cours s'arretent
     avant la fin de la pause dejeuner, l'absence est prolongee jusqu'a
     ``LUNCH_END_MINUTES`` : l'eleve dejeune a la cantine avant de rentrer.
+    Avec ``direct_return``, le demi-pensionnaire prolonge moins la cantine et
+    une journee terminee le matin passe en portee ``"full"`` : Pronote gere
+    alors la journee jusqu'au coucher.
 
     Une journee sans cours renvoie une liste vide : l'import (manuel ou
     automatique) conserve alors les creneaux existants au lieu d'ecraser la
@@ -838,8 +847,9 @@ def build_days(
             first_start = blocks[0][0]
             last_end = blocks[-1][1]
             # Journee qui s'arrete a midi : l'eleve reste dejeuner a la cantine
-            # avant de rentrer, donc pas de confort pendant la pause.
-            if first_start < 12 * 60 and last_end < LUNCH_END_MINUTES:
+            # avant de rentrer, donc pas de confort pendant la pause. Avec le
+            # retour direct, pas de prolongation jusqu'a la fin de la cantine.
+            if first_start < 12 * 60 and last_end < LUNCH_END_MINUTES and not direct_return:
                 last_end = LUNCH_END_MINUTES
             blocks = [(first_start, last_end)]
 
@@ -915,6 +925,7 @@ def build_days(
                     status,
                     "friday" if friday_switch else "monday",
                     last_end,
+                    direct_return=direct_return,
                 )
             )
 
@@ -1010,6 +1021,12 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
     ).strip().lower()
     switch_day = "friday" if switch_day == "friday" else "monday"
 
+    raw_direct = options.get("direct_return", config.get("pronote_direct_return", False))
+    direct_return = (
+        raw_direct if isinstance(raw_direct, bool)
+        else str(raw_direct).strip().lower() in ("1", "true", "yes", "on")
+    )
+
     scopes: list = []
     days = build_days(
         lessons,
@@ -1023,6 +1040,7 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         bedtime_minutes,
         switch_day,
         scopes,
+        direct_return=direct_return,
     )
     friday_switch = friday_departure_minutes(days, wake_minutes, travel)
 

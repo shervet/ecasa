@@ -98,6 +98,48 @@ class BuildDaysTests(unittest.TestCase):
             ],
         )
 
+    def test_demi_morning_only_waits_for_cantine_by_default(self):
+        # Mercredi 8h-12h sans direct_return : prolongation cantine 13:30 + trajet.
+        scopes = []
+        days = build(
+            [lesson(2, 8 * 60, 12 * 60)],
+            student_status="demi_pensionnaire",
+            scopes=scopes,
+        )
+        self.assertEqual(
+            summary(days[2]),
+            [
+                ("00:00", "off", 16.0),
+                ("07:00", "heat", 20.0),
+                ("07:40", "off", 16.0),
+                ("13:50", "heat", 20.0),   # cantine 13:30 + trajet 20
+                ("22:00", "off", 16.0),
+            ],
+        )
+        self.assertEqual(scopes[2], ("prefix", 4))
+
+    def test_direct_return_skips_cantine_and_takes_over_day(self):
+        # Avec direct_return : retour apres le dernier cours + trajet,
+        # la journee est ensuite geree par Pronote (portee full).
+        scopes = []
+        days = build(
+            [lesson(2, 8 * 60, 12 * 60)],
+            student_status="demi_pensionnaire",
+            direct_return=True,
+            scopes=scopes,
+        )
+        self.assertEqual(
+            summary(days[2]),
+            [
+                ("00:00", "off", 16.0),
+                ("07:00", "heat", 20.0),
+                ("07:40", "off", 16.0),
+                ("12:20", "heat", 20.0),   # dernier cours 12h + trajet 20
+                ("22:00", "off", 16.0),
+            ],
+        )
+        self.assertEqual(scopes[2], ("full", 0))
+
     def test_custom_wake_and_bedtime(self):
         days = build(
             [lesson(3, 10 * 60, 12 * 60)],
@@ -290,6 +332,24 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(times[0], "00:00")
         self.assertIn("06:45", times)  # lever en confort
         self.assertIn("23:00", times)  # coucher en reduit
+
+    def test_direct_return_comes_from_config(self):
+        # Retour direct active dans la config : retour apres le dernier cours
+        # plus le trajet, puis journee entiere geree par Pronote (portee full).
+        config = {
+            "pronote_student_status": "demi_pensionnaire",
+            "pronote_direct_return": True,
+        }
+        lessons = [lesson(2, 8 * 60, 12 * 60)]
+        with mock.patch.object(
+            pronote, "fetch_week", return_value=(lessons, 0)
+        ):
+            plan = pronote.build_plan(config, date(2026, 11, 9))
+        self.assertIn(
+            {"time": "12:20", "mode": "heat", "temp": 20.0},
+            plan["days"][2],
+        )
+        self.assertEqual(plan["scopes"][2], ("full", 0))
 
 
 if __name__ == "__main__":
