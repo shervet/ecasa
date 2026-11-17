@@ -1640,6 +1640,13 @@ svg {
   background: var(--surface-2);
   color: var(--faint);
 }
+/* Boîte fusionnée (rowspan) : elle remplit toute la hauteur de sa zone. */
+.planning-cal td[rowspan] > .pl-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
 .pl-cold {
   background: color-mix(in srgb, var(--series-4) 20%, transparent);
   color: var(--series-4);
@@ -2352,6 +2359,21 @@ svg {
   height: 3px;
   border-radius: 2px;
   background: var(--c);
+}
+
+/* Légendes de graphiques plus lisibles sur smartphone (au-delà de 720px : inchangé). */
+@media (max-width: 720px) {
+  .chart-legend {
+    gap: 16px;
+    font-size: 14px;
+  }
+  .agenda-legend {
+    font-size: 13px;
+  }
+  .chart-legend .lg::before {
+    width: 18px;
+    height: 4px;
+  }
 }
 
 .stats-table {

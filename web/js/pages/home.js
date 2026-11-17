@@ -441,16 +441,55 @@ function openPlanningCalendar(roomId) {
       html += `<th>${weekdayShort(d)}</th>`;
     }
     html += "</tr></thead><tbody>";
+    // Regroupe les heures consécutives de même zone et même mode en une seule boîte.
+    const columns = [];
+    for (let d = 0; d < 7; d += 1) {
+      const groups = [];
+      for (let hour = 0; hour < 24; hour += 1) {
+        const slot = slotAt(days[d], hour);
+        const cls = calendarCellClass(slot);
+        const mode = slot && slot.mode ? slot.mode : "off";
+        const temp = cls === "pl-off" ? null : Number(slot.temp);
+        const group = groups[groups.length - 1];
+        if (group && group.cls === cls && group.mode === mode) {
+          group.end = hour;
+          group.slots.push(slot);
+          group.temps.push(temp);
+        } else {
+          groups.push({ start: hour, end: hour, cls, mode, slots: [slot], temps: [temp] });
+        }
+      }
+      columns.push(groups);
+    }
+
     for (let hour = 0; hour < 24; hour += 1) {
       html += `<tr><th>${String(hour).padStart(2, "0")}h</th>`;
       for (let d = 0; d < 7; d += 1) {
-        const slot = slotAt(days[d], hour);
-        const cls = calendarCellClass(slot);
-        const text = slot && slot.mode !== "off" ? fmtTemp(slot.temp, 0) : "·";
-        const label = slot
-          ? `${weekdayShort(d)} ${String(hour).padStart(2, "0")}h · ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`
-          : `${weekdayShort(d)} ${String(hour).padStart(2, "0")}h · arrêt`;
-        html += `<td><span class="pl-cell ${cls}" title="${escapeHtml(label)}">${text}</span></td>`;
+        const group = columns[d].find((item) => item.start === hour);
+        if (!group) continue;
+        const span = group.end - group.start + 1;
+        const stamps = [];
+        const temps = [];
+        for (let h = group.start; h <= group.end; h += 1) {
+          const slot = group.slots[h - group.start];
+          const value = group.temps[h - group.start];
+          const stamp = `${weekdayShort(d)} ${String(h).padStart(2, "0")}h`;
+          stamps.push(
+            slot
+              ? `${stamp} · ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`
+              : `${stamp} · arrêt`,
+          );
+          if (Number.isFinite(value)) temps.push(value);
+        }
+        const shown = [...new Set(temps.map((value) => fmtTemp(value, 0)))];
+        let text = "·";
+        if (group.mode !== "off") {
+          if (shown.length === 1) text = `${shown[0]}°`;
+          else if (shown.length) text = `${fmtTemp(Math.min(...temps), 0)}→${fmtTemp(Math.max(...temps), 0)}°`;
+          else text = "—";
+        }
+        const rowspan = span > 1 ? ` rowspan="${span}"` : "";
+        html += `<td${rowspan}><span class="pl-cell ${group.cls}" title="${escapeHtml(stamps.join("\n"))}">${text}</span></td>`;
       }
       html += "</tr>";
     }
