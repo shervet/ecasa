@@ -58,6 +58,7 @@ let energyView = readPref("stats.energyView", "month");
 let energyMonth = Number(readPref("stats.energyMonth", new Date().getMonth() + 1));
 let energyDay = readPref("stats.energyDay", todayIso());
 let energyDays = Number(readPref("stats.energyDays", 7));
+let energyAsOf = readPref("stats.energyAsOf", "0") === "1";
 let energyInitial = true;
 let energyRequestId = 0;
 let energyPayload = null;
@@ -525,6 +526,8 @@ async function loadEnergy(refresh = false) {
         month: isNav ? energyMonth : undefined,
         day: isNav && !energyInitial ? energyDay : undefined,
         days: energyView === "day" ? energyDays : undefined,
+        // Option « à date » : coupe les autres années à la dernière conso.
+        as_of: energyAsOf ? 1 : undefined,
         // Synchro manuelle : force l'appel à Enedis au lieu du cache de 3 h.
         refresh: refresh ? 1 : undefined,
       })}`
@@ -594,11 +597,20 @@ function paintEnergy(payload) {
     : "";
 
   const controls = `<div class="row-between wrap" style="gap:10px">
-    <div class="segmented" id="energyView">
-      ${ENERGY_VIEWS.map(
-        ([key, label]) =>
-          `<button type="button" data-energy-view="${key}" class="${key === energyView ? "is-active" : ""}">${label}</button>`
-      ).join("")}
+    <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+      <div class="segmented" id="energyView">
+        ${ENERGY_VIEWS.map(
+          ([key, label]) =>
+            `<button type="button" data-energy-view="${key}" class="${key === energyView ? "is-active" : ""}">${label}</button>`
+        ).join("")}
+      </div>
+      <span class="row" style="gap:6px;align-items:center">
+        <label class="switch" title="Arrête la comparaison des autres années à la dernière date de conso de l'année en cours (ex. 16 nov). Vues Semaine, Mois, Année.">
+          <input type="checkbox" id="energyAsOf"${energyAsOf ? " checked" : ""}>
+          <span class="track"></span>
+        </label>
+        <span class="tiny muted">À date</span>
+      </span>
     </div>
     ${
       isNav
@@ -687,6 +699,12 @@ function paintEnergy(payload) {
       }
       loadEnergy();
     });
+  });
+
+  host.querySelector("#energyAsOf")?.addEventListener("change", (event) => {
+    energyAsOf = event.target.checked;
+    writePref("stats.energyAsOf", energyAsOf ? "1" : "0");
+    loadEnergy();
   });
 
   host.querySelector("#energyMonth")?.addEventListener("change", (event) => {

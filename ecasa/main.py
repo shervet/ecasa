@@ -3361,6 +3361,11 @@ class Handler(BaseHTTPRequestHandler):
             refresh = (query.get("refresh") or [""])[0].lower() in (
                 "1", "true", "oui", "yes",
             )
+            # Option « à date » : les autres années s'arrêtent à la dernière
+            # consommation connue de l'année en cours.
+            as_of = (query.get("as_of") or [""])[0].lower() in (
+                "1", "true", "oui", "yes",
+            )
             config = load_config()
             provider = str(config.get("energy_provider") or "myelectricaldata").strip().lower()
             service = (app.consoapi_energy if provider == "consoapi"
@@ -3370,6 +3375,7 @@ class Handler(BaseHTTPRequestHandler):
                 build_energy(
                     service, config, view, month, day=day, days=days,
                     refresh=refresh, weather_service=app.weather,
+                    as_of=as_of,
                 ),
             )
             return

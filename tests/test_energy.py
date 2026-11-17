@@ -521,6 +521,143 @@ class BuildTests(unittest.TestCase):
             [2025, 2024],
         )
 
+    def test_as_of_year_view_stops_at_last_current_year_day(self):
+        # Option « à date » : la dernière conso 2025 est le 10/03. Le
+        # 12/03/2024 tombe, 2024 passe de 12 à 5 kWh ; le 31/12 reste exclu
+        # par le bornage « année à date » habituel. ``days`` et ``last_date``
+        # sont calculés sur les points complets, avant troncature.
+        data = {
+            date(2024, 1, 10): 5000,
+            date(2024, 3, 12): 7000,
+            date(2024, 12, 31): 1000,
+            date(2025, 1, 10): 3000,
+            date(2025, 3, 10): 6000,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        payload = build_energy(
+            service, {**CONFIG, "med_start": "2024-01-01"}, view="year",
+            today=TODAY, as_of=True,
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["years"], [2024, 2025])
+        self.assertEqual(payload["labels"], ["2024", "2025"])
+        first, second = payload["series"]
+        self.assertEqual(first["label"], "2024")
+        self.assertEqual(first["values"], [5.0, None])
+        self.assertEqual(second["label"], "2025")
+        self.assertEqual(second["values"], [None, 9.0])
+        tooltip = payload["tooltip"]
+        self.assertEqual(tooltip["rows"][0][0]["value"], 5.0)
+        self.assertEqual(tooltip["rows"][0][0]["days"], 1)
+        self.assertEqual(tooltip["rows"][1][0]["value"], 9.0)
+        self.assertEqual(tooltip["rows"][1][0]["days"], 2)
+        self.assertEqual(payload["summary"]["by_year"][0]["kwh"], 9.0)
+        self.assertEqual(payload["summary"]["by_year"][1]["kwh"], 5.0)
+        self.assertTrue(payload["as_of"])
+        self.assertEqual(payload["as_of_limit"], "2025-03-10")
+        self.assertEqual(payload["days"], 5)
+        self.assertEqual(payload["last_date"], "2025-03-10")
+        # Sans l'option, 2024 garde ses 10 + 7 kWh du début d'année.
+        full = build_energy(
+            service, {**CONFIG, "med_start": "2024-01-01"}, view="year",
+            today=TODAY,
+        )
+        self.assertEqual(full["series"][0]["values"], [12.0, None])
+        self.assertEqual(full["series"][1]["values"], [None, 9.0])
+        self.assertEqual(full["tooltip"]["rows"][0][0]["value"], 12.0)
+        self.assertEqual(full["tooltip"]["rows"][0][0]["days"], 2)
+        self.assertFalse(full["as_of"])
+        self.assertIsNone(full["as_of_limit"])
+
+    def test_as_of_month_view_truncates_current_month_of_other_years(self):
+        # La dernière conso 2025 est le 16/11 : seule la queue de novembre
+        # est coupée dans les autres années (20 et 30/11/2024). Octobre,
+        # mois antérieur complet, reste intact.
+        data = {
+            date(2024, 10, 5): 4000,
+            date(2024, 11, 10): 1200,
+            date(2024, 11, 20): 2000,
+            date(2024, 11, 30): 1500,
+            date(2025, 11, 5): 3000,
+            date(2025, 11, 16): 1000,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        today = date(2025, 11, 17)
+        payload = build_energy(
+            service, {**CONFIG, "med_start": "2024-01-01"}, view="month",
+            month=11, today=today, as_of=True,
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["labels"], ["Oct", "Nov"])
+        self.assertEqual(payload["years"], [2024, 2025])
+        first, second = payload["series"]
+        self.assertEqual(first["label"], "2024")
+        self.assertEqual(first["values"], [4.0, 1.2])
+        self.assertEqual(second["label"], "2025")
+        self.assertEqual(second["values"], [None, 4.0])
+        tooltip = payload["tooltip"]
+        self.assertEqual(tooltip["rows"][0][0]["value"], 4.0)   # oct. 2024
+        self.assertEqual(tooltip["rows"][1][0]["value"], 1.2)   # nov. 2024
+        self.assertEqual(tooltip["rows"][1][0]["days"], 1)
+        self.assertEqual(tooltip["rows"][1][1]["value"], 4.0)   # nov. 2025
+        self.assertEqual(payload["summary"]["previous_kwh"], 5.2)
+        self.assertTrue(payload["as_of"])
+        self.assertEqual(payload["as_of_limit"], "2025-11-16")
+        # Sans l'option, novembre 2024 conserve ses trois points (4,7 kWh).
+        full = build_energy(
+            service, {**CONFIG, "med_start": "2024-01-01"}, view="month",
+            month=11, today=today,
+        )
+        self.assertEqual(full["series"][0]["values"], [4.0, 4.7])
+        self.assertEqual(full["tooltip"]["rows"][1][0]["value"], 4.7)
+        self.assertEqual(full["tooltip"]["rows"][1][0]["days"], 3)
+        self.assertFalse(full["as_of"])
+        self.assertIsNone(full["as_of_limit"])
+
+    def test_as_of_week_view_truncates_current_week_of_other_years(self):
+        # 2025-11-17 est le lundi de W47. Le 18/11/2024, lundi de la même
+        # semaine ISO 47 mais après le 17 calendaire, tombe ; le 13/11/2024
+        # (W46) reste. Le bornage des fenêtres reste calculé avant coupe.
+        data = {
+            date(2024, 11, 13): 1000,
+            date(2024, 11, 18): 2000,
+            date(2025, 11, 17): 800,
+        }
+        service = EnergyService(fetcher=FakeFetcher(data=data))
+        today = date(2025, 11, 17)
+        payload = build_energy(
+            service, {**CONFIG, "med_start": "2024-01-01"}, view="week",
+            day=today.isoformat(), today=today, as_of=True,
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["labels"], ["S46", "S47"])
+        self.assertEqual(payload["years"], [2024, 2025])
+        first, second = payload["series"]
+        self.assertEqual(first["label"], "2024")
+        self.assertEqual(first["values"], [1.0, None])
+        self.assertEqual(second["label"], "2025")
+        self.assertEqual(second["values"], [None, 0.8])
+        tooltip = payload["tooltip"]
+        self.assertEqual(tooltip["rows"][0][0]["value"], 1.0)   # W46 2024
+        self.assertIsNone(tooltip["rows"][1][0]["value"])       # W47 2024
+        self.assertEqual(tooltip["rows"][1][0]["days"], 0)
+        self.assertEqual(tooltip["rows"][1][1]["value"], 0.8)   # W47 2025
+        self.assertEqual(payload["summary"]["by_year"][0]["kwh"], 0.8)
+        self.assertEqual(payload["summary"]["by_year"][1]["kwh"], 1.0)
+        self.assertTrue(payload["as_of"])
+        self.assertEqual(payload["as_of_limit"], "2025-11-17")
+        self.assertEqual(payload["days"], 3)
+        # Sans l'option, W47 garde les 2 kWh du 18/11/2024.
+        full = build_energy(
+            service, {**CONFIG, "med_start": "2024-01-01"}, view="week",
+            day=today.isoformat(), today=today,
+        )
+        self.assertEqual(full["series"][0]["values"], [1.0, 2.0])
+        self.assertEqual(full["series"][1]["values"], [None, 0.8])
+        self.assertEqual(full["tooltip"]["rows"][1][0]["value"], 2.0)
+        self.assertFalse(full["as_of"])
+        self.assertIsNone(full["as_of_limit"])
+
     def test_color_is_stable_per_year(self):
         # La couleur dépend du rang de l'année par rapport à l'année
         # courante (N → series-1, N-1 → series-2), pas de la période

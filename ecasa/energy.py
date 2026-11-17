@@ -489,9 +489,45 @@ def _outdoor_temps(weather_service, config: dict, view: str, payload: dict,
     return out_series
 
 
+def _cut_as_of(points: dict[date, float], view: str, ref: date) -> dict[date, float]:
+    """Tronque les autres années à la position de ``ref`` (dernière conso
+    de l'année en cours).
+
+    - vue ``year`` (cumul à date) : tout point au-delà du jour/mois de ``ref``
+      tombe, dans toutes les années ;
+    - vue ``month`` : seule la queue du mois de ``ref`` est coupée (les mois
+      antérieurs, complets dans toutes les années, sont intacts) ;
+    - vue ``week`` : seule la semaine ISO de ``ref`` est coupée après ``ref`` ;
+    - vue ``day`` : aucune troncature (demandé).
+    """
+    if view == "day":
+        return points
+    ref_pos = (ref.month, ref.day)
+    if view == "year":
+        return {d: v for d, v in points.items() if (d.month, d.day) <= ref_pos}
+    if view == "month":
+        return {
+            d: v for d, v in points.items()
+            if not (d.month == ref.month and d.day > ref.day)
+        }
+    if view == "week":
+        # La comparaison porte sur le même numéro de semaine ISO d'une année
+        # sur l'autre : l'année ISO diffère, seul le rang calendaire compte.
+        ref_week = ref.isocalendar()[1]
+        return {
+            d: v for d, v in points.items()
+            if not (
+                d.isocalendar()[1] == ref_week
+                and (d.month, d.day) > ref_pos
+            )
+        }
+    return points
+
+
 def build_energy(service, config: dict, view: str = "month", month=None,
                  today: date | None = None, day=None, days=None,
-                 refresh: bool = False, weather_service=None) -> dict:
+                 refresh: bool = False, weather_service=None,
+                 as_of: bool = False) -> dict:
     """Construit la réponse de ``GET /api/energy``.
 
     ``view`` vaut ``day``, ``week``, ``month`` ou ``year``. Les séries sont
@@ -515,6 +551,10 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     stable : N → ``--series-1``, N-1 → ``--series-2``…) et un bloc
     ``tooltip`` : pour chaque période affichée, une ligne par année avec
     la valeur, le nombre de jours mesurés et la couleur de la série.
+
+    Avec ``as_of=True``, les autres années s'arrêtent à la dernière
+    consommation connue de l'année en cours (``_cut_as_of``) : applicable
+    aux vues ``week``, ``month`` et ``year``, sans effet en vue ``day``.
     """
     today = today or date.today()
     view = view if view in ENERGY_VIEWS else "month"
@@ -557,6 +597,8 @@ def build_energy(service, config: dict, view: str = "month", month=None,
         "end": today.isoformat(),
         "days": 0,
         "last_date": None,
+        "as_of": False,
+        "as_of_limit": None,
         "summary": {},
         "tooltip": None,
     }
@@ -612,6 +654,14 @@ def build_energy(service, config: dict, view: str = "month", month=None,
         window = _month_window(
             points, month, parse_energy_year(day, today), today
         )
+    as_of_limit = None
+    if as_of:
+        ref = max((d for d in points if d.year == today.year), default=None)
+        if ref is not None:
+            points = _cut_as_of(points, view, ref)
+            as_of_limit = ref.isoformat()
+    payload["as_of"] = bool(as_of and as_of_limit)
+    payload["as_of_limit"] = as_of_limit
     _fill_view(payload, points, view, month, today, window)
     outdoor = None
     if weather_service is not None and view in ("day", "week", "month"):
