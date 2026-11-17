@@ -441,12 +441,26 @@ function openPlanningCalendar(roomId) {
       html += `<th>${weekdayShort(d)}</th>`;
     }
     html += "</tr></thead><tbody>";
+    // Heures « résolues » : une heure sans planning garde le dernier réglage connu
+    // (report en avant, y compris sur minuit grâce au report du jour précédent).
+    const resolved = [];
+    let carry = null;
+    for (let d = 0; d < 7; d += 1) {
+      const hours = [];
+      for (let hour = 0; hour < 24; hour += 1) {
+        const actual = slotAt(days[d], hour);
+        if (actual) carry = actual;
+        hours.push({ slot: actual || carry || null, inherited: !actual && Boolean(carry) });
+      }
+      resolved.push(hours);
+    }
+
     // Regroupe les heures consécutives de même zone et même mode en une seule boîte.
     const columns = [];
     for (let d = 0; d < 7; d += 1) {
       const groups = [];
       for (let hour = 0; hour < 24; hour += 1) {
-        const slot = slotAt(days[d], hour);
+        const { slot, inherited } = resolved[d][hour];
         const cls = calendarCellClass(slot);
         const mode = slot && slot.mode ? slot.mode : "off";
         const temp = cls === "pl-off" ? null : Number(slot.temp);
@@ -455,8 +469,17 @@ function openPlanningCalendar(roomId) {
           group.end = hour;
           group.slots.push(slot);
           group.temps.push(temp);
+          group.inherited.push(inherited);
         } else {
-          groups.push({ start: hour, end: hour, cls, mode, slots: [slot], temps: [temp] });
+          groups.push({
+            start: hour,
+            end: hour,
+            cls,
+            mode,
+            slots: [slot],
+            temps: [temp],
+            inherited: [inherited],
+          });
         }
       }
       columns.push(groups);
@@ -472,11 +495,14 @@ function openPlanningCalendar(roomId) {
         const temps = [];
         for (let h = group.start; h <= group.end; h += 1) {
           const slot = group.slots[h - group.start];
+          const kept = group.inherited[h - group.start];
           const value = group.temps[h - group.start];
           const stamp = `${weekdayShort(d)} ${String(h).padStart(2, "0")}h`;
           stamps.push(
             slot
-              ? `${stamp} · ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`
+              ? kept
+                ? `${stamp} · maintien du dernier réglage · ${fmtTemp(slot.temp)} °C`
+                : `${stamp} · ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`
               : `${stamp} · arrêt`,
           );
           if (Number.isFinite(value)) temps.push(value);

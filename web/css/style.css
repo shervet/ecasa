@@ -2361,8 +2361,8 @@ svg {
   background: var(--c);
 }
 
-/* Légendes de graphiques plus lisibles sur smartphone (au-delà de 720px : inchangé). */
-@media (max-width: 720px) {
+/* Légendes de graphiques plus lisibles sur smartphone et tout écran tactile (PC souris : inchangé). */
+@media (max-width: 900px), (pointer: coarse) {
   .chart-legend {
     gap: 16px;
     font-size: 14px;
