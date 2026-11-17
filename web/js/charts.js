@@ -10,7 +10,7 @@ const K = TOUCH ? 2.9 : 1;
 const primaryFont = Math.round(10.5 * K * 10) / 10;
 const secondaryFont = Math.round(9.5 * K * 10) / 10;
 const M = {
-  top: 16,
+  top: TOUCH ? Math.round(primaryFont + 14) : 16,
   right: 14,
   bottom: TOUCH ? 70 : 30,
   left: TOUCH ? 76 : 42,
@@ -74,8 +74,11 @@ export function lineChart({
     const py = y(value);
     grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${W - M.right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
     const gridFont = primaryFont;
-  grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${gridFont}" fill="var(--faint)">${fmtNumber(value, 0)}${i === gridCount ? unit : ""}</text>`;
+  grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${fmtNumber(value, 0)}</text>`;
   }
+
+// Étiquette d'unité autonome au-dessus de la graduation du haut
+grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${unit}</text>`;
 
   const step = Math.max(1, Math.ceil(count / 8));
   let xLabels = "";
@@ -231,8 +234,11 @@ export function barChart({
     const value = (max * i) / gridCount;
     const py = y(value);
     grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${svgWidth - right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
-    grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${gridFont}" fill="var(--faint)">${fmtNumber(value, Number.isInteger(value) ? 0 : 1)}${i === gridCount ? unit : ""}</text>`;
+    grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${gridFont}" fill="var(--faint)">${fmtNumber(value, Number.isInteger(value) ? 0 : 1)}</text>`;
   }
+
+// Étiquette d'unité autonome au-dessus de la graduation du haut
+grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${unit}</text>`;
 
   let bars = "";
   visible.forEach((item, seriesIndex) => {

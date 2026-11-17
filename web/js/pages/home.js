@@ -443,8 +443,18 @@ function openPlanningCalendar(roomId) {
     html += "</tr></thead><tbody>";
     // Heures « résolues » : une heure sans planning garde le dernier réglage connu
     // (report en avant, y compris sur minuit grâce au report du jour précédent).
-    const resolved = [];
+    // Initialisation : on prend le dernier réglage connu de la fin de semaine (jour 6)
+    // qui est le jour précédant chronologiquement lundi 00h dans un motif hebdomadaire répété.
     let carry = null;
+    const day6Slots = days[6] || [];
+    for (let hour = 23; hour >= 0; hour -= 1) {
+      const actual = slotAt(day6Slots, hour);
+      if (actual) {
+        carry = actual;
+        break;
+      }
+    }
+    const resolved = [];
     for (let d = 0; d < 7; d += 1) {
       const hours = [];
       for (let hour = 0; hour < 24; hour += 1) {
@@ -544,7 +554,7 @@ function openPlanningCalendar(roomId) {
           const s = `${weekdayShort(d)} ${String(h).padStart(2, "0")}h`;
           if (slot) {
             if (kept) {
-              stamps.push(`${s} maintien du dernier réglage · ${fmtTemp(slot.temp)} °C`);
+              stamps.push(`${s} maintien (fin de semaine précédente) · ${fmtTemp(slot.temp)} °C`);
             } else {
               stamps.push(`${s} ${modeLabel(slot.mode, store.meta)} · ${fmtTemp(slot.temp)} °C`);
             }
