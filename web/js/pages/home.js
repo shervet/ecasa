@@ -1,28 +1,24 @@
 // Accueil : vue d'ensemble de la maison et réglage rapide.
 
 import { icon, modeIcon, weatherIconName } from "../icons.js";
-import { get } from "../api.js";
 import { openDeviceSheet } from "../components/device-sheet.js";
 import { openSheet } from "../sheet.js";
 import { setPendingPlanningRoom } from "./planning.js";
 import { applyNow, refreshState, roomSummary, store, subscribe } from "../state.js";
 
 let weather = null;
-let modelNames = {};
-let pronoteRoomIds = [];
 
-async function loadLinks() {
-  try {
-    const payload = await get("/api/models");
-    const list = Array.isArray(payload?.models) ? payload.models : [];
-    modelNames = Object.fromEntries(list.map((model) => [String(model.id), model.name]));
-  } catch {
-    modelNames = {};
-  }
+/** Ids de pièces pilotées par Pronote (relus à chaque rendu : la config peut changer). */
+function pronoteRoomIds() {
   const ids = store.config?.pronote_room_ids;
-  pronoteRoomIds = Array.isArray(ids)
+  return Array.isArray(ids)
     ? ids.map((value) => Number(value)).filter((value) => Number.isFinite(value))
     : [];
+}
+
+/** Nom d'un modèle, fourni par /api/state (pas de requête dédiée à chaque poll). */
+function modelName(modelId) {
+  return store.state?.model_names?.[String(modelId)] || "Modèle";
 }
 
 async function loadWeather() {
@@ -95,7 +91,6 @@ export default {
 
     paint();
     loadWeather().then(() => paint());
-    loadLinks().then(() => paint());
 
     const unsub = subscribe((_, reason) => {
       if (String(reason || "").startsWith("pref:")) paint();
@@ -114,12 +109,10 @@ export default {
   onState() {
     // Ne pas écraser le DOM pendant une interaction (tap/bouton) en cours :
     // le prochain poll rattrapera la mise à jour.
-    loadLinks().then(() => {
-      const active = document.activeElement;
-      const view = document.getElementById("view");
-      if (active && view && view.contains(active)) return;
-      paint();
-    });
+    const active = document.activeElement;
+    const view = document.getElementById("view");
+    if (active && view && view.contains(active)) return;
+    paint();
   },
 };
 
@@ -288,6 +281,7 @@ function paintRooms() {
 
   const rooms = sortByPosition(state.rooms || []);
   const cards = [];
+  const pronoteIds = pronoteRoomIds();
 
   for (const room of rooms) {
     const summary = roomSummary(state, room);
@@ -300,14 +294,14 @@ function paintRooms() {
 
     // Indicateurs de liaison : modèle de planning et/ou Pronote.
     const badges = [];
-    if (pronoteRoomIds.includes(Number(room.id))) {
+    if (pronoteIds.includes(Number(room.id))) {
       badges.push(
         `<span class="pill pill-accent" title="Planning lié à Pronote">${icon("school", 13)} Pronote</span>`
       );
     }
     const link = state.model_links?.[String(room.id)];
     if (link) {
-      const name = modelNames[String(link.model_id)] || "Modèle";
+      const name = modelName(link.model_id);
       badges.push(
         `<span class="pill pill-model" title="Planning lié au modèle « ${escapeHtml(name)} »">${icon("link", 13)} ${escapeHtml(name)}</span>`
       );
@@ -414,8 +408,9 @@ function openPlanningCalendar(roomId) {
   const state = store.state;
   const room = (state?.rooms || []).find((item) => Number(item.id) === Number(roomId));
   if (!room) return;
-  const device = (state?.devices || []).find((item) => Number(item.room_id) === Number(roomId));
-  const programs = device?.programs || {};
+  const summary = roomSummary(state, room);
+  // Même appareil que la page Planning (actionneur, puis thermostat, puis 1er).
+  const programs = summary?.primary?.programs || {};
   let week = state?.week === "B" ? "B" : "A";
 
   const body = document.createElement("div");

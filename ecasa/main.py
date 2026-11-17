@@ -2609,6 +2609,15 @@ def state_snapshot(app) -> dict:
     except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
         data["model_links"] = {}
     try:
+        # Noms seuls (pas les plannings) : évite un GET /api/models à chaque
+        # poll pour les pastilles « modèle » de l'accueil.
+        data["model_names"] = {
+            str(model.get("id")): str(model.get("name") or model.get("id"))
+            for model in app.store.week_models()
+        }
+    except Exception:  # noqa: BLE001
+        data["model_names"] = {}
+    try:
         data["update"] = update_state_snapshot()
     except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
         data["update"] = {"available": False}
