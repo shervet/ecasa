@@ -83,7 +83,7 @@ Le catalogue (libellés, champs, état) est exposé par `GET /api/meta` (clé
 | GET | `/api/stats?range=day\|week\|month&date=…&room_id=…` | Statistiques thermiques. |
 | GET | `/api/weather` | Météo et température extérieure. |
 | GET | `/api/weather/search?q=…` | Recherche de ville. |
-| GET | `/api/energy?view=day\|week\|month\|year&month=…&refresh=1` | Consommation électrique (cache local `data/energy.json`, repli sur les données locales avec `warning` si MED indisponible). Paramètre optionnel `as_of=1` : à date, les autres années s'arrêtent à la dernière consommation connue de l'année en cours (vues week/month/year ; réponse : champs `as_of` et `as_of_limit`). |
+| GET | `/api/energy?view=day\|week\|month\|year&month=…&refresh=1` | Consommation électrique (cache local `data/energy.json`, repli sur les données locales avec `warning` si MED indisponible). Paramètre optionnel `as_of=1` : à date, les autres années s'arrêtent à la dernière consommation connue de l'année en cours (vues week/month/year ; réponse : champs `as_of` et `as_of_limit`). Sans `as_of`, la vue `year` additionne les années complètes (jusqu'à fin d'année pour les années passées) ; avec `as_of=1`, chaque année s'arrête à la dernière consommation connue de l'année en cours. |
 | POST | `/api/energy/test` | Teste le jeton et le PDL. |
 
 ## Journal, sauvegarde, exploitation

@@ -472,10 +472,9 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(payload["series"][0]["values"], [6.0])
 
     def test_year_view(self):
-        # Vue année : une barre par année avec données sur la période
-        # comparée (totaux à date, bornés au 15 mars, date de référence).
-        # 2024 : 10 (05/01) + 5 (20/01) + 20 (10/02) = 35 kWh ; le 1 kWh du
-        # 31/12/2024 est après la date de référence et n'est pas compté.
+        # Vue année : une barre par année avec données, années complètes par
+        # défaut (l'année en cours reste naturellement partielle).
+        # 2024 : 10 (05/01) + 5 (20/01) + 20 (10/02) + 1 (31/12) = 36 kWh.
         # 2025 : 3 (02/01) + 4 (15/02) + 6 (10/03) = 13 kWh.
         payload = self.build("year")
         self.assertTrue(payload["ok"])
@@ -483,7 +482,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(payload["years"], [2024, 2025])
         first, second = payload["series"]
         self.assertEqual(first["label"], "2024")
-        self.assertEqual(first["values"], [35.0, None])
+        self.assertEqual(first["values"], [36.0, None])
         self.assertEqual(first["color"], "var(--series-2)")
         self.assertEqual(second["label"], "2025")
         self.assertEqual(second["values"], [None, 13.0])
@@ -491,13 +490,13 @@ class BuildTests(unittest.TestCase):
         # Tooltip : une ligne (l'année cliquée) par période.
         tooltip = payload["tooltip"]
         self.assertEqual(len(tooltip["rows"]), 2)
-        self.assertEqual(tooltip["rows"][0][0]["value"], 35.0)
-        self.assertEqual(tooltip["rows"][0][0]["days"], 3)
+        self.assertEqual(tooltip["rows"][0][0]["value"], 36.0)
+        self.assertEqual(tooltip["rows"][0][0]["days"], 4)
         self.assertEqual(tooltip["rows"][1][0]["value"], 13.0)
 
     def test_year_view_excludes_year_without_data_in_period(self):
-        # 2023 n'a des données qu'en décembre : sur la période comparée
-        # (année à date au 15 mars), elle est vide → absente des barres,
+        # Avec « à date », 2023 n'a de données qu'en décembre, après la
+        # dernière conso 2025 (10/03) : elle est vide → absente des barres,
         # de la légende (séries) et de ``summary.by_year``.
         data = {
             date(2023, 12, 15): 9000,
@@ -507,7 +506,7 @@ class BuildTests(unittest.TestCase):
         service = EnergyService(fetcher=FakeFetcher(data=data))
         payload = build_energy(
             service, {**CONFIG, "med_start": "2023-01-01"}, view="year",
-            today=TODAY,
+            today=TODAY, as_of=True,
         )
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["years"], [2024, 2025])
@@ -557,15 +556,15 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(payload["as_of_limit"], "2025-03-10")
         self.assertEqual(payload["days"], 5)
         self.assertEqual(payload["last_date"], "2025-03-10")
-        # Sans l'option, 2024 garde ses 10 + 7 kWh du début d'année.
+        # Sans l'option, 2024 garde ses 10 + 7 + 1 kWh (année complète).
         full = build_energy(
             service, {**CONFIG, "med_start": "2024-01-01"}, view="year",
             today=TODAY,
         )
-        self.assertEqual(full["series"][0]["values"], [12.0, None])
+        self.assertEqual(full["series"][0]["values"], [13.0, None])
         self.assertEqual(full["series"][1]["values"], [None, 9.0])
-        self.assertEqual(full["tooltip"]["rows"][0][0]["value"], 12.0)
-        self.assertEqual(full["tooltip"]["rows"][0][0]["days"], 2)
+        self.assertEqual(full["tooltip"]["rows"][0][0]["value"], 13.0)
+        self.assertEqual(full["tooltip"]["rows"][0][0]["days"], 3)
         self.assertFalse(full["as_of"])
         self.assertIsNone(full["as_of_limit"])
 
@@ -790,14 +789,14 @@ class BuildTests(unittest.TestCase):
         self.assertIsNone(summary["delta_pct"])
 
     def test_summary_year_view_uses_last_year(self):
-        # Vue année : comparaison à date (15 mars), comme la vue mois.
-        # 2024 à date = 35 kWh (le 31/12 est hors période) -> (13 - 35)/35.
+        # Vue année : années complètes par défaut (le 31/12 compte).
+        # 2024 = 36 kWh -> (13 - 36)/36 ≈ −63,9 %.
         payload = self.build("year")
         summary = payload["summary"]
         self.assertEqual(summary["label"], "Année 2025")
         self.assertEqual(summary["total_kwh"], 13.0)
-        self.assertEqual(summary["previous_kwh"], 35.0)
-        self.assertEqual(summary["delta_pct"], -62.9)
+        self.assertEqual(summary["previous_kwh"], 36.0)
+        self.assertEqual(summary["delta_pct"], -63.9)
         self.assertTrue(summary["partial"])
 
     def test_summary_zero_previous_is_full_increase(self):
@@ -830,14 +829,14 @@ class BuildTests(unittest.TestCase):
         ))
 
     def test_summary_by_year_year_view(self):
-        # Vue année : totaux à date (bornés au 15 mars), l'année en cours
-        # reste partielle. 2024 à date = 35 kWh -> (13 - 35)/35 = -62,9 %.
+        # Vue année : années complètes par défaut, l'année en cours reste
+        # partielle. 2024 = 36 kWh -> (13 - 36)/36 ≈ −63,9 %.
         payload = self.build("year")
         by_year = payload["summary"]["by_year"]
         self.assertEqual([row["year"] for row in by_year], [2025, 2024])
         self.assertEqual(by_year[0]["kwh"], 13.0)
-        self.assertEqual(by_year[0]["delta_pct"], -62.9)
-        self.assertEqual(by_year[1]["kwh"], 35.0)
+        self.assertEqual(by_year[0]["delta_pct"], -63.9)
+        self.assertEqual(by_year[1]["kwh"], 36.0)
         self.assertIsNone(by_year[1]["delta_pct"])
         # Cohérence avec le résumé et le graphique.
         self.assertEqual(by_year[0]["kwh"], payload["summary"]["total_kwh"])

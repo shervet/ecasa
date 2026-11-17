@@ -552,6 +552,10 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     ``tooltip`` : pour chaque période affichée, une ligne par année avec
     la valeur, le nombre de jours mesurés et la couleur de la série.
 
+    En vue ``year``, une barre par année avec la somme complète de l'année
+    par défaut ; avec ``as_of=True``, arrêtée à la dernière consommation
+    connue de l'année en cours.
+
     Avec ``as_of=True``, les autres années s'arrêtent à la dernière
     consommation connue de l'année en cours (``_cut_as_of``) : applicable
     aux vues ``week``, ``month`` et ``year``, sans effet en vue ``day``.
@@ -1121,29 +1125,23 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
                today: date, window: dict | None = None) -> None:
     if view == "year":
         # Une barre par année : uniquement les années avec au moins une
-        # donnée sur la période comparée (année à date, l'année en cours
-        # reste partielle), 7 maximum — pas d'année vide ni de placeholder.
+        # donnée (année complète par défaut, l'année en cours reste
+        # partielle), 7 maximum — pas d'année vide ni de placeholder.
         totals: dict[int, float] = {}
         counts: dict[int, int] = {}
         years = []
+        # Années complètes par défaut : aucune borne sur aujourd'hui, la
+        # somme couvre toute l'année (données disponibles). La coupe
+        # « à date » a déjà été appliquée sur ``points`` si elle est demandée.
         for year in sorted({day.year for day in points}):
-            try:
-                limit = date(year, today.month, today.day)
-            except ValueError:
-                limit = date(year, today.month, 28)
-            count = sum(
-                1 for day in points if day.year == year and day <= limit
-            )
-            if not count:
+            year_values = [
+                value for day, value in points.items() if day.year == year
+            ]
+            if not year_values:
                 continue
             years.append(year)
-            counts[year] = count
-            totals[year] = _round(
-                sum(
-                    value for day, value in points.items()
-                    if day.year == year and day <= limit
-                )
-            )
+            counts[year] = len(year_values)
+            totals[year] = _round(sum(year_values))
         years = years[-7:]
         payload["years"] = years
         payload["labels"] = [str(year) for year in years]
@@ -1451,22 +1449,17 @@ def _period_totals(points: dict[date, float], view: str, month: int,
         return years, total
 
     if view == "year":
-        # Comparaison à date : l'année en cours est partielle, on borne donc
-        # chaque année au même jour de l'année pour que l'écart N-1 ait un
-        # sens. Seules les années avec données à date (comme les barres)
+        # Années complètes par défaut (l'année en cours reste partielle) :
+        # la coupe « à date » a déjà été appliquée sur ``points`` si elle
+        # est demandée. Seules les années avec données (comme les barres)
         # sont retenues, 7 maximum.
         def total(year: int) -> tuple[float, int]:
-            try:
-                limit = date(year, today.month, today.day)
-            except ValueError:
-                limit = date(year, today.month, 28)
-            kwh = sum(
-                value for day, value in points.items()
-                if day.year == year and day <= limit
-            )
-            count = sum(
-                1 for day in points if day.year == year and day <= limit
-            )
+            kwh = 0.0
+            count = 0
+            for day, value in points.items():
+                if day.year == year:
+                    kwh += value
+                    count += 1
             return kwh, count
 
         years = {

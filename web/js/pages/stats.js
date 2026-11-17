@@ -1043,6 +1043,6 @@ function energySubtitle(payload) {
     const label = payload.window?.label || view;
     return `${label} · comparaison par année`;
   }
-  if (payload.view === "year") return `${view} · total à date · comparaison par année`;
+  if (payload.view === "year") return `${view} · ${payload.as_of ? "total à date" : "année complète"} · comparaison par année`;
   return `${view} · comparaison par année`;
 }
