@@ -2956,8 +2956,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.startswith("/api/"):
                 self._api(method, path)
-            elif method == "GET":
-                self._static(path)
+            elif method in ("GET", "HEAD"):
+                self._static(path, write_body=method == "GET")
             else:
                 self._json(405, {"error": "Méthode non autorisée"})
         except Exception as err:  # noqa: BLE001 - on renvoie l'erreur à l'UI
@@ -2983,7 +2983,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self._security_headers()
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -3000,7 +3001,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Corps JSON invalide : objet attendu")
         return payload
 
-    def _static(self, path: str) -> None:
+    def _static(self, path: str, write_body: bool = True) -> None:
         entry = None
         if path in ("/", "/index.html"):
             entry = self.app.static.get("index.html")
@@ -3052,7 +3053,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "public, max-age=3600")
         self._security_headers()
         self.end_headers()
-        self.wfile.write(body)
+        if write_body:
+            self.wfile.write(body)
+
+    def do_HEAD(self) -> None:
+        """Handle HEAD requests : mêmes en-têtes que GET, sans corps."""
+        self._dispatch("HEAD")
 
     # -------------------------------------------------------------------- API
 
