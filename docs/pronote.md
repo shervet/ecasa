@@ -12,11 +12,13 @@ chauffage : confort quand l'enfant est là, réduit quand il est en cours ou abs
    si le compte en gère plusieurs.
 3. Renseigner le **statut scolaire** : `Externe` (rentre déjeuner) ou
    `Demi-pensionnaire` (reste au lycée).
-4. Régler le **trajet** domicile ↔ établissement, l'**heure de lever** et l'**heure
+4. Pour un demi-pensionnaire, activer si besoin **Retour direct** (voir
+   « Journée qui se termine le matin »).
+5. Régler le **trajet** domicile ↔ établissement, l'**heure de lever** et l'**heure
    de coucher**.
-5. Choisir les **pièces liées** et les **semaines** (A, B ou les deux).
-6. Choisir le **jour d'alternance** (voir ci-dessous).
-7. Cliquer sur **Tester la connexion**, puis **Enregistrer**.
+6. Choisir les **pièces liées** et les **semaines** (A, B ou les deux).
+7. Choisir le **jour d'alternance** (voir ci-dessous).
+8. Cliquer sur **Tester la connexion**, puis **Enregistrer**.
 
 L'import nécessite le paquet optionnel `pronotepy` :
 
@@ -38,7 +40,8 @@ Cas particuliers :
 
 - **Demi-pensionnaire** : la journée scolaire est continue (pas de confort le midi).
   Si les cours s'arrêtent avant la fin de la pause déjeuner, l'absence est prolongée
-  jusqu'à 13:30 (l'élève mange à la cantine avant de rentrer).
+  jusqu'à 13:30 (l'élève mange à la cantine avant de rentrer), sauf avec l'option
+  **Retour direct** (voir ci-dessous).
 - **Journée sans cours** : rien n'est écrit, le planning existant est conservé tel
   quel et reste modifiable.
 - **Cours annulés** : Pronote les signale, eCasa les ignore.
@@ -69,16 +72,25 @@ restent **modifiables à la main** dans le Planning : ils ne sont jamais verroui
 
 ### Journée qui se termine le matin
 
-Si le dernier cours se termine avant **13:30** (mercredi type), eCasa n'écrit que le
-**début** de la journée (nuit, lever, cours, retour à la maison). L'après-midi reste
-ton planning.
+Un jour dont le dernier cours se termine avant **13:30** (mercredi type) est
+particulier : eCasa n'écrit par défaut que le **début** de la journée (nuit, lever,
+cours, retour à la maison) et laisse l'après-midi à ton planning. La portée de
+l'import est alors partielle (`prefix`) : seule la première partie du jour est
+remplacée.
 
-L'option `pronote_direct_return` (désactivée par défaut) modifie ce comportement :
-désactivée, la pause de cantine est prolongée jusqu'à 13:30 + trajet pour un
-demi-pensionnaire et l'après-midi reste laissé à ton planning ; activée, l'enfant
-rentre après le dernier cours + trajet, la pièce repasse en confort jusqu'au coucher
-et toute la journée est gérée par Pronote (portée `full`). Le vendredi et le lundi de
-bascule gardent leur logique de garde alternée.
+L'option `pronote_direct_return` (**Réglages → Pronote → Retour direct**, désactivée
+par défaut) change ce comportement pour un **demi-pensionnaire** :
+
+- **désactivée** : l'absence est prolongée jusqu'à **13:30 + trajet** (l'élève mange
+  à la cantine avant de rentrer), puis la pièce repasse en confort ; l'après-midi
+  reste ton planning ;
+- **activée** : pas de prolongation repas/cantine, l'enfant rentre après le
+  **dernier cours + trajet**, la pièce repasse en confort **jusqu'au coucher** et
+  toute la journée est gérée par Pronote (portée `full`).
+
+Pour un **externe**, l'option ne change rien : il rentre déjà déjeuner, il n'y a pas
+de pause cantine à prolonger. Le **vendredi** et le **lundi** de garde alternée
+gardent leur logique propre, quelle que soit l'option.
 
 ## Mise à jour automatique
 

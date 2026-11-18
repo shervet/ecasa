@@ -28,6 +28,7 @@
 | Le chauffage ne suit pas le planning | Moteur en pause | Réglages → Moteur → activer, puis « Appliquer ». |
 | Consigne non appliquée | Appareil en forçage | Annuler le forçage (il expire tout seul). |
 | Créneaux verrouillés dans le Planning | Jour géré par Pronote | Import partiel : seuls les créneaux Pronote sont verrouillés ; le reste est modifiable. |
+| Trous dans le calendrier de l'accueil | Ancienne feuille de style encore en cache (service worker) | Mettre à jour eCasa, puis forcer le rechargement de l'application (vider le cache du service worker). |
 | La semaine A ne change pas | Mode d'alternance | Réglages → Semaines A/B : parité ISO ou « Pas d'alternance ». |
 | Modèles disparus après nettoyage navigateur | Anciens modèles stockés localement | Les modèles sont désormais enregistrés côté serveur (`data/state.json`) via le bouton « Enregistrer » de la page Modèles ; ils sont migrés automatiquement au premier chargement si présents sur l'appareil. |
 | « La consigne n'a pas été confirmée » | Ordre Atlantic lent | C'est un **avertissement**, pas une erreur : l'ordre est généralement appliqué avec du retard. |

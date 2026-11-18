@@ -106,6 +106,7 @@ Côté API : `GET /api/connectors/{id}/devices` et `POST /api/connectors/{id}/ap
 Le planning est un agenda 24 h par pièce, sur deux semaines (**A** et **B**) :
 
 - créer, déplacer, supprimer un créneau ;
+- consulter le **calendrier hebdomadaire** d'une pièce depuis l'accueil (feuille « Planning · Pièce ») ;
 - dupliquer un jour ou une semaine ;
 - copier la semaine A vers B (et inversement) ;
 - enregistrer des **modèles** de semaine réutilisables (persistés côté serveur dans `data/state.json`, bouton « Enregistrer » sur la page Modèles pour sauvegarder l'ensemble des modifications) ;

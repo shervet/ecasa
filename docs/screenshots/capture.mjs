@@ -102,7 +102,19 @@ const send = (method, params = {}) => new Promise((resolve, reject) => {
 await send("Page.enable");
 await send("Runtime.enable");
 await send("Page.addScriptToEvaluateOnNewDocument", {
-  source: `try { localStorage.setItem("ecasa.theme", '"light"'); } catch {}`,
+  // Thème clair + service worker neutralisé : sans cela, l'installation du SW
+  // au premier chargement déclenche un rechargement (controllerchange) qui
+  // vide la page pendant la capture.
+  source: `try { localStorage.setItem("ecasa.theme", '"light"'); } catch {}
+try {
+  const stub = {
+    addEventListener() {},
+    register: () => Promise.reject(new Error("capture: service worker désactivé")),
+    getRegistrations: () => Promise.resolve([]),
+    getRegistration: () => Promise.resolve(undefined),
+  };
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, get: () => stub });
+} catch {}`,
 });
 
 const metrics = (width, height, mobile = false) => send("Emulation.setDeviceMetricsOverride", {
@@ -141,12 +153,20 @@ async function elementShot(name, selector, { width, height, mobile = false } = {
     return true;
   })()`);
   await sleep(500);
-  const rect = await evaluate(`(() => {
+  const readRect = () => evaluate(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)});
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
+    // Coordonnées page : le clip de captureScreenshot est en coordonnées
+    // document, pas en coordonnées viewport.
+    return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
   })()`);
+  let rect = await readRect();
+  if (!rect || !rect.width || !rect.height) {
+    // Rendu asynchrone : une seconde chance après un court délai.
+    await sleep(800);
+    rect = await readRect();
+  }
   if (!rect || !rect.width || !rect.height) {
     throw new Error(`Élément introuvable ou vide : ${selector}`);
   }
@@ -158,7 +178,7 @@ async function elementShot(name, selector, { width, height, mobile = false } = {
     scale: 1,
   };
   const { data } = await send("Page.captureScreenshot", {
-    format: "png", fromSurface: true, clip,
+    format: "png", fromSurface: true, clip, captureBeyondViewport: true,
   });
   save(name, data);
 }
@@ -166,6 +186,16 @@ async function elementShot(name, selector, { width, height, mobile = false } = {
 // Accueil, planning, statistiques : captures pleine fenêtre 1440 × 900.
 await goto("#/home");
 await viewportShot("home.png");
+
+// Calendrier hebdomadaire ouvert depuis l'accueil (feuille « Planning · Pièce »).
+await evaluate(`(() => {
+  const button = document.querySelector("[data-cal-room]");
+  if (!button) return false;
+  button.click();
+  return true;
+})()`);
+await sleep(1200);
+await viewportShot("home-calendar.png");
 
 await goto("#/planning", { wait: 2500 });
 await viewportShot("planning.png");
@@ -177,7 +207,17 @@ await viewportShot("stats.png");
 await elementShot("stats-consommation.png", "#energyContent .card", { width: 1440, height: 1400 });
 
 // Section Pronote complète (Réglages → Pronote).
-await goto("#/settings/pronote", { wait: 2500 });
+await goto("#/settings/pronote", { wait: 1500 });
+// La section se peint après le chargement asynchrone de la config : on attend
+// d'avoir du contenu réel avant de capturer (sinon image vide).
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  const ready = await evaluate(`(() => {
+    const el = document.querySelector("#sec-pronote");
+    return !!el && el.innerText.length > 500;
+  })()`);
+  if (ready) break;
+  await sleep(250);
+}
 await elementShot("settings-pronote.png", "#sec-pronote", { width: 1240, height: 1600 });
 
 // Vue mobile (PWA).

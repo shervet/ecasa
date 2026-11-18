@@ -51,9 +51,9 @@ bonnes consignes.
 | **Schneider Wiser** | Découverte du hub sur le réseau local, lecture des plannings, import dans eCasa. |
 | **Autres systèmes** | Daikin (local), Bosch (contrôleur Smart Home), Netatmo et Mitsubishi (MELCloud) : lecture des appareils et envoi de consignes depuis Réglages → Appareils. |
 | **Planning** | Agenda 24 h par pièce, créneaux tactiles, modèles de semaine (enregistrés sur le serveur), copie A↔B, surcharges. |
-| **Pronote** | Import des semaines A et B, mise à jour quotidienne à l'heure choisie (ou désactivée), gestion de la garde alternée. |
+| **Pronote** | Import des semaines A et B, mise à jour quotidienne à l'heure choisie (ou désactivée), gestion de la garde alternée, option « Retour direct » pour les journées sans cours l'après-midi. |
 | **Météo** | Température extérieure Open-Meteo, sans clé d'API. |
-| **Statistiques** | Ambiance / consigne / extérieur, consommation électrique Enedis multi-années. |
+| **Statistiques** | Ambiance / consigne / extérieur, consommation électrique Enedis multi-années (vues jour, semaine, mois, année, option « À date »). |
 | **Journal** | Événements filtrables, recherche, export JSON. |
 | **Sauvegarde** | Export/import complet de l'état et des réglages (interface et scripts). |
 | **Accès distant** | Tailscale intégré (HTTPS, MagicDNS) et application Android (APK signé, accès direct avec VPN Tailscale). |
@@ -169,7 +169,7 @@ Guide détaillé : [docs/installation.md](docs/installation.md).
 | --- | --- |
 | [Installation](docs/installation.md) | Windows, Linux, Raspberry Pi, systemd, PWA, mise à jour, sauvegarde. |
 | [Configuration](docs/configuration.md) | `config.json`, réglages de l'interface, secrets, réseau, stockage. |
-| [Pronote](docs/pronote.md) | Compte, import, semaines A/B, garde alternée, mise à jour automatique. |
+| [Pronote](docs/pronote.md) | Compte, import, semaines A/B, garde alternée, retour direct, mise à jour automatique. |
 | [Équipements](docs/equipements.md) | Atlantic/Cozytouch, climatisation, Wiser, pièces et appareils. |
 | [API HTTP](docs/api.md) | Toutes les routes JSON et les règles de sécurité. |
 | [Dépannage](docs/depannage.md) | Symptômes courants et solutions. |
@@ -181,13 +181,19 @@ Guide détaillé : [docs/installation.md](docs/installation.md).
 | --- | --- | --- |
 | ![Accueil](docs/screenshots/home.png) | ![Planning](docs/screenshots/planning.png) | ![Statistiques](docs/screenshots/stats.png) |
 
-**Consommation électrique** — comparaison des mêmes périodes d'une année sur l'autre,
-via MyElectricalData (Enedis) : Les données sont mises en cache localement (`data/energy.json`) et, en cas d'indisponibilité MyElectricalData/Enedis, les dernières mesures connues restent affichées avec un avertissement.
+**Calendrier de la semaine** — ouvert depuis l'accueil (feuille « Planning · Pièce »),
+les blocs fusionnés remplissent toute leur zone :
+
+![Calendrier d'accueil](docs/screenshots/home-calendar.png)
+
+**Consommation électrique** — vues Jour, Semaine, Mois et Année, avec l'interrupteur
+« À date » : comparaison des mêmes périodes d'une année sur l'autre, via
+MyElectricalData (Enedis). Les données sont mises en cache localement (`data/energy.json`) et, en cas d'indisponibilité MyElectricalData/Enedis, les dernières mesures connues restent affichées avec un avertissement.
 
 ![Consommation électrique](docs/screenshots/stats-consommation.png)
 
-**Réglages → Pronote** — compte, statut scolaire, pièces liées, jour d'alternance et
-mise à jour automatique :
+**Réglages → Pronote** — compte, statut scolaire, retour direct, pièces liées, jour
+d'alternance et mise à jour automatique :
 
 ![Réglages Pronote](docs/screenshots/settings-pronote.png)
 
