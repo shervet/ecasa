@@ -724,7 +724,20 @@ function paintEnergy(payload) {
   const barWrap = host.querySelector(".chart-wrap");
   if (barWrap) {
     // Clic sur une barre : tableau des années pour la période cliquée.
-    attachBarTooltip(barWrap, { unit: "kWh", table: payload?.tooltip });
+    // Vue Année : chaque barre ne porte qu'une entrée, ce qui faisait basculer
+    // la bulle en affichage simple. On réutilise le tableau complet (une ligne
+    // par année) pour retrouver le même contenu qu'en vue mois/semaine.
+    let barTable = payload?.tooltip;
+    if (energyView === "year" && barTable && Array.isArray(barTable.rows)) {
+      const allRows = barTable.rows.flat();
+      if (allRows.length > 1) {
+        barTable = {
+          labels: barTable.labels,
+          rows: barTable.rows.map(() => allRows),
+        };
+      }
+    }
+    attachBarTooltip(barWrap, { unit: "kWh", table: barTable });
     // En vue jour / semaine / mois, un glisser horizontal sur la courbe
     // change de bloc — même geste qu'un défilement en restant appuyé.
     if (isNav) attachEnergyDrag(barWrap);
