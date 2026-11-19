@@ -106,19 +106,6 @@ export default {
           </div>
         </div>
 
-        <div class="card card-pad">
-          <div class="row-between wrap" style="gap:10px">
-            <div class="segmented" id="statsRange">
-              ${RANGES.map(([key, label]) => `<button type="button" data-range="${key}" class="${key === range ? "is-active" : ""}">${label}</button>`).join("")}
-            </div>
-            <div class="row" style="gap:6px">
-              <button class="icon-btn" type="button" id="statsPrev" aria-label="Période précédente">${icon("chevron-left", 20)}</button>
-              <button class="btn btn-sm" type="button" id="statsToday">Aujourd'hui</button>
-              <button class="icon-btn" type="button" id="statsNext" aria-label="Période suivante">${icon("chevron-right", 20)}</button>
-            </div>
-          </div>
-        </div>
-
         <div id="statsContent">
           <div class="boot" style="min-height:240px"><span class="spinner"></span><p>Chargement des mesures…</p></div>
         </div>
@@ -132,25 +119,6 @@ export default {
     view.querySelector("#statsRoom").addEventListener("change", (event) => {
       roomId = event.target.value;
       writePref("stats.room", roomId);
-      load();
-    });
-
-    view.querySelectorAll("[data-range]").forEach((button) => {
-      button.addEventListener("click", () => {
-        range = button.dataset.range;
-        writePref("stats.range", range);
-        view.querySelectorAll("[data-range]").forEach((item) => {
-          item.classList.toggle("is-active", item.dataset.range === range);
-        });
-        load();
-      });
-    });
-
-    view.querySelector("#statsPrev").addEventListener("click", () => shift(-1));
-    view.querySelector("#statsNext").addEventListener("click", () => shift(1));
-    view.querySelector("#statsToday").addEventListener("click", () => {
-      anchor = todayIso();
-      writePref("stats.anchor", anchor);
       load();
     });
 
@@ -268,27 +236,38 @@ function paint() {
         <span class="pill ${weather.ok ? "pill-ok" : "pill-ghost"}">${weather.ok ? "Météo incluse" : "Sans météo"}</span>
       </div>
       <div class="card-body">
-        ${lineChart({
-          series,
-          labels: buckets.map((bucket) => bucket.short || bucket.label),
-          height: 260,
-          unit: "°C",
-        })}
-        ${chartLegend(series)}
-        ${!weather.ok && weather.error ? `<p class="hint mt-2">${escapeHtml(weather.error)}</p>` : ""}
+        <div class="row-between wrap" style="gap:10px">
+          <div class="segmented" id="statsRange">
+            ${RANGES.map(([key, label]) => `<button type="button" data-range="${key}" class="${key === range ? "is-active" : ""}">${label}</button>`).join("")}
+          </div>
+          <div class="row" style="gap:6px">
+            <button class="icon-btn" type="button" id="statsPrev" aria-label="Période précédente">${icon("chevron-left", 20)}</button>
+            <button class="btn btn-sm" type="button" id="statsToday">Aujourd'hui</button>
+            <button class="icon-btn" type="button" id="statsNext" aria-label="Période suivante">${icon("chevron-right", 20)}</button>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          ${lineChart({
+            series,
+            labels: buckets.map((bucket) => bucket.short || bucket.label),
+            height: 260,
+            unit: "°C",
+          })}
+          ${chartLegend(series)}
+          ${!weather.ok && weather.error ? `<p class="hint mt-2">${escapeHtml(weather.error)}</p>` : ""}
+        </div>
+        <div class="kpi-grid mt-2">
+          ${kpi("thermometer", "Ambiance moyenne", `${fmtTemp(summary.ambient_avg)} °C`, `${fmtTemp(summary.ambient_min)} → ${fmtTemp(summary.ambient_max)} °C`)}
+          ${kpi("flame", "Consigne moyenne", `${fmtTemp(summary.setpoint_avg)} °C`, "réglage appliqué")}
+          ${kpi("cloud", "Extérieur moyen", `${fmtTemp(summary.outside_avg)} °C`, `${fmtTemp(summary.outside_min)} → ${fmtTemp(summary.outside_max)} °C`)}
+          ${kpi(
+            gap !== null && gap !== undefined && Number(gap) > 0 ? "trending-up" : "trending-down",
+            "Écart moyen",
+            `${gap === null || gap === undefined ? "—" : `${Number(gap) > 0 ? "+" : ""}${fmtTemp(gap)} °C`}`,
+            "ambiance − consigne"
+          )}
+        </div>
       </div>
-    </div>
-
-    <div class="kpi-grid mt-2">
-      ${kpi("thermometer", "Ambiance moyenne", `${fmtTemp(summary.ambient_avg)} °C`, `${fmtTemp(summary.ambient_min)} → ${fmtTemp(summary.ambient_max)} °C`)}
-      ${kpi("flame", "Consigne moyenne", `${fmtTemp(summary.setpoint_avg)} °C`, "réglage appliqué")}
-      ${kpi("cloud", "Extérieur moyen", `${fmtTemp(summary.outside_avg)} °C`, `${fmtTemp(summary.outside_min)} → ${fmtTemp(summary.outside_max)} °C`)}
-      ${kpi(
-        gap !== null && gap !== undefined && Number(gap) > 0 ? "trending-up" : "trending-down",
-        "Écart moyen",
-        `${gap === null || gap === undefined ? "—" : `${Number(gap) > 0 ? "+" : ""}${fmtTemp(gap)} °C`}`,
-        "ambiance − consigne"
-      )}
     </div>
 
     <details class="card card-details mt-2"${readPref("stats.detailOpen", false) ? " open" : ""}>
@@ -324,6 +303,24 @@ function paint() {
       ${summary.first_sample ? `Historique du ${fmtDate(summary.first_sample)} au ${fmtDate(summary.last_sample)}.` : ""}
     </p>
   `;
+
+  host.querySelectorAll("[data-range]").forEach((button) => {
+    button.addEventListener("click", () => {
+      range = button.dataset.range;
+      writePref("stats.range", range);
+      host.querySelectorAll("[data-range]").forEach((item) => {
+        item.classList.toggle("is-active", item.dataset.range === range);
+      });
+      load();
+    });
+  });
+  host.querySelector("#statsPrev")?.addEventListener("click", () => shift(-1));
+  host.querySelector("#statsNext")?.addEventListener("click", () => shift(1));
+  host.querySelector("#statsToday")?.addEventListener("click", () => {
+    anchor = todayIso();
+    writePref("stats.anchor", anchor);
+    load();
+  });
 
   attachChartTooltip();
 
