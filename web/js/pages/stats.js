@@ -259,18 +259,6 @@ function paint() {
   const gap = summary.gap_avg;
 
   host.innerHTML = `
-    <div class="kpi-grid">
-      ${kpi("thermometer", "Ambiance moyenne", `${fmtTemp(summary.ambient_avg)} °C`, `${fmtTemp(summary.ambient_min)} → ${fmtTemp(summary.ambient_max)} °C`)}
-      ${kpi("flame", "Consigne moyenne", `${fmtTemp(summary.setpoint_avg)} °C`, "réglage appliqué")}
-      ${kpi("cloud", "Extérieur moyen", `${fmtTemp(summary.outside_avg)} °C`, `${fmtTemp(summary.outside_min)} → ${fmtTemp(summary.outside_max)} °C`)}
-      ${kpi(
-        gap !== null && gap !== undefined && Number(gap) > 0 ? "trending-up" : "trending-down",
-        "Écart moyen",
-        `${gap === null || gap === undefined ? "—" : `${Number(gap) > 0 ? "+" : ""}${fmtTemp(gap)} °C`}`,
-        "ambiance − consigne"
-      )}
-    </div>
-
     <div class="card mt-2">
       <div class="card-head">
         <div>
@@ -289,6 +277,18 @@ function paint() {
         ${chartLegend(series)}
         ${!weather.ok && weather.error ? `<p class="hint mt-2">${escapeHtml(weather.error)}</p>` : ""}
       </div>
+    </div>
+
+    <div class="kpi-grid mt-2">
+      ${kpi("thermometer", "Ambiance moyenne", `${fmtTemp(summary.ambient_avg)} °C`, `${fmtTemp(summary.ambient_min)} → ${fmtTemp(summary.ambient_max)} °C`)}
+      ${kpi("flame", "Consigne moyenne", `${fmtTemp(summary.setpoint_avg)} °C`, "réglage appliqué")}
+      ${kpi("cloud", "Extérieur moyen", `${fmtTemp(summary.outside_avg)} °C`, `${fmtTemp(summary.outside_min)} → ${fmtTemp(summary.outside_max)} °C`)}
+      ${kpi(
+        gap !== null && gap !== undefined && Number(gap) > 0 ? "trending-up" : "trending-down",
+        "Écart moyen",
+        `${gap === null || gap === undefined ? "—" : `${Number(gap) > 0 ? "+" : ""}${fmtTemp(gap)} °C`}`,
+        "ambiance − consigne"
+      )}
     </div>
 
     <details class="card card-details mt-2"${readPref("stats.detailOpen", false) ? " open" : ""}>
