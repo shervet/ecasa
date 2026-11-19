@@ -270,7 +270,7 @@ function render() {
     const device = entry.device_id ? deviceName(store.state, entry.device_id) : "";
 
     rows.push(`<div class="log-item" data-level="${escapeHtml(level)}">
-      <span class="log-time">${entry.ts ? fmtTime(entry.ts, true) : "—"}</span>
+      <span class="log-time">${entry.ts ? fmtTime(entry.ts) : "—"}</span>
       <span class="log-icon">${icon(glyph, 14)}</span>
       <span class="log-msg">
         ${escapeHtml(entry.message || "")}

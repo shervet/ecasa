@@ -2811,6 +2811,11 @@ details.brand-panel.is-locked > :not(summary) {
   flex: none;
 }
 
+/* Glisser-déposer des pièces : la poignée reçoit le pointeur sans scroller. */
+.room-drag { touch-action: none; cursor: grab; }
+.room-drag:active { cursor: grabbing; }
+.settings-row.is-dragging { opacity: 0.72; position: relative; z-index: 3; background: var(--surface-2); box-shadow: var(--shadow-lg); }
+
 .danger-zone {
   border-color: color-mix(in srgb, var(--bad) 30%, var(--line));
 }
@@ -3303,12 +3308,8 @@ details.brand-panel.is-locked > :not(summary) {
   }
 
   .log-item {
-    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-columns: 54px 24px minmax(0, 1fr);
     gap: 8px;
-  }
-
-  .log-time {
-    display: none;
   }
 
   .agenda {

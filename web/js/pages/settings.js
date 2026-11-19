@@ -2225,6 +2225,7 @@ function renderRooms() {
           </div>
         </div>
         <div class="sr-control">
+          <button class="icon-btn room-drag" type="button" data-drag-room="${room.id}" aria-label="Déplacer ${escapeHtml(room.name)}" title="Glisser pour réordonner" draggable="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
           <button class="icon-btn" type="button" data-edit-room="${room.id}" aria-label="Modifier ${escapeHtml(room.name)}">${icon("edit", 18)}</button>
           <button class="icon-btn" type="button" data-delete-room="${room.id}" aria-label="Supprimer ${escapeHtml(room.name)}">${icon("trash", 18)}</button>
         </div>
@@ -2252,6 +2253,129 @@ function renderRooms() {
       } catch (err) {
         toastError(err);
       }
+    });
+  });
+
+  bindRoomDrag(host);
+}
+
+function bindRoomDrag(host) {
+  host.querySelectorAll("[data-drag-room]").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button != null && event.button !== 0) return;
+      const row = handle.closest(".settings-row");
+      if (!row) return;
+      event.preventDefault();
+
+      const rows = [...host.querySelectorAll(".settings-row")];
+      const fromIndex = rows.indexOf(row);
+      if (fromIndex < 0) return;
+
+      const rects = rows.map((item) => item.getBoundingClientRect());
+      const centers = rects.map((rect) => rect.top + rect.height / 2);
+      const rowHeight = rects[fromIndex].height;
+      const startY = event.clientY;
+      let targetIndex = fromIndex;
+      let moved = false;
+
+      row.classList.add("is-dragging");
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch {
+        /* Les événements synthétiques n'ont pas de capture de pointeur. */
+      }
+
+      const paint = (dy) => {
+        row.style.transform = `translateY(${dy}px)`;
+        rows.forEach((item, index) => {
+          if (index === fromIndex) return;
+          if (fromIndex < targetIndex && index > fromIndex && index <= targetIndex) {
+            item.style.transform = `translateY(${-rowHeight}px)`;
+          } else if (targetIndex < fromIndex && index >= targetIndex && index < fromIndex) {
+            item.style.transform = `translateY(${rowHeight}px)`;
+          } else {
+            item.style.transform = "";
+          }
+        });
+      };
+
+      const restore = () => {
+        rows.forEach((item) => {
+          item.style.transform = "";
+        });
+        row.classList.remove("is-dragging");
+      };
+
+      const finish = () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onCancel);
+      };
+
+      const onMove = (moveEvent) => {
+        if (moveEvent.pointerId !== event.pointerId) return;
+        const dy = moveEvent.clientY - startY;
+        if (!moved) {
+          if (Math.abs(dy) < 4) return;
+          moved = true;
+        }
+        moveEvent.preventDefault();
+
+        let best = Infinity;
+        centers.forEach((center, index) => {
+          const distance = Math.abs(moveEvent.clientY - center);
+          if (distance < best) {
+            best = distance;
+            targetIndex = index;
+          }
+        });
+        paint(dy);
+      };
+
+      const onUp = async (upEvent) => {
+        if (upEvent.pointerId !== event.pointerId) return;
+        finish();
+        restore();
+        if (!moved || targetIndex === fromIndex) {
+          renderRooms();
+          return;
+        }
+
+        const ordered = [...rows];
+        ordered.splice(fromIndex, 1);
+        ordered.splice(targetIndex, 0, row);
+        ordered.forEach((item) => host.appendChild(item));
+
+        const updates = [];
+        ordered.forEach((item, index) => {
+          if (rows.indexOf(item) === index) return;
+          const id = item.querySelector("[data-drag-room]")?.dataset.dragRoom;
+          if (id != null) updates.push({ id, position: index });
+        });
+
+        try {
+          for (const update of updates) {
+            await put(`/api/rooms/${update.id}`, { position: update.position });
+          }
+          await refreshState({ silent: true });
+          renderRooms();
+          toast("Ordre des pièces enregistré.");
+        } catch (err) {
+          toastError(err);
+          renderRooms();
+        }
+      };
+
+      const onCancel = (cancelEvent) => {
+        if (cancelEvent.pointerId !== event.pointerId) return;
+        finish();
+        restore();
+        renderRooms();
+      };
+
+      document.addEventListener("pointermove", onMove, { passive: false });
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onCancel);
     });
   });
 }
@@ -2309,10 +2433,6 @@ async function openRoomEditor(room) {
       <label class="field">
         <span class="label">Actionneur</span>
         <select class="select" data-actuator>${options(room?.actuator_device_id)}</select>
-      </label>
-      <label class="field">
-        <span class="label">Ordre d'affichage <span class="opt">0 = premier</span></span>
-        <input class="input" type="number" data-position min="0" value="${escapeHtml(room?.position ?? 0)}">
       </label>
     </div>
     <p class="hint">Le thermostat mesure la température (appareil Atlantic ou capteur dédié), l'actionneur chauffe ou refroidit. Sur Wiser, la zone fait les deux.</p>
@@ -2393,7 +2513,6 @@ async function openRoomEditor(room) {
       name: value("[data-name]").trim(),
       thermostat_device_id: value("[data-thermostat]") || null,
       actuator_device_id: value("[data-actuator]") || null,
-      position: Number(value("[data-position]") || 0),
     };
     try {
       if (room) await put(`/api/rooms/${room.id}`, payload);
