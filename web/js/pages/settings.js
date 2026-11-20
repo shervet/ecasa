@@ -2418,7 +2418,7 @@ async function openRoomEditor(room) {
   const hcInfo = hc && typeof hc === "object" ? hc : {};
   const hcTable = Array.isArray(hcInfo.table) ? hcInfo.table : [];
   const hcWeatherHint = hcInfo.t_out != null
-    ? `🌡 T extérieure utilisée : ${fmtTemp(hcInfo.t_out)}${hcInfo.t_out_fallback ? " · apprentissage en repli (10 °C)" : " °C"}`
+    ? `🌡 T extérieure utilisée : ${fmtTemp(hcInfo.t_out)} °C${hcInfo.t_out_fallback ? " · apprentissage en repli (10 °C)" : ""}`
     : "🌡 T extérieure indisponible — τ non corrigé par la météo";
   const devices = store.state?.devices || [];
   const options = (selected) =>
