@@ -636,7 +636,7 @@ class Engine:
                 n = int(fit.get("n") or 0)
             except (TypeError, ValueError):
                 n = 0
-            return tau0, tau1, n < 5
+            return tau0, tau1, n < 3
         # Défaut sans échantillons suffisants.
         return 3.0, 0.0, True
 

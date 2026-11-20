@@ -52,12 +52,27 @@ class FitTauTests(unittest.TestCase):
         self.assertAlmostEqual(fit["tau1"], p1, delta=0.03)
         self.assertGreater(fit["r2"], 0.99)
 
-    def test_returns_none_with_fewer_than_five_valid_samples(self):
+    def test_returns_none_with_fewer_than_three_valid_samples(self):
         t_out = 0.0
         transitions = [
-            transition(t_out + i, 17.0, 21.0, 2.8) for i in range(4)
+            transition(t_out + i, 17.0, 21.0, 2.8) for i in range(2)
         ]
         self.assertIsNone(fit_tau(transitions))
+
+        three = [transition(t_out + i, 17.0, 21.0, 2.8) for i in range(3)]
+        fit = fit_tau(three)
+        self.assertIsNotNone(fit)
+        self.assertEqual(fit["n"], 3)
+
+    def test_accepts_tau_of_fourteen_hours(self):
+        transitions = [transition(float(i), 17.0, 21.0, 14.0) for i in range(3)]
+        counters = {}
+        fit = fit_tau(transitions, counters=counters)
+        self.assertIsNotNone(fit)
+        self.assertEqual(fit["n"], 3)
+        self.assertEqual(counters["kept"], 3)
+        self.assertEqual(counters["reject_tau_range"], 0)
+        self.assertAlmostEqual(fit["tau0"], 14.0, delta=0.01)
 
     def test_filters_invalid_samples(self):
         valid = [
@@ -70,9 +85,9 @@ class FitTauTests(unittest.TestCase):
             {"t_out": 16.6, "t_room": 17.0, "target": 21.0, "lag_minutes": 30.0},
             # target <= t_room + 0,5
             {"t_out": 0.0, "t_room": 20.8, "target": 21.0, "lag_minutes": 30.0},
-            # tau hors de ]0, 12]
+            # tau hors de ]0, 24]
             {"t_out": 0.0, "t_room": 17.0, "target": 21.0, "lag_minutes": 0.0},
-            {"t_out": 0.0, "t_room": 17.0, "target": 21.0, "lag_minutes": 200.0},
+            {"t_out": 0.0, "t_room": 17.0, "target": 21.0, "lag_minutes": 400.0},
             # données manquantes / malformées
             {"t_out": 0.0, "t_room": 17.0, "target": 21.0},
             {"t_out": "x", "t_room": 17.0, "target": 21.0, "lag_minutes": 30.0},
@@ -90,7 +105,7 @@ class FitTauTests(unittest.TestCase):
         transitions += [
             # t_room trop proche de t_out : ratio non calculable.
             {"t_out": 16.6, "t_room": 17.0, "target": 21.0, "lag_minutes": 30.0},
-            # τ hors de ]0, 12 h].
+            # τ hors de ]0, 24 h].
             {"t_out": 0.0, "t_room": 17.0, "target": 21.0, "lag_minutes": 0.0},
             # target <= t_room + 0,5.
             transition(0.0, 20.8, 21.0, 2.5),
@@ -378,7 +393,7 @@ class WeatherFallbackTests(unittest.TestCase):
         self.assertEqual(counters["no_t_out"], 6)
         self.assertIsNone(fit_tau(transitions))
 
-    def test_fallback_keeps_real_weather_when_available(self):
+    def test_fallback_forces_real_weather_to_10c(self):
         weather = FakeWeather(
             hours_by_date={_moment(8).date().isoformat(): {8: -2.0}},
             failing_dates={_moment(9).date().isoformat()},
@@ -390,7 +405,37 @@ class WeatherFallbackTests(unittest.TestCase):
             store, room_id, weather=weather, config=CONFIG, t_out_fallback=10.0
         )
         self.assertEqual(len(transitions), 2)
-        self.assertEqual({item["t_out"] for item in transitions}, {10.0, -2.0})
+        self.assertEqual({item["t_out"] for item in transitions}, {10.0})
+
+    def test_fallback_with_mixed_weather_forces_10c_and_zero_slope(self):
+        present_days = (8, 7)
+        missing_days = (9, 6, 5)
+        weather = FakeWeather(
+            hours_by_date={
+                _moment(n).date().isoformat(): {8: -2.0 + n} for n in present_days
+            },
+            failing_dates={_moment(n).date().isoformat() for n in missing_days},
+        )
+        rows = []
+        for n in present_days + missing_days:
+            rows += _rise_rows(_moment(n))
+        store, room_id = _store_with_rises(rows)
+        counters = {}
+        transitions = room_transitions(
+            store,
+            room_id,
+            weather=weather,
+            config=CONFIG,
+            counters=counters,
+            t_out_fallback=10.0,
+        )
+        self.assertEqual(len(transitions), 5)
+        self.assertTrue(all(item["t_out"] == 10.0 for item in transitions))
+        self.assertEqual(counters["no_t_out"], 0)
+        fit = fit_tau(transitions)
+        self.assertIsNotNone(fit)
+        self.assertEqual(fit["n"], 5)
+        self.assertAlmostEqual(fit["tau1"], 0.0, places=6)
 
     def test_fallback_uses_10c_and_fit_has_zero_slope(self):
         counters = {}
@@ -563,6 +608,15 @@ class CurveFitDebugTests(unittest.TestCase):
                 for _ in range(6)
             ],
         )
+
+
+class CurveParamsTests(unittest.TestCase):
+    def test_learning_threshold_is_three_samples(self):
+        engine = Engine(MemoryStore(None), _Client())
+        expectations = {2: True, 3: False, 10: False}
+        for n, expected in expectations.items():
+            room = {"curve_fit": {"tau0": 4.0, "tau1": 0.0, "n": n}}
+            self.assertEqual(engine._curve_params(room)[2], expected, f"n={n}")
 
 
 if __name__ == "__main__":

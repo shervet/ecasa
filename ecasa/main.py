@@ -2701,7 +2701,7 @@ def _enrich_room_heating_curve(app, room: dict) -> dict:
             tau1 = float(tau1 or 0.0)
         except (TypeError, ValueError):
             tau0, tau1 = 3.0, 0.0
-        learning = n < 5
+        learning = n < 3
 
     t_out = None
     try:

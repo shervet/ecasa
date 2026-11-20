@@ -17,7 +17,8 @@ def fit_tau(transitions, counters=None) -> dict | None:
     ``transitions`` : liste de dicts {t_out, t_room, target, lag_minutes}.
     ``counters`` reçoit ``{kept, reject_ratio, reject_tau_range, reject_delta,
     total}``, y compris quand le fit échoue.
-    Retourne {tau0, tau1, n, r2, debug} ou None si moins de 5 échantillons valides.
+    Retourne {tau0, tau1, n, r2, debug} ou None si moins de 3 échantillons valides.
+    τ est accepté dans ]0, 24 h] (au-delà : rejet compté dans reject_tau_range).
     """
     if counters is None:
         counters = {}
@@ -46,8 +47,8 @@ def fit_tau(transitions, counters=None) -> dict | None:
             counters["reject_ratio"] += 1
             continue
         tau_hours = (lag_minutes / 60.0) / math.log(ratio)
-        # τ_i doit être dans ]0, 12 h].
-        if not (0.0 < tau_hours <= 12.0):
+        # τ_i doit être dans ]0, 24 h].
+        if not (0.0 < tau_hours <= 24.0):
             counters["reject_tau_range"] += 1
             continue
         if not (target > t_room + 0.5):
@@ -56,7 +57,7 @@ def fit_tau(transitions, counters=None) -> dict | None:
         samples.append((t_out, tau_hours))
 
     counters["kept"] = len(samples)
-    if len(samples) < 5:
+    if len(samples) < 3:
         return None
 
     n = len(samples)
@@ -322,7 +323,8 @@ def room_transitions(
     Source : historique des consignes désirées (échantillons), fiable et horodaté.
     Réutilise l'accès météo passée mis en cache (sans nouvel appel réseau dédié).
     ``counters`` reçoit ``{rises, out_of_range, no_t_out, no_lag, valid}``.
-    ``t_out_fallback`` (ex. 10.0) remplace la météo manquante pour le fit.
+    ``t_out_fallback`` (ex. 10.0) remplace toutes les températures extérieures,
+    y compris celles qui avaient une météo valide : x constant, tau1 = 0.
     """
     if counters is None:
         counters = {}
@@ -383,12 +385,14 @@ def room_transitions(
             continue
 
         t_out = _outside_temp_at(weather, config, start_ts)
-        if t_out is None:
-            if fallback is None:
-                counters["no_t_out"] += 1
-                i += 1
-                continue
+        if fallback is not None:
+            # Mode repli : x constant pour toutes les transitions, y compris
+            # celles qui avaient une météo valide (tau1 = 0 sans mélange).
             t_out = fallback
+        elif t_out is None:
+            counters["no_t_out"] += 1
+            i += 1
+            continue
 
         # Recherche du lag : premier relevé >= target - 0,2 °C dans les 12 h,
         # avant toute descente de consigne.
