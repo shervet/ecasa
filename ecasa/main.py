@@ -2609,7 +2609,7 @@ def _refresh_model_link(app, room_id) -> None:
     app.store.set_model_link_pending(room_id, not matches)
 
 
-def _room_target_temp(store, room: dict) -> float | None:
+def _room_target_temp(app, room: dict) -> float | None:
     """Consigne cible de référence pour la table d'avance (prochaine montée ou actuelle)."""
     try:
         room_id = int(room.get("id"))
@@ -2619,30 +2619,32 @@ def _room_target_temp(store, room: dict) -> float | None:
     device = None
     if actuator_id not in (None, "", 0, "0"):
         try:
-            device = store.device(int(actuator_id))
+            device = app.store.device(int(actuator_id))
         except (TypeError, ValueError):
             device = None
     if device is None:
-        for candidate in store.devices():
+        for candidate in app.store.devices():
             if int(candidate.get("room_id") or 0) == room_id:
                 device = candidate
                 break
     if device is None:
         return None
     try:
-        from .engine import Engine as _Engine
-
         temp = None
         # Essaie de déduire une consigne pertinente depuis le planning courant.
         # (fallback simple : 19 °C si indisponible)
-        # On ne dépend pas d'une instance Engine ici : on lit les slots du jour.
-        settings = store.settings()
+        settings = app.store.settings()
         now = datetime.now()
-        week = week_type(now, settings, store.week_overrides())
-        slots = store.slots(room_id=room_id, week=week)
+        week = week_type(now, settings, app.store.week_overrides())
+        slots = app.store.slots(room_id=room_id, week=week)
         slot = find_slot(slots, now)
         if slot and slot.get("temp") is not None:
-            temp = float(slot.get("temp"))
+            try:
+                temp = app.engine.effective_temp(
+                    device, slot.get("mode"), slot.get("temp")
+                )
+            except Exception:
+                temp = float(slot.get("temp"))
         if temp is None:
             return 19.0
         return temp
@@ -2715,7 +2717,7 @@ def _enrich_room_heating_curve(app, room: dict) -> dict:
     if rise and rise.get("temp") is not None:
         target = float(rise["temp"])
     else:
-        ref = _room_target_temp(app.store, room)
+        ref = _room_target_temp(app, room)
         if ref is not None:
             target = float(ref)
 
