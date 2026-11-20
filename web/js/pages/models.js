@@ -157,6 +157,21 @@ function countSlots(days) {
 
 /* --------------------------------------------------------------- cibles */
 
+/**
+ * Planning A/B réel d'une pièce : le programme de son appareil actionneur
+ * (même règle que buildTargets de la page Planning).
+ */
+function roomProgram(roomId) {
+  const state = store.state;
+  if (!state) return {};
+  const room = (state.rooms || []).find((item) => String(item.id) === String(roomId));
+  if (!room) return {};
+  const devices = devicesInRoom(state, room.id);
+  const actuator = devices.find((d) => Number(d.device_id) === Number(room.actuator_device_id));
+  const device = actuator || devices[0];
+  return device?.programs || {};
+}
+
 function roomTargets() {
   const state = store.state;
   if (!state) return [];
@@ -437,15 +452,13 @@ function createModel() {
   if (input?.select) input.select();
 }
 
-/** Nouveau modèle dont le planning A/B est une copie profonde du modèle de la pièce. */
+/** Nouveau modèle dont le planning A/B est une copie profonde du planning de la pièce. */
 function createModelFromRoom(roomId) {
-  const source = linkedModelOf(roomId);
-  if (!source) return;
+  if (linkedModelOf(roomId)) return;
+  const program = roomProgram(roomId);
+  const days = { A: cloneWeek(program.A), B: cloneWeek(program.B) };
   const name = uniqueModelName(roomLabel(roomId) || "Pièce");
-  models.push({
-    name,
-    days: { A: cloneWeek(source.days?.A), B: cloneWeek(source.days?.B) },
-  });
+  models.push({ name, days });
   markDirty();
   selectedIndex = models.length - 1;
   week = "A";
@@ -457,25 +470,39 @@ function createModelFromRoom(roomId) {
 
 /**
  * Choix du point de départ : « Modèle vierge » (par défaut) ou copie du
- * planning d'une pièce, c'est-à-dire de son modèle lié.
+ * planning propre d'une pièce non liée (celui de son appareil actionneur).
  */
 function openCreateSheet() {
-  const rooms = sortByPosition(store.state?.rooms || []).map((room) => ({
-    id: String(room.id),
-    label: room.name || `Pièce ${room.id}`,
-    model: linkedModelOf(room.id),
-  }));
-  const copyable = rooms.filter((room) => room.model);
+  const rooms = sortByPosition(store.state?.rooms || []).map((room) => {
+    const id = String(room.id);
+    const model = linkedModelOf(id);
+    const counts = model ? null : { A: 0, B: 0 };
+    if (!model) {
+      const program = roomProgram(id);
+      counts.A = countSlots(cloneWeek(program.A));
+      counts.B = countSlots(cloneWeek(program.B));
+    }
+    return {
+      id,
+      label: room.name || `Pièce ${room.id}`,
+      model,
+      counts,
+      selectable: !model && counts.A + counts.B > 0,
+    };
+  });
+  const copyable = rooms.filter((room) => room.selectable);
   let source = "blank";
 
   const roomRows = copyable.length
     ? `<div class="list model-source" role="radiogroup" aria-label="Pièce à copier">
         ${rooms
           .map((room) => {
-            const disabled = !room.model;
+            const disabled = !room.selectable;
             const sub = room.model
-              ? `Modèle : ${escapeHtml(room.model.name)}`
-              : "aucun planning à copier";
+              ? `liée au modèle ${escapeHtml(room.model.name)} — dupliquez le modèle`
+              : room.selectable
+                ? `A : ${room.counts.A} créneaux · B : ${room.counts.B}`
+                : "aucun créneau";
             return `<div class="list-row model-pick${disabled ? " is-disabled" : ""}" data-source-row="${escapeHtml(room.id)}">
               <button class="li-main" type="button" role="radio" aria-checked="false" data-source="${escapeHtml(room.id)}"${disabled ? " disabled" : ""}>
                 <span class="li-title">${escapeHtml(room.label)}</span>
