@@ -166,6 +166,24 @@ button {
   cursor: pointer;
 }
 
+/* Zones repliables : indicateur d'état sur le summary, sans marqueur natif doublon. */
+details > summary {
+  list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary::before {
+  content: "+ ";
+  flex: none;
+}
+
+details[open] > summary::before {
+  content: "− ";
+}
+
 a {
   color: var(--primary);
   text-decoration: none;

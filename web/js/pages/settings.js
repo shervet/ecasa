@@ -2454,7 +2454,7 @@ async function openRoomEditor(room) {
       `<label class="switch" title="Courbe de chauffe"><input type="checkbox" data-heating-curve${hcEnabled ? " checked" : ""}><span class="track"></span></label>`
     )}
     ${hcEnabled ? `
-    <details class="stack" open>
+    <details class="stack">
       <summary class="card-title summary-row">Table d'avance (temps avant la consigne)</summary>
       ${hcInfo.learning
         ? '<p class="hint" style="font-style:italic">Apprentissage en cours — valeurs par défaut (τ=3 h)</p>'
