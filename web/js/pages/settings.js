@@ -2216,6 +2216,7 @@ function renderRooms() {
       const thermostat = devices.find((d) => Number(d.device_id) === Number(room.thermostat_device_id));
       const actuator = devices.find((d) => Number(d.device_id) === Number(room.actuator_device_id));
       return `<div class="settings-row">
+        <button class="icon-btn room-drag" type="button" data-drag-room="${room.id}" aria-label="Déplacer ${escapeHtml(room.name)}" title="Glisser pour réordonner" draggable="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         <div class="sr-main">
           <div class="sr-title">${escapeHtml(room.name)}</div>
           <div class="sr-sub">
@@ -2225,7 +2226,6 @@ function renderRooms() {
           </div>
         </div>
         <div class="sr-control">
-          <button class="icon-btn room-drag" type="button" data-drag-room="${room.id}" aria-label="Déplacer ${escapeHtml(room.name)}" title="Glisser pour réordonner" draggable="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
           <button class="icon-btn" type="button" data-edit-room="${room.id}" aria-label="Modifier ${escapeHtml(room.name)}">${icon("edit", 18)}</button>
           <button class="icon-btn" type="button" data-delete-room="${room.id}" aria-label="Supprimer ${escapeHtml(room.name)}">${icon("trash", 18)}</button>
         </div>
