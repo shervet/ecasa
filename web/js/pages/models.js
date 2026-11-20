@@ -406,12 +406,27 @@ function render() {
   if (selectedIndex === null) paintSaveState();
 }
 
-function createModel() {
-  let name = "Nouveau modèle";
+/** Nom libre : « base », puis « base 2 », « base 3 »… (logique de createModel). */
+function uniqueModelName(base) {
+  let name = base;
   let suffix = 2;
   while (models.some((model) => model.name === name)) {
-    name = `Nouveau modèle ${suffix++}`;
+    name = `${base} ${suffix++}`;
   }
+  return name;
+}
+
+/** Modèle lié à une pièce, via la liaison renvoyée par l'API (ou le state). */
+function linkedModelOf(roomId) {
+  const id = String(roomId);
+  const link = links[id] || store.state?.model_links?.[id];
+  const modelId = String(link?.model_id || "");
+  if (!modelId) return null;
+  return models.find((model) => String(model.id) === modelId) || null;
+}
+
+function createModel() {
+  const name = uniqueModelName("Nouveau modèle");
   models.push({ name, days: { A: emptyWeek(), B: emptyWeek() } });
   markDirty();
   selectedIndex = models.length - 1;
@@ -420,6 +435,112 @@ function createModel() {
   const input = root?.querySelector("[data-rename]");
   input?.focus();
   if (input?.select) input.select();
+}
+
+/** Nouveau modèle dont le planning A/B est une copie profonde du modèle de la pièce. */
+function createModelFromRoom(roomId) {
+  const source = linkedModelOf(roomId);
+  if (!source) return;
+  const name = uniqueModelName(roomLabel(roomId) || "Pièce");
+  models.push({
+    name,
+    days: { A: cloneWeek(source.days?.A), B: cloneWeek(source.days?.B) },
+  });
+  markDirty();
+  selectedIndex = models.length - 1;
+  week = "A";
+  render();
+  const input = root?.querySelector("[data-rename]");
+  input?.focus();
+  if (input?.select) input.select();
+}
+
+/**
+ * Choix du point de départ : « Modèle vierge » (par défaut) ou copie du
+ * planning d'une pièce, c'est-à-dire de son modèle lié.
+ */
+function openCreateSheet() {
+  const rooms = sortByPosition(store.state?.rooms || []).map((room) => ({
+    id: String(room.id),
+    label: room.name || `Pièce ${room.id}`,
+    model: linkedModelOf(room.id),
+  }));
+  const copyable = rooms.filter((room) => room.model);
+  let source = "blank";
+
+  const roomRows = copyable.length
+    ? `<div class="list model-source" role="radiogroup" aria-label="Pièce à copier">
+        ${rooms
+          .map((room) => {
+            const disabled = !room.model;
+            const sub = room.model
+              ? `Modèle : ${escapeHtml(room.model.name)}`
+              : "aucun planning à copier";
+            return `<div class="list-row model-pick${disabled ? " is-disabled" : ""}" data-source-row="${escapeHtml(room.id)}">
+              <button class="li-main" type="button" role="radio" aria-checked="false" data-source="${escapeHtml(room.id)}"${disabled ? " disabled" : ""}>
+                <span class="li-title">${escapeHtml(room.label)}</span>
+                <span class="li-sub">${sub}</span>
+              </button>
+              <span class="li-check" aria-hidden="true">${icon("check", 13)}</span>
+            </div>`;
+          })
+          .join("")}
+      </div>`
+    : '<p class="hint">Aucun planning à copier pour l\'instant.</p>';
+
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <div class="list model-source" role="radiogroup" aria-label="Point de départ">
+      <div class="list-row model-pick is-on" data-source-row="blank">
+        <button class="li-main" type="button" role="radio" aria-checked="true" data-source="blank">
+          <span class="li-title">Modèle vierge</span>
+          <span class="li-sub">Aucun créneau — on part de zéro</span>
+        </button>
+        <span class="li-check" aria-hidden="true">${icon("check", 13)}</span>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <p class="hint">Ou depuis une pièce :</p>
+    ${roomRows}
+  `;
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%";
+  footer.innerHTML = `
+    <button class="btn" type="button" data-sheet-close>Annuler</button>
+    <button class="btn btn-primary" type="button" data-create>${icon("plus", 17)} Créer</button>
+  `;
+
+  openSheet({
+    title: "Créer un modèle",
+    sub: "Choisissez un point de départ",
+    body,
+    footer,
+  });
+
+  const paint = () => {
+    body.querySelectorAll("[data-source-row]").forEach((row) => {
+      const active = row.dataset.sourceRow === source;
+      row.classList.toggle("is-on", active);
+      row.querySelector("[data-source]")?.setAttribute("aria-checked", String(active));
+    });
+  };
+
+  body.querySelectorAll("[data-source]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.disabled) return;
+      source = button.dataset.source;
+      paint();
+    });
+  });
+
+  footer.querySelector("[data-sheet-close]")?.addEventListener("click", () => closeSheet());
+  footer.querySelector("[data-create]")?.addEventListener("click", () => {
+    closeSheet(true);
+    if (source === "blank") createModel();
+    else createModelFromRoom(source);
+  });
 }
 
 function duplicateModel() {
@@ -592,7 +713,7 @@ function bind() {
   page.querySelectorAll("[data-save]").forEach((btn) => {
     btn.addEventListener("click", saveAllModels);
   });
-  page.querySelector("[data-new]")?.addEventListener("click", createModel);
+  page.querySelector("[data-new]")?.addEventListener("click", openCreateSheet);
   page.querySelector("[data-back]")?.addEventListener("click", () => {
     selectedIndex = null;
     render();

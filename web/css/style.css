@@ -3593,6 +3593,23 @@ details.brand-panel.is-locked > :not(summary) {
   color: #fff;
 }
 
+/* Choix du point de départ d'un nouveau modèle : pastille ronde (radio) et
+   pièces sans planning visibles mais grisées, donc non cliquables. */
+.model-source .li-check {
+  border-radius: 999px;
+}
+.model-pick.is-disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.model-pick.is-disabled:hover,
+.model-pick.is-disabled:focus-within {
+  background: transparent;
+}
+.model-pick.is-disabled .li-main {
+  cursor: default;
+}
+
 /* --------------------------------------------------------------- planning */
 
 /* Pièce liée à Pronote : planning grisé et non modifiable. */
