@@ -394,6 +394,51 @@ class ConstantsTests(unittest.TestCase):
         )
 
 
+class HeatingCurveAdvanceTests(unittest.TestCase):
+    """Avance à la consigne sur une montée imminente (courbe de chauffe)."""
+
+    def test_advance_uses_next_setpoint_then_reverts_when_disabled(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur chambre")
+        room = store.add_room("Chambre courbe")
+        store.update_room(
+            room["id"],
+            {
+                "actuator_device_id": 9001,
+                "heating_curve": True,
+                "curve_fit": {"tau0": 4.0, "tau1": 0.0, "n": 10},
+            },
+        )
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+
+        # Lundi : 17 °C jusqu'à 06:30, puis montée à 20 °C.
+        days = [[] for _ in range(7)]
+        days[0] = [
+            {"time": "00:00", "mode": "heat", "temp": 17},
+            {"time": "06:30", "mode": "heat", "temp": 20},
+        ]
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+
+        engine = Engine(store, FakeClient())
+        engine.wiser_rooms = {1: {"setpoint": 17.0, "temp": 16.0}}
+
+        # 06:10 : la montée est dans 20 min, l'avance (τ=4 h, bornée à 240 min)
+        # démarre donc immédiatement avec la consigne suivante.
+        now = datetime(2026, 11, 9, 6, 10)
+        desired, source, _until = engine.desired_for(store.device(9001), now)
+        self.assertIsNotNone(desired)
+        self.assertEqual(desired["temp"], 20.0)
+        self.assertIn("avance", source)
+
+        # Toggle off : retour au comportement d'avant (consigne courante).
+        store.update_room(room["id"], {"heating_curve": False})
+        desired, source, _until = engine.desired_for(store.device(9001), now)
+        self.assertIsNotNone(desired)
+        self.assertEqual(desired["temp"], 17.0)
+        self.assertNotIn("avance", source)
+
+
 if __name__ == "__main__":
     unittest.main()
 

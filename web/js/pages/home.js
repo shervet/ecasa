@@ -307,6 +307,16 @@ function paintRooms() {
       );
     }
 
+    // Snapshot enrichi : heating_curve peut être absent (ancien snapshot / pièce non équipée).
+    const hc = room?.heating_curve;
+    const advanceMinutes =
+      hc?.enabled === true && Number(hc?.next_advance?.minutes) > 0
+        ? Math.round(Number(hc.next_advance.minutes))
+        : 0;
+    const advanceBadge = advanceMinutes > 0
+      ? `<span class="pill" title="Avance appliquée à la prochaine montée">⏱ ${advanceMinutes} min</span>`
+      : "";
+
     cards.push(`
       <article class="room-card" data-mode="${escapeHtml(mode)}">
         <div class="room-head">
@@ -327,6 +337,7 @@ function paintRooms() {
           <div class="room-target" data-goto-room="${room.id}" role="button" tabindex="0" title="Ouvrir le planning de cette pièce">
             Consigne
             <strong>${fmtTemp(summary.target)} °C</strong>
+            ${advanceBadge}
             ${summary.until ? `jusqu'à ${fmtTime(summary.until)}` : next ? `${inWords(next.in_minutes)} → ${fmtTemp(next.temp)} °C` : "planning"}
           </div>
         </div>

@@ -56,7 +56,8 @@ from .pronote import (
     search_schools,
     test_connection as test_pronote_connection,
 )
-from .schedule import MODE_LABELS, MODES, WEEKDAY_NAMES, week_type
+from . import heating_curve
+from .schedule import MODE_LABELS, MODES, WEEKDAY_NAMES, find_slot, week_type
 from .stats import RANGES, build_stats, parse_anchor
 from .storage import MemoryStore, dumps
 from .weather import WeatherError, WeatherService
@@ -2608,9 +2609,159 @@ def _refresh_model_link(app, room_id) -> None:
     app.store.set_model_link_pending(room_id, not matches)
 
 
+def _room_target_temp(store, room: dict) -> float | None:
+    """Consigne cible de référence pour la table d'avance (prochaine montée ou actuelle)."""
+    try:
+        room_id = int(room.get("id"))
+    except (TypeError, ValueError):
+        return None
+    actuator_id = room.get("actuator_device_id")
+    device = None
+    if actuator_id not in (None, "", 0, "0"):
+        try:
+            device = store.device(int(actuator_id))
+        except (TypeError, ValueError):
+            device = None
+    if device is None:
+        for candidate in store.devices():
+            if int(candidate.get("room_id") or 0) == room_id:
+                device = candidate
+                break
+    if device is None:
+        return None
+    try:
+        from .engine import Engine as _Engine
+
+        temp = None
+        # Essaie de déduire une consigne pertinente depuis le planning courant.
+        # (fallback simple : 19 °C si indisponible)
+        # On ne dépend pas d'une instance Engine ici : on lit les slots du jour.
+        settings = store.settings()
+        now = datetime.now()
+        week = week_type(now, settings, store.week_overrides())
+        slots = store.slots(room_id=room_id, week=week)
+        slot = find_slot(slots, now)
+        if slot and slot.get("temp") is not None:
+            temp = float(slot.get("temp"))
+        if temp is None:
+            return 19.0
+        return temp
+    except Exception:  # noqa: BLE001
+        return 19.0
+
+
+def _next_room_rise(app, room: dict):
+    """Prochaine montée planifiée pour la pièce (même logique que le moteur)."""
+    if not room or not room.get("heating_curve"):
+        return None
+    try:
+        room_id = int(room.get("id"))
+    except (TypeError, ValueError):
+        return None
+    actuator_id = room.get("actuator_device_id")
+    if actuator_id in (None, "", 0, "0"):
+        return None
+    try:
+        device = app.store.device(int(actuator_id))
+    except (TypeError, ValueError):
+        return None
+    if not device:
+        return None
+    now = datetime.now()
+    try:
+        current_desired, _source, _until = app.engine.desired_for(device, now)
+    except Exception:  # noqa: BLE001
+        return None
+    if not current_desired:
+        return None
+    try:
+        rise = app.engine._next_rise(device, current_desired, now)
+    except Exception:  # noqa: BLE001
+        return None
+    return rise
+
+
+def _enrich_room_heating_curve(app, room: dict) -> dict:
+    """Ajoute les informations de courbe de chauffe au snapshot de pièce."""
+    if not room.get("heating_curve"):
+        return room
+
+    fit = room.get("curve_fit") if isinstance(room.get("curve_fit"), dict) else {}
+    tau0 = fit.get("tau0")
+    tau1 = fit.get("tau1")
+    try:
+        n = int(fit.get("n") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if tau0 is None:
+        tau0, tau1, learning = 3.0, 0.0, True
+    else:
+        try:
+            tau0 = float(tau0)
+            tau1 = float(tau1 or 0.0)
+        except (TypeError, ValueError):
+            tau0, tau1 = 3.0, 0.0
+        learning = n < 5
+
+    t_out = None
+    try:
+        t_out = app.engine._current_outside_temp()
+    except Exception:  # noqa: BLE001
+        t_out = None
+
+    # Cible de référence pour la table : prochaine montée si connue, sinon consigne actuelle.
+    target = 19.0
+    rise = _next_room_rise(app, room)
+    if rise and rise.get("temp") is not None:
+        target = float(rise["temp"])
+    else:
+        ref = _room_target_temp(app.store, room)
+        if ref is not None:
+            target = float(ref)
+
+    table = heating_curve.build_table(tau0, tau1, t_out, target)
+
+    next_advance = None
+    if rise and rise.get("in_minutes") is not None:
+        try:
+            t_room = app.engine._room_current_temp(room)
+        except Exception:  # noqa: BLE001
+            t_room = None
+        if t_room is not None:
+            minutes = heating_curve.advance_minutes(
+                tau0, tau1, t_out, t_room, rise["temp"]
+            )
+            # Δt réel de la prochaine montée (même calcul que le moteur).
+            next_advance = {
+                "minutes": round(float(minutes), 1),
+                "for_temp": round(float(rise["temp"]), 1),
+            }
+
+    room = dict(room)
+    room["heating_curve"] = {
+        "enabled": True,
+        "tau0": round(float(tau0), 4),
+        "tau1": round(float(tau1), 4),
+        "n": n,
+        "r2": round(float(fit.get("r2") or 0.0), 4) if isinstance(fit.get("r2"), (int, float)) else 0.0,
+        "fit_at": fit.get("fit_at"),
+        "learning": bool(learning),
+        "eps": 0.2,
+        "table": table,
+        "next_advance": next_advance,
+    }
+    return room
+
+
 def state_snapshot(app) -> dict:
     """Snapshot du moteur enrichi de l'état de mise à jour et des métriques CPU."""
     data = app.engine.snapshot()
+    # Enrichissement des pièces avec la courbe de chauffe (snapshot room).
+    try:
+        rooms = data.get("rooms") or []
+        data["rooms"] = [_enrich_room_heating_curve(app, room) for room in rooms]
+    except Exception:  # noqa: BLE001
+        pass
     try:
         data["model_links"] = app.store.room_model_links()
     except Exception:  # noqa: BLE001 - ne doit jamais casser le snapshot
@@ -3403,13 +3554,34 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/rooms/(\d+)", path)
         if match and method == "PUT":
             try:
-                room = app.store.update_room(int(match.group(1)), self._body())
+                room_id = int(match.group(1))
+                body = dict(self._body() or {})
+                # Champ serveur uniquement.
+                body.pop("curve_fit", None)
+                previous = app.store.room(room_id)
+                enabled_before = bool((previous or {}).get("heating_curve"))
+                room = app.store.update_room(room_id, body)
             except ValueError as err:
                 self._json(400, {"error": str(err)})
                 return
             if room is None:
                 self._json(404, {"error": "Pièce introuvable"})
                 return
+            # Recalcul du fit immédiatement à l'activation du toggle.
+            if room.get("heating_curve") and not enabled_before:
+                try:
+                    app.engine.refresh_room_curve_fit(room_id, force=True)
+                    room = app.store.room(room_id) or room
+                except Exception:  # noqa: BLE001
+                    try:
+                        app.engine.mark_room_curve_fit_dirty(room_id)
+                    except Exception:  # noqa: BLE001
+                        pass
+            elif room.get("heating_curve"):
+                try:
+                    app.engine.mark_room_curve_fit_dirty(room_id)
+                except Exception:  # noqa: BLE001
+                    pass
             self._json(200, {"room": room})
             return
 
@@ -4481,7 +4653,8 @@ def main() -> None:
                 f"(Hub détecté sur {wiser_host or 'le réseau'})."
             )
 
-    engine = Engine(store, client, wiser_client=wiser_client)
+    weather_service = WeatherService()
+    engine = Engine(store, client, wiser_client=wiser_client, weather=weather_service, config_getter=load_config)
 
     preexisting_devices = bool(store.devices())
     try:
@@ -4516,7 +4689,7 @@ def main() -> None:
     app = App(
         store,
         engine,
-        WeatherService(),
+        weather_service,
         EnergyService(cache_path=str(energy_cache)),
         EnergyService(provider="consoapi", cache_path=str(energy_cache)),
     )

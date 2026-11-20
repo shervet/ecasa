@@ -55,6 +55,46 @@ class PersistenceTests(StoreTestCase):
         rooms = store.rooms()
         self.assertEqual([room["name"] for room in rooms], ["Salon", "Chambre", "Bureau"])
 
+    def test_heating_curve_roundtrip(self):
+        store = self.make_store()
+        room = store.update_room(1, {"heating_curve": True})
+        self.assertIsNotNone(room)
+        self.assertIs(room["heating_curve"], True)
+        store.flush(force=True)
+        store.close()
+
+        reloaded = self.make_store()
+        self.assertIs(reloaded.room(1)["heating_curve"], True)
+
+    def test_heating_curve_string_false_is_false(self):
+        store = self.make_store()
+        room = store.update_room(1, {"heating_curve": "false"})
+        self.assertIs(room["heating_curve"], False)
+        self.assertIs(store.room(1)["heating_curve"], False)
+
+    def test_curve_fit_is_stored_as_deepcopy(self):
+        store = self.make_store()
+        fit = {
+            "tau0": 3.5,
+            "tau1": -0.02,
+            "n": 12,
+            "r2": 0.97,
+            "detail": {"fit_at": "2026-11-20T10:00:00"},
+        }
+        room = store.update_room(1, {"curve_fit": fit})
+        fit["tau0"] = 99.0
+        fit["detail"]["nested"] = True
+        self.assertEqual(room["curve_fit"]["tau0"], 3.5)
+        self.assertNotIn("nested", room["curve_fit"]["detail"])
+
+        room["curve_fit"]["tau1"] = 99.0
+        self.assertEqual(store.room(1)["curve_fit"]["tau1"], -0.02)
+
+        store.flush(force=True)
+        store.close()
+        reloaded = self.make_store()
+        self.assertEqual(reloaded.room(1)["curve_fit"]["tau0"], 3.5)
+
     def test_round_trip(self):
         store = self.make_store()
         store.set_settings({"week_mode": "explicit", "default_week": "B"})

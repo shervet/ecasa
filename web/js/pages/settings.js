@@ -2409,6 +2409,14 @@ function cloneDaysSettings(days) {
 }
 async function openRoomEditor(room) {
   await loadSettingsModels();
+  // Snapshot enrichi : heating_curve porte la table et l'état d'apprentissage.
+  room = room
+    ? (store.state?.rooms || []).find((item) => Number(item.id) === Number(room.id)) || room
+    : null;
+  const hc = room?.heating_curve;
+  const hcEnabled = hc === true || hc?.enabled === true;
+  const hcInfo = hc && typeof hc === "object" ? hc : {};
+  const hcTable = Array.isArray(hcInfo.table) ? hcInfo.table : [];
   const devices = store.state?.devices || [];
   const options = (selected) =>
     `<option value="">Aucun</option>${devices
@@ -2437,6 +2445,26 @@ async function openRoomEditor(room) {
     </div>
     <p class="hint">Le thermostat mesure la température (appareil Atlantic ou capteur dédié), l'actionneur chauffe ou refroidit. Sur Wiser, la zone fait les deux.</p>
     ${room ? `
+    ${row(
+      "Courbe de chauffe",
+      "Avance à la consigne, calculée depuis l'historique",
+      `<label class="switch" title="Courbe de chauffe"><input type="checkbox" data-heating-curve${hcEnabled ? " checked" : ""}><span class="track"></span></label>`
+    )}
+    ${hcEnabled ? `
+    <details class="stack" open>
+      <summary class="card-title summary-row">Table d'avance (temps avant la consigne)</summary>
+      ${hcInfo.learning
+        ? '<p class="hint" style="font-style:italic">Apprentissage en cours — valeurs par défaut (τ=3 h)</p>'
+        : `<p class="hint">Modèle appris sur ${hcInfo.n ?? 0} montées (R²=${fmtTemp(hcInfo.r2, 2)}) · recalcul quotidien</p>`}
+      <table class="stats-table">
+        <thead><tr><th>Température de la pièce</th><th>Avance</th></tr></thead>
+        <tbody>
+          ${hcTable
+            .map(([temp, minutes]) => `<tr><td>${fmtTemp(temp)} °C</td><td>${Math.round(Number(minutes))} min</td></tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </details>` : ""}
     <label class="field">
       <span class="label">Modèle de semaine</span>
       <div class="input-row">
@@ -2465,6 +2493,21 @@ async function openRoomEditor(room) {
   });
 
   if (room) {
+    const hcToggle = body.querySelector("[data-heating-curve]");
+    hcToggle?.addEventListener("change", async () => {
+      hcToggle.disabled = true;
+      try {
+        await put(`/api/rooms/${room.id}`, { heating_curve: hcToggle.checked });
+        await refreshState({ silent: true });
+        // Re-rendre l'éditeur pour afficher/masquer la table avec les données fraîches.
+        await openRoomEditor(room);
+      } catch (err) {
+        hcToggle.checked = !hcToggle.checked;
+        hcToggle.disabled = false;
+        toastError(err);
+      }
+    });
+
     const applyBtn = body.querySelector("[data-apply-model]");
     applyBtn?.addEventListener("click", async () => {
       const select = body.querySelector("[data-model]");
@@ -2491,6 +2534,7 @@ async function openRoomEditor(room) {
   }
 
   const value = (selector) => body.querySelector(selector)?.value ?? "";
+  const val = (selector) => body.querySelector(selector);
 
   val("[data-device-type]")?.addEventListener("change", () => {
     const t = val("[data-device-type]").value;

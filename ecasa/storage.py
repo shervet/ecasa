@@ -512,7 +512,7 @@ class MemoryStore:
     def update_room(self, room_id: int, changes: dict) -> dict | None:
         allowed = (
             "name", "position", "thermostat_device_id", "actuator_device_id",
-            "thermostat_cap_id", "actuator_cap_id",
+            "thermostat_cap_id", "actuator_cap_id", "heating_curve", "curve_fit",
         )
         with self._lock:
             room = next(
@@ -533,6 +533,18 @@ class MemoryStore:
                         room["position"] = int(changes["position"])
                     except (TypeError, ValueError) as err:
                         raise ValueError("Position de pièce invalide") from err
+                elif key == "heating_curve":
+                    value = changes[key]
+                    room[key] = bool(value) if not isinstance(value, str) else value.lower() in ("1", "true", "on", "yes")
+                elif key == "curve_fit":
+                    # Champ serveur uniquement : persistance du fit de courbe de chauffe.
+                    value = changes[key]
+                    if value in (None, "", False):
+                        room.pop("curve_fit", None)
+                    elif isinstance(value, dict):
+                        room["curve_fit"] = copy.deepcopy(value)
+                    else:
+                        raise ValueError("curve_fit invalide")
                 else:
                     value = changes[key]
                     if value in (None, "", 0, "0"):

@@ -11,6 +11,8 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
+from . import heating_curve
+
 from .atlantic import AtlanticError, ExecutionTimeout, RateLimited
 from .wiser import WiserError
 from .schedule import (
@@ -116,10 +118,12 @@ def detect_caps(caps: dict) -> dict:
 
 
 class Engine:
-    def __init__(self, store, client, wiser_client=None):
+    def __init__(self, store, client, wiser_client=None, weather=None, config_getter=None):
         self.store = store
         self.client = client
         self.wiser_client = wiser_client
+        self.weather = weather
+        self._config_getter = config_getter
         self.state: dict[int, dict] = {}
         self.availability: dict[int, bool] = {}
         self.wiser_rooms: dict[int, dict] = {}
@@ -141,6 +145,18 @@ class Engine:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._next_poll = 0.0
+        # Courbe de chauffe : recalcul du fit une fois par jour (par pièce).
+        self._next_curve_fit: dict[int, float] = {}
+        self._curve_fit_dirty: set[int] = set()
+
+    def _config(self) -> dict:
+        getter = self._config_getter
+        if getter is None:
+            return {}
+        try:
+            return getter() or {}
+        except Exception:  # noqa: BLE001
+            return {}
 
     # ------------------------------------------------------------------ cycle
 
@@ -472,16 +488,19 @@ class Engine:
 
         week = week_type(now, settings, self.store.week_overrides())
         slots = []
+        control_room = None
         # Check if this device is an actuator for any room
         for room in self.store.rooms():
             if room.get("actuator_device_id") == device["device_id"] or room.get("id") and device.get("room_id") == room.get("id") and room.get("actuator_device_id") == device["device_id"]:
                 slots = self.store.slots(room_id=room["id"], week=week)
+                control_room = room
                 break
         if not slots:
             # Also check if room has actuator pointing to this device
             for room in self.store.rooms():
                 if room.get("actuator_device_id") == device["device_id"]:
                     slots = self.store.slots(room_id=room["id"], week=week)
+                    control_room = room
                     break
         if not slots:
             # Appareil non actionnaire (ex. climatisation) qui prend en charge
@@ -506,15 +525,228 @@ class Engine:
                 device["device_id"],
             )
             return None, "mode non pris en charge", None
-        return (
-            {
+
+        desired = {
+            "mode": mode,
+            "mode_label": self.effective_label(device, mode),
+            "temp": self.effective_temp(device, mode, slot["temp"]),
+        }
+
+        # Courbe de chauffe : avance sur la prochaine montée de consigne.
+        # Chemin mort total si toggle désactivé.
+        if control_room and control_room.get("heating_curve"):
+            advanced = self._advance_desired(device, control_room, desired, slots, now)
+            if advanced:
+                return advanced, f"planning {week} (avance)", None
+
+        return desired, f"planning {week}", None
+
+    # ----------------------------------------------------------------- courbe
+
+    def _curve_control_room(self, device: dict) -> dict | None:
+        """Pièce contrôlée par cet appareil (actionneur), pour la courbe de chauffe."""
+        try:
+            device_id = int(device.get("device_id", 0))
+        except (TypeError, ValueError):
+            return None
+        for room in self.store.rooms():
+            if int(room.get("actuator_device_id") or 0) == device_id:
+                return room
+        return None
+
+    def _current_outside_temp(self) -> float | None:
+        """Température extérieure actuelle (meilleur effort, sans casser le moteur)."""
+        config = self._config()
+        if not config or not config.get("weather_enabled", True):
+            return None
+        try:
+            latitude = float(config.get("weather_latitude"))
+            longitude = float(config.get("weather_longitude"))
+        except (TypeError, ValueError):
+            return None
+        # Préfère la météo horaire déjà en cache (accès réutilisé), sinon rien.
+        if self.weather is not None:
+            try:
+                now = datetime.now()
+                result = self.weather.hourly(latitude, longitude, now.date(), now.date())
+                hours = (result.hours or {}).get(now.date().isoformat(), {})
+                temp = hours.get(now.hour)
+                if temp is None:
+                    past = {h: v for h, v in hours.items() if h <= now.hour}
+                    if past:
+                        temp = past[max(past)]
+                if temp is not None:
+                    return float(temp)
+            except Exception:  # noqa: BLE001
+                pass
+        # Repli léger : cache local main._current_weather si importable.
+        try:
+            from .main import _current_weather
+
+            payload = _current_weather(latitude, longitude)
+            if payload and payload.get("temp") is not None:
+                return float(payload["temp"])
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def _room_current_temp(self, room: dict, device: dict | None = None) -> float | None:
+        """Température actuelle de la pièce (ambiance mesurée)."""
+        candidates = []
+        if device is not None:
+            try:
+                candidates.append(int(device["device_id"]))
+            except (TypeError, ValueError):
+                pass
+        for key in ("actuator_device_id", "thermostat_device_id"):
+            value = room.get(key)
+            if value in (None, "", 0, "0"):
+                continue
+            try:
+                candidates.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        # Évite les doublons en conservant l'ordre.
+        seen = set()
+        ordered = []
+        for item in candidates:
+            if item in seen:
+                continue
+            seen.add(item)
+            ordered.append(item)
+        for device_id in ordered:
+            current = self.current(device_id)
+            ambient = current.get("wiser_ambient")
+            if ambient is None:
+                ambient = current.get("ambient")
+            if ambient is not None:
+                try:
+                    return float(ambient)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def _curve_params(self, room: dict) -> tuple[float, float, bool]:
+        """(tau0, tau1, learning) pour la pièce."""
+        fit = room.get("curve_fit") if isinstance(room.get("curve_fit"), dict) else None
+        if fit and isinstance(fit.get("tau0"), (int, float)):
+            tau0 = float(fit.get("tau0", 3.0))
+            tau1 = float(fit.get("tau1", 0.0)) if fit.get("tau1") is not None else 0.0
+            try:
+                n = int(fit.get("n") or 0)
+            except (TypeError, ValueError):
+                n = 0
+            return tau0, tau1, n < 5
+        # Défaut sans échantillons suffisants.
+        return 3.0, 0.0, True
+
+    def _next_rise(self, device: dict, current_desired: dict, now: datetime):
+        """Prochain changement planifié s'il s'agit d'une montée de consigne."""
+        upcoming = self.next_change(device, now)
+        if not upcoming:
+            return None
+        slot = upcoming.slot
+        mode = slot.get("mode")
+        next_temp = self.effective_temp(device, mode, slot.get("temp"))
+        cur_temp = current_desired.get("temp")
+        try:
+            next_temp_f = float(next_temp)
+            cur_temp_f = float(cur_temp)
+        except (TypeError, ValueError):
+            return None
+        # Montée de consigne uniquement (confort > réduit).
+        if next_temp_f <= cur_temp_f + 0.05:
+            return None
+        in_minutes = slot.get("in_minutes")
+        try:
+            in_minutes_f = float(in_minutes)
+        except (TypeError, ValueError):
+            in_minutes_f = None
+        return {
+            "upcoming": upcoming,
+            "temp": next_temp_f,
+            "mode": mode,
+            "in_minutes": in_minutes_f,
+        }
+
+    def _advance_desired(self, device: dict, room: dict, current_desired: dict, slots, now: datetime):
+        """Retourne l'état désiré avancé si une montée imminente le justifie."""
+        rise = self._next_rise(device, current_desired, now)
+        if not rise or rise["in_minutes"] is None:
+            return None
+
+        t_room = self._room_current_temp(room, device)
+        if t_room is None:
+            return None
+        t_out = self._current_outside_temp()
+
+        tau0, tau1, _learning = self._curve_params(room)
+        delta = heating_curve.advance_minutes(
+            tau0, tau1, t_out, t_room, rise["temp"]
+        )
+        if rise["in_minutes"] <= delta and delta > 0:
+            mode = rise["mode"]
+            return {
                 "mode": mode,
                 "mode_label": self.effective_label(device, mode),
-                "temp": self.effective_temp(device, mode, slot["temp"]),
-            },
-            f"planning {week}",
-            None,
+                "temp": self.effective_temp(device, mode, rise["temp"]),
+            }
+        return None
+
+    def refresh_room_curve_fit(self, room_id: int, force: bool = False) -> None:
+        """Recalcule et persiste le fit de courbe de chauffe pour une pièce."""
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return
+        room = self.store.room(room_id)
+        if not room or not room.get("heating_curve"):
+            return
+        if not force:
+            with self._lock:
+                next_at = self._next_curve_fit.get(room_id, 0.0)
+            if time.time() < next_at:
+                return
+
+        transitions = heating_curve.room_transitions(
+            self.store, room_id, weather=self.weather, config=self._config()
         )
+        fit = heating_curve.fit_tau(transitions)
+        if fit is None:
+            fit = {"tau0": 3.0, "tau1": 0.0, "n": 0, "r2": 0.0}
+        fit["fit_at"] = datetime.now().isoformat(timespec="seconds")
+        try:
+            self.store.update_room(room_id, {"curve_fit": fit})
+        except Exception:  # noqa: BLE001
+            pass
+        with self._lock:
+            self._next_curve_fit[room_id] = time.time() + 24 * 3600
+            self._curve_fit_dirty.discard(room_id)
+
+    def mark_room_curve_fit_dirty(self, room_id: int) -> None:
+        """Demande un recalcul immédiat du fit (ex. activation du toggle)."""
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            self._curve_fit_dirty.add(room_id)
+
+    def _tick_curve_fits(self) -> None:
+        """Recalcule les fits dus (quotidien) ou demandés."""
+        now_ts = time.time()
+        for room in self.store.rooms():
+            if not room.get("heating_curve"):
+                continue
+            try:
+                room_id = int(room["id"])
+            except (TypeError, ValueError):
+                continue
+            with self._lock:
+                dirty = room_id in self._curve_fit_dirty
+                due = now_ts >= self._next_curve_fit.get(room_id, 0.0)
+            if dirty or due:
+                self.refresh_room_curve_fit(room_id, force=dirty or due)
 
     # Modes réellement applicables selon le type d'appareil.
     ATLANTIC_MODES = ("off", "cool", "heat", "dry", "fan", "auto")
@@ -646,6 +878,9 @@ class Engine:
         return Upcoming(upcoming, week, wiser)
 
     def tick(self, force: bool = False) -> None:
+        # Courbe de chauffe : recalcul des fits (quotidien / à l'activation).
+        self._tick_curve_fits()
+
         if not self.store.flag("engine_enabled"):
             return
 
