@@ -2417,6 +2417,9 @@ async function openRoomEditor(room) {
   const hcEnabled = hc === true || hc?.enabled === true;
   const hcInfo = hc && typeof hc === "object" ? hc : {};
   const hcTable = Array.isArray(hcInfo.table) ? hcInfo.table : [];
+  const hcWeatherHint = hcInfo.t_out != null
+    ? `🌡 T extérieure utilisée : ${fmtTemp(hcInfo.t_out)}${hcInfo.t_out_fallback ? " · apprentissage en repli (10 °C)" : ""}`
+    : "🌡 T extérieure indisponible — τ non corrigé par la météo";
   const devices = store.state?.devices || [];
   const options = (selected) =>
     `<option value="">Aucun</option>${devices
@@ -2456,6 +2459,7 @@ async function openRoomEditor(room) {
       ${hcInfo.learning
         ? '<p class="hint" style="font-style:italic">Apprentissage en cours — valeurs par défaut (τ=3 h)</p>'
         : `<p class="hint">Modèle appris sur ${hcInfo.n ?? 0} montées (R²=${fmtTemp(hcInfo.r2, 2)}) · recalcul quotidien</p>`}
+      <p class="hint">${hcWeatherHint}</p>
       <table class="stats-table">
         <thead><tr><th>Température de la pièce</th><th>Avance</th></tr></thead>
         <tbody>

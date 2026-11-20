@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from ecasa.engine import Engine
+from ecasa.main import _enrich_room_heating_curve
 from ecasa.heating_curve import (
     _outside_temp_at,
     advance_minutes,
@@ -609,6 +610,24 @@ class CurveFitDebugTests(unittest.TestCase):
                 for _ in range(6)
             ],
         )
+
+
+class SnapshotHeatingCurveTests(unittest.TestCase):
+    def test_snapshot_exposes_t_out_and_fallback(self):
+        store = MemoryStore(None)
+        engine = Engine(store, _Client())
+        app = SimpleNamespace(engine=engine, store=store)
+
+        engine._current_outside_temp = lambda: 7.25
+        room = {"id": 1, "heating_curve": True, "curve_fit": {"t_out_fallback": True}}
+        hc = _enrich_room_heating_curve(app, room)["heating_curve"]
+        self.assertEqual(hc["t_out"], 7.25)
+        self.assertIs(hc["t_out_fallback"], True)
+
+        engine._current_outside_temp = lambda: None
+        hc = _enrich_room_heating_curve(app, {"id": 1, "heating_curve": True})["heating_curve"]
+        self.assertIsNone(hc["t_out"])
+        self.assertIs(hc["t_out_fallback"], False)
 
 
 class CurveParamsTests(unittest.TestCase):

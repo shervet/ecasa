@@ -2772,6 +2772,8 @@ def _enrich_room_heating_curve(app, room: dict) -> dict:
         "fit_at": fit.get("fit_at"),
         "learning": bool(learning),
         "eps": 0.2,
+        "t_out": t_out,
+        "t_out_fallback": bool(fit.get("t_out_fallback", False)),
         "table": table,
         "next_advance": next_advance,
     }
