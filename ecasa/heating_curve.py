@@ -11,14 +11,22 @@ from datetime import datetime, timedelta
 from .weather import WeatherError
 
 
-def fit_tau(transitions) -> dict | None:
+def fit_tau(transitions, counters=None) -> dict | None:
     """Ajuste tau0, tau1 par moindres carrés sur les montées de consigne observées.
 
     ``transitions`` : liste de dicts {t_out, t_room, target, lag_minutes}.
-    Retourne {tau0, tau1, n, r2} ou None si moins de 5 échantillons valides.
+    ``counters`` reçoit ``{kept, reject_ratio, reject_tau_range, reject_delta,
+    total}``, y compris quand le fit échoue.
+    Retourne {tau0, tau1, n, r2, debug} ou None si moins de 5 échantillons valides.
     """
+    if counters is None:
+        counters = {}
+    for key in ("kept", "reject_ratio", "reject_tau_range", "reject_delta", "total"):
+        counters[key] = 0
+
     samples = []
     for item in transitions or []:
+        counters["total"] += 1
         try:
             t_out = float(item["t_out"])
             t_room = float(item["t_room"])
@@ -27,23 +35,27 @@ def fit_tau(transitions) -> dict | None:
         except (KeyError, TypeError, ValueError):
             continue
 
-        # Échantillon valide : conditions de montée réaliste.
-        if not (
-            target > t_out + 0.5
-            and t_room > t_out + 0.5
-            and target > t_room + 0.5
-        ):
+        # Filtres internes comptés dans l'ordre : ratio, τ, écart à la consigne.
+        # Le garde-fou sur t_room garde le dénominateur du ratio sûr et conserve
+        # le rejet historique des montées trop proches de t_out.
+        if not (t_room > t_out + 0.5):
+            counters["reject_ratio"] += 1
             continue
-
         ratio = (target - t_out) / (t_room - t_out)
         if ratio <= 1.0:
+            counters["reject_ratio"] += 1
             continue
         tau_hours = (lag_minutes / 60.0) / math.log(ratio)
         # τ_i doit être dans ]0, 12 h].
         if not (0.0 < tau_hours <= 12.0):
+            counters["reject_tau_range"] += 1
+            continue
+        if not (target > t_room + 0.5):
+            counters["reject_delta"] += 1
             continue
         samples.append((t_out, tau_hours))
 
+    counters["kept"] = len(samples)
     if len(samples) < 5:
         return None
 
@@ -73,6 +85,12 @@ def fit_tau(transitions) -> dict | None:
         "tau1": float(tau1),
         "n": n,
         "r2": float(r2),
+        "debug": {
+            "kept": counters["kept"],
+            "reject_ratio": counters["reject_ratio"],
+            "reject_tau_range": counters["reject_tau_range"],
+            "reject_delta": counters["reject_delta"],
+        },
     }
 
 

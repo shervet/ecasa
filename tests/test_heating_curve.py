@@ -84,6 +84,58 @@ class FitTauTests(unittest.TestCase):
         self.assertAlmostEqual(fit["tau0"], 2.5, delta=0.05)
         self.assertAlmostEqual(fit["tau1"], 0.0, delta=0.05)
 
+    def test_counters_report_each_internal_filter(self):
+        counters = {}
+        transitions = [transition(float(i), 17.0, 21.0, 2.5) for i in range(5)]
+        transitions += [
+            # t_room trop proche de t_out : ratio non calculable.
+            {"t_out": 16.6, "t_room": 17.0, "target": 21.0, "lag_minutes": 30.0},
+            # τ hors de ]0, 12 h].
+            {"t_out": 0.0, "t_room": 17.0, "target": 21.0, "lag_minutes": 0.0},
+            # target <= t_room + 0,5.
+            transition(0.0, 20.8, 21.0, 2.5),
+        ]
+
+        fit = fit_tau(transitions, counters=counters)
+        self.assertIsNotNone(fit)
+        self.assertEqual(
+            counters,
+            {
+                "kept": 5,
+                "reject_ratio": 1,
+                "reject_tau_range": 1,
+                "reject_delta": 1,
+                "total": 8,
+            },
+        )
+        self.assertEqual(
+            fit["debug"],
+            {
+                "kept": 5,
+                "reject_ratio": 1,
+                "reject_tau_range": 1,
+                "reject_delta": 1,
+            },
+        )
+
+    def test_counters_are_filled_even_when_fit_fails(self):
+        counters = {}
+        transitions = [
+            {"t_out": 0.0, "t_room": 17.0, "target": 21.0, "lag_minutes": 0.0}
+            for _ in range(6)
+        ]
+        self.assertIsNone(fit_tau(transitions, counters=counters))
+        self.assertEqual(
+            counters,
+            {
+                "kept": 0,
+                "reject_ratio": 0,
+                "reject_tau_range": 6,
+                "reject_delta": 0,
+                "total": 6,
+            },
+        )
+
     def test_empty_or_malformed_input_returns_none(self):
         for value in (
             None,
@@ -415,6 +467,22 @@ class CurveFitDebugTests(unittest.TestCase):
                 "no_lag": 0,
                 "valid": 6,
                 "source": "meteo",
+                "fit": {
+                    "kept": 6,
+                    "reject_ratio": 0,
+                    "reject_tau_range": 0,
+                    "reject_delta": 0,
+                    "total": 6,
+                },
+                "transitions": [
+                    {
+                        "t_out": t_out,
+                        "t_room": 17.0,
+                        "target": 21.0,
+                        "lag_minutes": 120.0,
+                    }
+                    for t_out in (14.0, 13.0, 12.0, 11.0, 10.0, 9.0)
+                ],
             },
         )
         self.assertNotIn("t_out_fallback", fit)
@@ -434,10 +502,67 @@ class CurveFitDebugTests(unittest.TestCase):
                 "no_lag": 0,
                 "valid": 6,
                 "source": "fallback_10c",
+                "fit": {
+                    "kept": 6,
+                    "reject_ratio": 0,
+                    "reject_tau_range": 0,
+                    "reject_delta": 0,
+                    "total": 6,
+                },
+                "transitions": [
+                    {
+                        "t_out": 10.0,
+                        "t_room": 17.0,
+                        "target": 21.0,
+                        "lag_minutes": 120.0,
+                    }
+                    for _ in range(6)
+                ],
             },
         )
         self.assertIs(fit["t_out_fallback"], True)
         self.assertEqual(fit["n"], 6)
+
+    def test_fit_none_keeps_fit_and_transitions_debug(self):
+        days = (9, 8, 7, 6, 5, 4)
+        weather = FakeWeather(
+            hours_by_date={
+                _moment(n).date().isoformat(): {8: 16.6} for n in days
+            }
+        )
+        rows = []
+        for n in days:
+            rows += _rise_rows(_moment(n))
+        store, room_id = _store_with_rises(rows)
+        engine = Engine(
+            store, _Client(), weather=weather, config_getter=lambda: CONFIG
+        )
+        engine.refresh_room_curve_fit(room_id, force=True)
+        fit = store.room(room_id)["curve_fit"]
+
+        self.assertEqual(fit["n"], 0)
+        self.assertEqual(
+            fit["debug"]["fit"],
+            {
+                "kept": 0,
+                "reject_ratio": 6,
+                "reject_tau_range": 0,
+                "reject_delta": 0,
+                "total": 6,
+            },
+        )
+        self.assertEqual(
+            fit["debug"]["transitions"],
+            [
+                {
+                    "t_out": 16.6,
+                    "t_room": 17.0,
+                    "target": 21.0,
+                    "lag_minutes": 120.0,
+                }
+                for _ in range(6)
+            ],
+        )
 
 
 if __name__ == "__main__":
