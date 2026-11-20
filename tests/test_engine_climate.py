@@ -423,7 +423,7 @@ class HeatingCurveAdvanceTests(unittest.TestCase):
         engine = Engine(store, FakeClient())
         engine.wiser_rooms = {1: {"setpoint": 17.0, "temp": 16.0}}
 
-        # 06:10 : la montée est dans 20 min, l'avance (τ=4 h, bornée à 240 min)
+        # 06:10 : la montée est dans 20 min, l'avance (τ=4 h, bornée à 120 min)
         # démarre donc immédiatement avec la consigne suivante.
         now = datetime(2026, 11, 9, 6, 10)
         desired, source, _until = engine.desired_for(store.device(9001), now)

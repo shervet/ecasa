@@ -102,12 +102,13 @@ def advance_minutes(
     t_room,
     target,
     eps=0.2,
-    cap_minutes=240,
+    cap_minutes=120,
 ) -> float:
     """Calcule l'avance Δt (minutes) pour atteindre la consigne à l'heure.
 
     Retourne 0 si la hausse demandée est négligeable. Si t_out est absent,
-    tau1 est neutralisé (τ = tau0 seul). Résultat borné dans [0, cap_minutes].
+    tau1 est neutralisé (τ = tau0 seul). Résultat borné dans [0, cap]
+    (120 min par défaut, soit 2 h).
     """
     try:
         tau0_f = float(tau0)

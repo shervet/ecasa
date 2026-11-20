@@ -184,7 +184,8 @@ class AdvanceMinutesTests(unittest.TestCase):
             advance_minutes(20.0, 0.0, None, 15.0, 22.0, cap_minutes=120),
             120.0,
         )
-        self.assertEqual(advance_minutes(20.0, 0.0, None, 15.0, 22.0), 240.0)
+        # Défaut verrouillé à 120 min (2 h).
+        self.assertEqual(advance_minutes(20.0, 0.0, None, 15.0, 22.0), 120.0)
 
     def test_missing_t_out_uses_tau0_only(self):
         without = advance_minutes(0.6, 0.2, None, 19.5, 20.0)
@@ -229,7 +230,7 @@ class BuildTableTests(unittest.TestCase):
             self.assertEqual(temp, round(temp, 1))
             self.assertEqual(minutes, round(minutes, 1))
             self.assertGreaterEqual(minutes, 0.0)
-            self.assertLessEqual(minutes, 240.0)
+            self.assertLessEqual(minutes, 120.0)
 
     def test_missing_target_defaults_to_19(self):
         self.assertEqual(
