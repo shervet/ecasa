@@ -2609,8 +2609,8 @@ def _refresh_model_link(app, room_id) -> None:
     app.store.set_model_link_pending(room_id, not matches)
 
 
-def _room_target_temp(app, room: dict) -> float | None:
-    """Consigne cible de référence pour la table d'avance (prochaine montée ou actuelle)."""
+def _room_actuator(store, room: dict):
+    """Appareil actionneur de la pièce (déclaré ou déduit de son room_id)."""
     try:
         room_id = int(room.get("id"))
     except (TypeError, ValueError):
@@ -2619,16 +2619,23 @@ def _room_target_temp(app, room: dict) -> float | None:
     device = None
     if actuator_id not in (None, "", 0, "0"):
         try:
-            device = app.store.device(int(actuator_id))
+            device = store.device(int(actuator_id))
         except (TypeError, ValueError):
             device = None
     if device is None:
-        for candidate in app.store.devices():
+        for candidate in store.devices():
             if int(candidate.get("room_id") or 0) == room_id:
                 device = candidate
                 break
+    return device
+
+
+def _room_target_temp(app, room: dict) -> float | None:
+    """Consigne cible de référence pour la table d'avance (prochaine montée ou actuelle)."""
+    device = _room_actuator(app.store, room)
     if device is None:
         return None
+    room_id = int(room["id"])
     try:
         temp = None
         # Essaie de déduire une consigne pertinente depuis le planning courant.
@@ -2711,32 +2718,48 @@ def _enrich_room_heating_curve(app, room: dict) -> dict:
     except Exception:  # noqa: BLE001
         t_out = None
 
-    # Cible de référence pour la table : prochaine montée si connue, sinon consigne actuelle.
-    target = 19.0
+    # Cible de référence : le moteur peut déjà avoir appliqué l'avance, auquel
+    # cas desired_for porte la consigne suivante et _next_room_rise rend None.
+    now = datetime.now()
+    desired, source, _until = None, "", None
+    device = _room_actuator(app.store, room)
+    if device is not None:
+        try:
+            desired, source, _until = app.engine.desired_for(device, now)
+        except Exception:  # noqa: BLE001
+            desired, source = None, ""
+    candidates = []
+    if desired and desired.get("temp") is not None:
+        candidates.append(float(desired["temp"]))
     rise = _next_room_rise(app, room)
     if rise and rise.get("temp") is not None:
-        target = float(rise["temp"])
-    else:
-        ref = _room_target_temp(app, room)
-        if ref is not None:
-            target = float(ref)
+        candidates.append(float(rise["temp"]))
+    ref = _room_target_temp(app, room)
+    if ref is not None:
+        candidates.append(float(ref))
+    target = max(candidates) if candidates else 19.0
 
     table = heating_curve.build_table(tau0, tau1, t_out, target)
 
+    # Δt réel de la montée : à venir, ou déjà en cours d'application par le moteur.
+    advance_temp = None
+    if rise and rise.get("in_minutes") is not None and rise.get("temp") is not None:
+        advance_temp = rise["temp"]
+    elif "(avance)" in (source or "") and desired and desired.get("temp") is not None:
+        advance_temp = desired["temp"]
     next_advance = None
-    if rise and rise.get("in_minutes") is not None:
+    if advance_temp is not None:
         try:
             t_room = app.engine._room_current_temp(room)
         except Exception:  # noqa: BLE001
             t_room = None
         if t_room is not None:
             minutes = heating_curve.advance_minutes(
-                tau0, tau1, t_out, t_room, rise["temp"]
+                tau0, tau1, t_out, t_room, advance_temp
             )
-            # Δt réel de la prochaine montée (même calcul que le moteur).
             next_advance = {
                 "minutes": round(float(minutes), 1),
-                "for_temp": round(float(rise["temp"]), 1),
+                "for_temp": round(float(advance_temp), 1),
             }
 
     room = dict(room)
