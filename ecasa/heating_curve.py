@@ -8,6 +8,8 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
+from .weather import WeatherError
+
 
 def fit_tau(transitions) -> dict | None:
     """Ajuste tau0, tau1 par moindres carrés sur les montées de consigne observées.
@@ -176,24 +178,26 @@ def _outside_temp_at(weather, config, moment: datetime):
     """Température extérieure à l'heure de ``moment`` via le cache météo passé.
 
     Réutilise l'accès météo en cache ; ne force pas de nouvel appel réseau.
+    Tout échec vaut « météo indisponible » pour cette transition seulement :
+    une erreur météo ne doit pas invalider les transitions suivantes.
     """
-    if not weather or not config:
-        return None
-    if not config.get("weather_enabled", True):
-        return None
     try:
-        latitude = float(config.get("weather_latitude"))
-        longitude = float(config.get("weather_longitude"))
-    except (TypeError, ValueError):
-        return None
+        if not weather or not config:
+            return None
+        if not config.get("weather_enabled", True):
+            return None
+        try:
+            latitude = float(config.get("weather_latitude"))
+            longitude = float(config.get("weather_longitude"))
+        except (TypeError, ValueError):
+            return None
 
-    day = moment.date()
-    result = None
-    # 1) Lecture directe du cache en mémoire si disponible (aucun appel réseau).
-    try:
+        day = moment.date()
+        result = None
+        # 1) Lecture directe du cache en mémoire si disponible (aucun appel réseau).
         key = (
-            round(float(latitude), 3),
-            round(float(longitude), 3),
+            round(latitude, 3),
+            round(longitude, 3),
             day.isoformat(),
             day.isoformat(),
         )
@@ -206,23 +210,27 @@ def _outside_temp_at(weather, config, moment: datetime):
                 cached = cache.get(key)
                 if cached and cached[0] > _time.time():
                     result = cached[1]
-    except Exception:  # noqa: BLE001
-        result = None
 
-    # 2) Donnée absente du cache : pas de nouvel appel réseau.
-    if result is None:
+        # 2) Donnée absente du cache : pas de nouvel appel réseau.
+        if result is None:
+            return None
+
+        hours = (result.hours or {}).get(day.isoformat(), {}) if result else {}
+        hour = moment.hour
+        temp = hours.get(hour)
+        if temp is not None:
+            return float(temp)
+        # Repli : dernière heure connue avant l'instant demandé.
+        past = {h: v for h, v in hours.items() if h <= hour}
+        if past:
+            return float(past[max(past)])
         return None
-
-    hours = (result.hours or {}).get(day.isoformat(), {}) if result else {}
-    hour = moment.hour
-    temp = hours.get(hour)
-    if temp is not None:
-        return float(temp)
-    # Repli : dernière heure connue avant l'instant demandé.
-    past = {h: v for h, v in hours.items() if h <= hour}
-    if past:
-        return float(past[max(past)])
-    return None
+    except WeatherError:
+        # Panne météo ponctuelle : on passe à la transition suivante sans
+        # toucher au cache positif déjà réutilisé.
+        return None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _room_device_ids(store, room_id: int) -> list[int]:
@@ -282,12 +290,33 @@ def _sample_series(store, device_id: int, start: datetime, end: datetime):
     return series
 
 
-def room_transitions(store, room_id, weather=None, config=None, days=120) -> list[dict]:
+def room_transitions(
+    store,
+    room_id,
+    weather=None,
+    config=None,
+    days=120,
+    counters=None,
+    t_out_fallback=None,
+) -> list[dict]:
     """Extrait les montées de consigne observées pour une pièce.
 
     Source : historique des consignes désirées (échantillons), fiable et horodaté.
     Réutilise l'accès météo passée mis en cache (sans nouvel appel réseau dédié).
+    ``counters`` reçoit ``{rises, out_of_range, no_t_out, no_lag, valid}``.
+    ``t_out_fallback`` (ex. 10.0) remplace la météo manquante pour le fit.
     """
+    if counters is None:
+        counters = {}
+    for key in ("rises", "out_of_range", "no_t_out", "no_lag", "valid"):
+        counters[key] = 0
+    fallback = None
+    if t_out_fallback is not None:
+        try:
+            fallback = float(t_out_fallback)
+        except (TypeError, ValueError):
+            fallback = None
+
     device_id = _room_primary_device_id(store, room_id)
     if device_id is None:
         return []
@@ -313,6 +342,7 @@ def room_transitions(store, room_id, weather=None, config=None, days=120) -> lis
         if cur_sp - prev_sp < 0.5:
             i += 1
             continue
+        counters["rises"] += 1
 
         start_ts = cur["ts"]
         t_room = cur.get("ambient")
@@ -322,19 +352,25 @@ def room_transitions(store, room_id, weather=None, config=None, days=120) -> lis
 
         # Filtres de base sur les températures.
         if t_room is None:
+            counters["out_of_range"] += 1
             i += 1
             continue
         if not (10.0 <= float(t_room) <= 24.0):
+            counters["out_of_range"] += 1
             i += 1
             continue
         if not (15.0 <= float(target) <= 24.0):
+            counters["out_of_range"] += 1
             i += 1
             continue
 
         t_out = _outside_temp_at(weather, config, start_ts)
         if t_out is None:
-            i += 1
-            continue
+            if fallback is None:
+                counters["no_t_out"] += 1
+                i += 1
+                continue
+            t_out = fallback
 
         # Recherche du lag : premier relevé >= target - 0,2 °C dans les 12 h,
         # avant toute descente de consigne.
@@ -356,16 +392,20 @@ def room_transitions(store, room_id, weather=None, config=None, days=120) -> lis
                 break
             j += 1
 
-        if lag_minutes is not None and lag_minutes >= 0:
-            transitions.append(
-                {
-                    "t_out": float(t_out),
-                    "t_room": float(t_room),
-                    "target": float(target),
-                    "lag_minutes": float(lag_minutes),
-                    "at": start_ts.isoformat(timespec="seconds"),
-                }
-            )
+        if lag_minutes is None or lag_minutes < 0:
+            counters["no_lag"] += 1
+            i += 1
+            continue
+        transitions.append(
+            {
+                "t_out": float(t_out),
+                "t_room": float(t_room),
+                "target": float(target),
+                "lag_minutes": float(lag_minutes),
+                "at": start_ts.isoformat(timespec="seconds"),
+            }
+        )
+        counters["valid"] += 1
 
         i += 1
 

@@ -708,13 +708,37 @@ class Engine:
             if time.time() < next_at:
                 return
 
+        counters: dict = {}
         transitions = heating_curve.room_transitions(
-            self.store, room_id, weather=self.weather, config=self._config()
+            self.store,
+            room_id,
+            weather=self.weather,
+            config=self._config(),
+            counters=counters,
         )
         fit = heating_curve.fit_tau(transitions)
+        source = "meteo"
+        if fit is None and counters.get("no_t_out", 0) > 0:
+            # Météo absente : on retente avec une référence fixe, sans toucher
+            # aux transitions qui avaient une température extérieure valide.
+            fallback_counters: dict = {}
+            transitions = heating_curve.room_transitions(
+                self.store,
+                room_id,
+                weather=self.weather,
+                config=self._config(),
+                counters=fallback_counters,
+                t_out_fallback=10.0,
+            )
+            fit = heating_curve.fit_tau(transitions)
+            counters = fallback_counters
+            source = "fallback_10c"
         if fit is None:
             fit = {"tau0": 3.0, "tau1": 0.0, "n": 0, "r2": 0.0}
         fit["fit_at"] = datetime.now().isoformat(timespec="seconds")
+        fit["debug"] = {**counters, "source": source}
+        if source == "fallback_10c":
+            fit["t_out_fallback"] = True
         try:
             self.store.update_room(room_id, {"curve_fit": fit})
         except Exception:  # noqa: BLE001
