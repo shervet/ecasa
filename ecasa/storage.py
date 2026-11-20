@@ -48,6 +48,7 @@ DEFAULT_SETTINGS = {
     # Vide = ne pas toucher au reglage fait sur la telecommande.
     "atlantic_fan_default": "",       # "" | low | med | high | auto
     "atlantic_airflow_default": "",   # "" | swing | pos1 ... pos6
+    "presence_mode": "present",       # present | absent (l'absence domine les overrides)
 }
 
 VALID_MODES = ("off", "auto", "cool", "heat", "dry", "fan")
@@ -1036,7 +1037,7 @@ class MemoryStore:
             "cap_ambient", "cap_prog", "cap_fan", "cap_louver", "cap_swing",
             "position", "device_type",
             "wiser_room_id", "temp_sensor_device_id", "room_id",
-            "temp_min", "temp_max",
+            "temp_min", "temp_max", "frost_temp", "frost_mode",
         )
         with self._lock:
             device = self._devices.get(int(device_id))
@@ -1081,6 +1082,13 @@ class MemoryStore:
                         device[key] = round(max(0.0, min(40.0, number)), 1)
                     if device.get("temp_min", 0) > device.get("temp_max", 30):
                         device["temp_min"], device["temp_max"] = device["temp_max"], device["temp_min"]
+                elif key == "frost_temp":
+                    try:
+                        device[key] = float(value)
+                    except (TypeError, ValueError) as err:
+                        raise ValueError("Température hors gel invalide") from err
+                elif key == "frost_mode":
+                    device[key] = str(value).strip().lower()[:16]
                 else:
                     device[key] = int(value or 0)
             self.mark_structure()

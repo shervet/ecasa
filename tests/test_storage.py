@@ -206,6 +206,22 @@ class SlotsTests(StoreTestCase):
         store.set_slots(device_id=502, week="A", days=days)
         self.assertEqual(store.slots(device_id=502, week="A")[0]["temp"], 16.0)
 
+    def test_update_device_persists_frost_settings(self):
+        store = self.make_store()
+        store.upsert_device(503, "Clim hors gel")
+        updated = store.update_device(503, {"frost_temp": "12.5", "frost_mode": "COOL"})
+        self.assertEqual(updated["frost_temp"], 12.5)
+        self.assertEqual(updated["frost_mode"], "cool")
+        with self.assertRaises(ValueError):
+            store.update_device(503, {"frost_temp": "pas-un-nombre"})
+        store.flush(force=True)
+        store.close()
+
+        reloaded = self.make_store()
+        device = reloaded.device(503)
+        self.assertEqual(device["frost_temp"], 12.5)
+        self.assertEqual(device["frost_mode"], "cool")
+
     def test_replace_removes_previous_slots(self):
         store = self.make_store()
         store.set_slots(device_id=1, week="A", days=week_days())

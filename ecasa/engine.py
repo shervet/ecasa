@@ -467,6 +467,9 @@ class Engine:
         now = now or datetime.now()
         settings = self.store.settings()
 
+        if str(settings.get("presence_mode", "present")).lower() == "absent":
+            return self._absent_desired(device), "absence", None
+
         override = self.store.override(device["device_id"])
         if override:
             try:
@@ -540,6 +543,26 @@ class Engine:
                 return advanced, f"planning {week} (avance)", None
 
         return desired, f"planning {week}", None
+
+    def _absent_desired(self, device: dict) -> dict:
+        """Consigne d'absence : hors gel paramétrable, sans passer par le planning."""
+        dev_type = device.get("device_type", "atlantic")
+        if dev_type == "atlantic":
+            frost_temp = device.get("frost_temp") or 16
+            frost_mode = device.get("frost_mode") or "heat"
+            return {
+                "mode": frost_mode,
+                "mode_label": MODE_LABELS.get(frost_mode, frost_mode),
+                "temp": self.effective_temp(device, frost_mode, frost_temp),
+            }
+        # Wiser (et types non-atlantic) : ne pas utiliser effective_temp, qui
+        # transformerait un mode off en WISER_FROST_TEMP (6 °C) et écraserait
+        # la température hors gel configurée.
+        return {
+            "mode": "off",
+            "mode_label": "Hors gel",
+            "temp": float(device.get("frost_temp") or 10),
+        }
 
     # ----------------------------------------------------------------- courbe
 
@@ -1151,11 +1174,14 @@ class Engine:
         now = datetime.now()
         settings = self.store.settings()
         week = week_type(now, settings, self.store.week_overrides())
+        presence_absent = str(settings.get("presence_mode", "present")).lower() == "absent"
         devices = []
 
         for device in self.store.devices():
             desired, source, until = self.desired_for(device, now)
-            upcoming = self.next_change(device, now)
+            # Pendant l'absence, aucune promesse de changement planifié :
+            # seule la consigne hors gel est active.
+            upcoming = None if presence_absent else self.next_change(device, now)
 
             # Check if this device is actuator for a room
             room_slots_a = []

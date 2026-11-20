@@ -2634,6 +2634,7 @@ function renderDevices() {
           `${escapeHtml(device.name)} <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>`,
           `${escapeHtml(room || "Sans pièce")} · ${fmtTemp(ambient)} °C
             · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
+            · hors gel ${fmtTemp(device.frost_temp ?? (isWiser ? 10 : 16))} °C${isWiser ? "" : ` (${modeLabel(device.frost_mode || "heat", store.meta)})`}
             ${isOn ? "" : " · pilotage désactivé"}
             ${device.current?.available === false ? " · hors ligne" : ""}`,
           `<button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}"${disabled ? " disabled" : ""}>${icon("edit", 18)}</button>
@@ -2743,6 +2744,13 @@ function openDeviceEditor(device) {
         `<option value="${item.device_id}"${Number(device.temp_sensor_device_id) === Number(item.device_id) ? " selected" : ""}>${escapeHtml(item.name)}</option>`
     )
     .join("")}`;
+  const frostMode = device.frost_mode || "heat";
+  const frostModeOptions = modeOptions()
+    .map(
+      ([value, label]) =>
+        `<option value="${escapeHtml(value)}"${value === frostMode ? " selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("");
 
   const body = document.createElement("div");
   body.className = "stack";
@@ -2780,6 +2788,19 @@ function openDeviceEditor(device) {
         <input class="input" data-temp-max type="number" min="0" max="40" step="0.5" value="${escapeHtml(device.temp_max ?? 30)}">
       </label>
     </div>
+    <details open>
+      <summary class="label" style="cursor:pointer">Hors gel</summary>
+      <div class="form-grid mt-2">
+        <label class="field">
+          <span class="label">Température hors gel (°C)</span>
+          <input class="input" data-frost-temp type="number" step="0.5" min="0" value="${escapeHtml(device.frost_temp ?? (device.device_type === "wiser" ? 10 : 16))}">
+        </label>
+        ${device.device_type !== "wiser" ? `<label class="field">
+          <span class="label">Mode hors gel</span>
+          <select class="select" data-frost-mode>${frostModeOptions}</select>
+        </label>` : ""}
+      </div>
+    </details>
     ${row("Pilotage autorisé", "Désactive pour ignorer cet appareil sans le retirer.", `<label class="switch"><input type="checkbox" data-enabled${Number(device.enabled) !== 0 ? " checked" : ""}><span class="track"></span></label>`)}
     <label class="field">
       <span class="label">Capteur de température <span class="opt">optionnel</span></span>
@@ -2816,7 +2837,7 @@ function openDeviceEditor(device) {
     const number = (selector) => Number(val(selector)?.value || 0);
 
     try {
-      await put(`/api/devices/${device.device_id}`, {
+      const payload = {
         name: val("[data-name]").value.trim(),
         device_type: val("[data-device-type]").value,
         room_id: val("[data-room]").value || null,
@@ -2824,6 +2845,7 @@ function openDeviceEditor(device) {
         wiser_room_id: number("[data-wiser-room]"),
         temp_min: Number(val("[data-temp-min]")?.value || 0),
         temp_max: Number(val("[data-temp-max]")?.value || 0),
+        frost_temp: number("[data-frost-temp]"),
         enabled: val("[data-enabled]").checked ? 1 : 0,
         temp_sensor_device_id: number("[data-temp-sensor]"),
         cap_mode: number("[data-cap-mode]"),
@@ -2831,7 +2853,11 @@ function openDeviceEditor(device) {
         cap_setpoint_cool: number("[data-cap-setpoint-cool]"),
         cap_ambient: number("[data-cap-ambient]"),
         cap_prog: number("[data-cap-prog]"),
-      });
+      };
+      if (device.device_type !== "wiser") {
+        payload.frost_mode = val("[data-frost-mode]")?.value || "heat";
+      }
+      await put(`/api/devices/${device.device_id}`, payload);
       await refreshState({ silent: true });
       closeSheet();
       renderDevices();

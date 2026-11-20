@@ -8,6 +8,7 @@ Capacites Cozytouch utilisees :
 
 import unittest
 from datetime import datetime
+from unittest import mock
 
 from ecasa.atlantic import AtlanticError, ExecutionTimeout
 from ecasa.engine import (
@@ -437,6 +438,117 @@ class HeatingCurveAdvanceTests(unittest.TestCase):
         self.assertIsNotNone(desired)
         self.assertEqual(desired["temp"], 17.0)
         self.assertNotIn("avance", source)
+
+
+class PresenceTests(unittest.TestCase):
+    """Mode Présent/Absent : l'absence domine override et planning."""
+
+    NOW = datetime(2026, 11, 9, 10, 0)  # lundi
+
+    def _engine(self, device, settings=None):
+        store = FakeStore(settings, device)
+        return Engine(store, FakeClient()), store
+
+    def test_absent_wiser_defaults_to_off_at_10(self):
+        device = dict(DEFAULT_DEVICE, device_id=9001, device_type="wiser")
+        engine, _store = self._engine(device, {"presence_mode": "absent"})
+        desired, source, until = engine.desired_for(device, self.NOW)
+        self.assertEqual(desired, {"mode": "off", "mode_label": "Hors gel", "temp": 10.0})
+        self.assertEqual(source, "absence")
+        self.assertIsNone(until)
+
+    def test_absent_wiser_uses_custom_frost_temp_not_wiser_frost_temp(self):
+        device = dict(DEFAULT_DEVICE, device_id=9001, device_type="wiser", frost_temp=12)
+        engine, _store = self._engine(device, {"presence_mode": "absent"})
+        desired, _source, _until = engine.desired_for(device, self.NOW)
+        self.assertEqual(desired["temp"], 12.0)
+        self.assertNotEqual(desired["temp"], 6.0)
+
+    def test_absent_atlantic_defaults_to_heat_at_16(self):
+        device = dict(DEFAULT_DEVICE, frost_temp=None, frost_mode=None)
+        engine, _store = self._engine(device, {"presence_mode": "absent"})
+        desired, source, _until = engine.desired_for(device, self.NOW)
+        self.assertEqual(desired, {"mode": "heat", "mode_label": "Chaud", "temp": 16.0})
+        self.assertEqual(source, "absence")
+
+    def test_absent_atlantic_honours_custom_frost_mode_and_temp(self):
+        device = dict(DEFAULT_DEVICE, frost_temp=24, frost_mode="cool")
+        engine, _store = self._engine(device, {"presence_mode": "absent"})
+        desired, _source, _until = engine.desired_for(device, self.NOW)
+        self.assertEqual(desired, {"mode": "cool", "mode_label": "Froid", "temp": 24.0})
+
+    def test_absence_dominates_active_override_then_present_restores_it(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.update_device(9001, {"device_type": "wiser"})
+        store.set_override(9001, "heat", 21, datetime(2027, 1, 1))
+        engine = Engine(store, FakeClient())
+
+        store.set_settings({"presence_mode": "absent"})
+        desired, source, _until = engine.desired_for(store.device(9001), self.NOW)
+        self.assertEqual(desired["temp"], 10.0)
+        self.assertEqual(source, "absence")
+
+        store.set_settings({"presence_mode": "present"})
+        desired, source, _until = engine.desired_for(store.device(9001), self.NOW)
+        self.assertEqual(desired["temp"], 21.0)
+        self.assertEqual(source, "override")
+
+    def test_absence_then_present_restores_planning(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.update_device(9001, {"device_type": "wiser"})
+        days = [[] for _ in range(7)]
+        days[0] = [{"time": "00:00", "mode": "heat", "temp": 19}]
+        for week in ("A", "B"):
+            store.set_slots(device_id=9001, week=week, days=days)
+        engine = Engine(store, FakeClient())
+
+        store.set_settings({"presence_mode": "absent"})
+        desired, source, _until = engine.desired_for(store.device(9001), self.NOW)
+        self.assertEqual(desired["temp"], 10.0)
+        self.assertEqual(source, "absence")
+
+        store.set_settings({"presence_mode": "present"})
+        desired, source, _until = engine.desired_for(store.device(9001), self.NOW)
+        self.assertEqual(desired["temp"], 19.0)
+        self.assertTrue(source.startswith("planning"))
+
+    def test_default_settings_leave_planning_unchanged(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.update_device(9001, {"device_type": "wiser"})
+        self.assertEqual(store.settings()["presence_mode"], "present")
+        days = [[] for _ in range(7)]
+        days[0] = [{"time": "00:00", "mode": "heat", "temp": 19}]
+        for week in ("A", "B"):
+            store.set_slots(device_id=9001, week=week, days=days)
+        engine = Engine(store, FakeClient())
+        desired, source, _until = engine.desired_for(store.device(9001), self.NOW)
+        self.assertEqual(desired["temp"], 19.0)
+        self.assertTrue(source.startswith("planning"))
+
+    def test_snapshot_next_is_none_during_absence_only(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.update_device(9001, {"device_type": "wiser"})
+        engine = Engine(store, FakeClient())
+
+        class Upcoming:
+            def as_dict(self):
+                return {"describe": "Chaud 20 °C"}
+
+        with mock.patch.object(engine, "next_change", return_value=Upcoming()) as upcoming:
+            store.set_settings({"presence_mode": "absent"})
+            snapshot = engine.snapshot()
+            self.assertIsNone(snapshot["devices"][0]["next"])
+            self.assertEqual(snapshot["devices"][0]["desired"]["temp"], 10.0)
+            upcoming.assert_not_called()
+
+            store.set_settings({"presence_mode": "present"})
+            snapshot = engine.snapshot()
+            self.assertEqual(snapshot["devices"][0]["next"], {"describe": "Chaud 20 °C"})
+            upcoming.assert_called_once()
 
 
 if __name__ == "__main__":

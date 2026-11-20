@@ -4378,6 +4378,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "PUT" and path == "/api/settings":
             body = self._body()
+            if "presence_mode" in body and str(body["presence_mode"]).strip().lower() not in (
+                "present",
+                "absent",
+            ):
+                self._json(400, {"error": "Mode de présence invalide"})
+                return
             settings = app.store.set_settings(body)
             if "week_switch_day" in body:
                 with _config_write_lock:
@@ -4389,6 +4395,8 @@ class Handler(BaseHTTPRequestHandler):
                         else "monday"
                     )
                     _write_config_locked(config)
+                app.engine.tick(force=True)
+            if "presence_mode" in body:
                 app.engine.tick(force=True)
             app.store.flush(force=True)
             self._json(200, {"settings": settings})

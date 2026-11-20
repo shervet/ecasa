@@ -1,12 +1,29 @@
 // Accueil : vue d'ensemble de la maison et réglage rapide.
 
+import { put } from "../api.js";
 import { icon, modeIcon, weatherIconName } from "../icons.js";
 import { openDeviceSheet } from "../components/device-sheet.js";
 import { openSheet } from "../sheet.js";
+import { toastError } from "../toast.js";
 import { setPendingPlanningRoom } from "./planning.js";
-import { applyNow, refreshState, roomSummary, store, subscribe } from "../state.js";
+import { refreshState, roomSummary, store, subscribe } from "../state.js";
 
 let weather = null;
+
+function isAbsent() {
+  return String(store.state?.settings?.presence_mode || "present").toLowerCase() === "absent";
+}
+
+/** Duo segmenté Présent/Absent : un seul bouton actif, aria-pressed synchronisé. */
+function syncPresence() {
+  const absent = isAbsent();
+  for (const [id, active] of [["homePresent", !absent], ["homeAbsent", absent]]) {
+    const button = document.getElementById(id);
+    if (!button) continue;
+    button.classList.toggle("btn-primary", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
 
 /** Ids de pièces pilotées par Pronote (relus à chaque rendu : la config peut changer). */
 function pronoteRoomIds() {
@@ -50,6 +67,7 @@ export default {
   title: "Accueil",
 
   async mount(view) {
+    const absent = isAbsent();
     view.innerHTML = `
       <div class="page">
         <div class="page-head">
@@ -57,9 +75,9 @@ export default {
             <h1 class="page-title" id="homeGreeting">${greeting()}</h1>
             <p class="page-sub" id="homeDate">${escapeHtml(fmtDateLong(new Date()))}</p>
           </div>
-          <div class="page-actions">
-            <button class="btn" type="button" id="homeRefresh">${icon("refresh", 17)} Actualiser</button>
-            <button class="btn btn-primary" type="button" id="homeApply">${icon("zap", 17)} Appliquer</button>
+          <div class="page-actions" role="group" aria-label="Présence">
+            <button class="btn${absent ? "" : " btn-primary"}" type="button" id="homePresent" aria-pressed="${absent ? "false" : "true"}">Présent</button>
+            <button class="btn${absent ? " btn-primary" : ""}" type="button" id="homeAbsent" aria-pressed="${absent ? "true" : "false"}">Absent</button>
           </div>
         </div>
 
@@ -72,22 +90,23 @@ export default {
       </div>
     `;
 
-    view.querySelector("#homeRefresh")?.addEventListener("click", async () => {
-      await refreshState({ silent: false });
-      paint();
-    });
-
-    view.querySelector("#homeApply")?.addEventListener("click", async (event) => {
+    const setPresence = async (event) => {
       const button = event.currentTarget;
+      const mode = button.id === "homeAbsent" ? "absent" : "present";
+      if (isAbsent() === (mode === "absent")) return;
       button.disabled = true;
       try {
-        await applyNow();
-      } catch {
-        /* toast déjà affiché */
+        await put("/api/settings", { presence_mode: mode });
+        await refreshState({ silent: true });
+        syncPresence();
+      } catch (err) {
+        toastError(err);
       } finally {
         button.disabled = false;
       }
-    });
+    };
+    view.querySelector("#homePresent")?.addEventListener("click", setPresence);
+    view.querySelector("#homeAbsent")?.addEventListener("click", setPresence);
 
     paint();
     loadWeather().then(() => paint());
@@ -117,6 +136,7 @@ export default {
 };
 
 function paint() {
+  syncPresence();
   paintHero();
   paintStrip();
   paintRooms();
