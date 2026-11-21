@@ -188,9 +188,8 @@ export default {
       return;
     }
 
-    // Par défaut : semaine courante.
-    week = store.state?.week || "A";
-    setPref("week", week);
+    // Par défaut : préférence utilisateur, sinon semaine Pronote unique, sinon semaine courante.
+    week = defaultPlanningWeek();
 
     paintPlanNav();
 
