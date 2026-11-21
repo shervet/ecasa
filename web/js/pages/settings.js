@@ -1171,6 +1171,19 @@ function serverSection() {
         <button class="btn" type="button" data-open-logs>${icon("list", 16)} Ouvrir le journal</button>
       </div>
     </div>
+    <div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
+      <div class="row-between wrap" style="gap:10px">
+        <div>
+          <strong style="font-size:13px">Configuration complète</strong>
+          <p class="hint mt-1">Archive ZIP : config.json (clés API et mot de passe inclus), état, énergie et historique.</p>
+        </div>
+        <div class="row wrap" style="gap:8px">
+          <button class="btn" type="button" id="configExportBtn" title="Exporter la configuration">${icon("download", 16)} Exporter la configuration</button>
+          <button class="btn" type="button" id="configImportBtn" title="Importer la configuration">${icon("upload", 16)} Importer la configuration</button>
+          <input id="configImportFile" type="file" accept=".zip,application/zip" hidden>
+        </div>
+      </div>
+    </div>
     <div class="row wrap" style="gap:8px">
       <button class="btn" type="button" id="exportBtn">${icon("download", 15)} Exporter les données</button>
       <button class="btn" type="button" id="importBtn">${icon("upload", 15)} Importer</button>
@@ -1618,6 +1631,9 @@ function bind() {
   root.querySelector("#exportBtn")?.addEventListener("click", exportData);
   root.querySelector("#importBtn")?.addEventListener("click", () => root.querySelector("#importFile")?.click());
   root.querySelector("#importFile")?.addEventListener("change", importData);
+  root.querySelector("#configExportBtn")?.addEventListener("click", exportConfigBackup);
+  root.querySelector("#configImportBtn")?.addEventListener("click", () => root.querySelector("#configImportFile")?.click());
+  root.querySelector("#configImportFile")?.addEventListener("change", importConfigBackup);
 
   root.querySelector("#tailscaleRefresh")?.addEventListener("click", loadTailscale);
   root.querySelector("#updateCheck")?.addEventListener("click", loadUpdate);
@@ -2915,6 +2931,106 @@ function renderSystem() {
 }
 
 /* --------------------------------------------------------------- serveur */
+
+async function exportConfigBackup(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/config/backup", {
+      headers: { Accept: "application/zip" },
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || `Erreur ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    const filename =
+      match?.[1] || `ecasa-config-${new Date().toISOString().slice(0, 10)}.zip`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("Configuration exportée.");
+  } catch (err) {
+    toastError(err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importConfigBackup(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  if (
+    !window.confirm(
+      "Importer cette configuration ? Les réglages, l'état, l'énergie et l'historique actuels seront remplacés. Le serveur redémarrera automatiquement."
+    )
+  ) {
+    return;
+  }
+  const button = root?.querySelector("#configImportBtn");
+  if (button) button.disabled = true;
+  try {
+    const data = await fileToBase64(file);
+    const response = await fetch("/api/config/restore", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ data }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || `Erreur ${response.status}`);
+    }
+    if (payload?.restart_required) {
+      toast("Configuration importée. Redémarrage en cours…", {
+        type: "info",
+        timeout: 8000,
+      });
+      await waitForServer();
+      renderRooms();
+      renderDevices();
+      renderStorage();
+      renderSystem();
+    } else {
+      await refreshState({ silent: true });
+      await refreshConfig({ silent: true });
+      renderRooms();
+      renderDevices();
+      renderStorage();
+      renderSystem();
+      toast("Configuration importée.");
+    }
+  } catch (err) {
+    toastError(err);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => {
+      reject(reader.error || new Error("Lecture du fichier impossible."));
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 async function exportData(event) {
   const button = event.currentTarget;

@@ -24,13 +24,19 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import zipfile
+from base64 import b64decode
+from binascii import Error as Base64Error
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 import urllib.request
+
+import config_backup
 
 from . import __version__
 from . import connectors as connector_registry
@@ -70,6 +76,16 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
 DATA_DIR = ROOT / "data"
+
+# Sauvegarde/restauration complète : taille maximale de l'archive reçue et
+# de son contenu décompressé (protection contre les zip bombs).
+BACKUP_MAX_BYTES = 64 * 1024 * 1024
+BACKUP_MAX_UNCOMPRESSED = 256 * 1024 * 1024
+
+
+class BackupTooLarge(ValueError):
+    """Archive (ou contenu décompressé) au-delà des limites autorisées."""
+
 
 DEFAULT_CONFIG = {
     "email": "",
@@ -512,6 +528,114 @@ def _write_config_locked(config: dict) -> dict:
     with _config_lock:
         _config_cache = dict(config)
     return config
+
+
+def config_backup_filename() -> str:
+    return f"ecasa-config-{datetime.now().strftime('%Y-%m-%d-%H%M%S')}.zip"
+
+
+def build_config_backup() -> bytes:
+    archive = config_backup.export_bytes(str(ROOT))
+    if not archive:
+        raise ValueError("Aucun fichier à exporter")
+    return archive
+
+
+def _validate_backup_archive(path: str) -> None:
+    """Valide l'archive avant toute écriture (zip, tailles, config.json)."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            total = 0
+            found = False
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                name = config_backup.safe_name(info.filename)
+                if not name:
+                    continue
+                found = True
+                total += max(0, int(info.file_size or 0))
+                if total > BACKUP_MAX_UNCOMPRESSED:
+                    raise BackupTooLarge(
+                        "Archive trop volumineuse une fois décompressée"
+                    )
+                if name == "config.json":
+                    try:
+                        payload = json.loads(
+                            zf.read(info).decode("utf-8-sig")
+                        )
+                    except (UnicodeDecodeError, ValueError) as err:
+                        raise ValueError(
+                            "config.json invalide dans l'archive"
+                        ) from err
+                    if not isinstance(payload, dict):
+                        raise ValueError(
+                            "config.json invalide : objet attendu"
+                        )
+            if not found:
+                raise ValueError(
+                    "Archive invalide : aucun fichier attendu "
+                    "(config.json, data/state.json, data/energy.json, "
+                    "data/history/*)"
+                )
+    except zipfile.BadZipFile as err:
+        raise ValueError("Archive invalide : fichier ZIP attendu") from err
+
+
+def _quiesce_for_restore(app) -> None:
+    """Arrête le moteur et le stockage avant d'écraser leurs fichiers.
+
+    Sans cela, le store en mémoire pourrait réécrire l'ancien state.json
+    après la restauration, et le moteur continuerait d'utiliser l'état
+    précédent. Le serveur redémarre juste après la réponse.
+    """
+    engine = getattr(app, "engine", None)
+    if engine is not None:
+        engine.stop()
+        thread = getattr(engine, "_thread", None)
+        if thread and thread.is_alive():
+            thread.join(timeout=20)
+    sync = getattr(app, "daily_sync", None)
+    if sync is not None:
+        sync.stop()
+        thread = getattr(sync, "_thread", None)
+        if thread and thread.is_alive():
+            thread.join(timeout=20)
+    store = getattr(app, "store", None)
+    if store is not None:
+        store.close()
+
+
+def restore_config_backup(archive: bytes, before_apply=None) -> str:
+    """Restaure une archive zip et renvoie le dossier de sauvegarde créé."""
+    if not archive:
+        raise ValueError("Archive vide")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_dir = f"config-backup-{stamp}"
+    handle, path = tempfile.mkstemp(prefix="ecasa-restore-", suffix=".zip")
+    try:
+        with os.fdopen(handle, "wb") as out:
+            out.write(archive)
+        _validate_backup_archive(path)
+        if before_apply is not None:
+            before_apply()
+        try:
+            code = config_backup.import_zip(
+                path, backup_dir, root=str(ROOT)
+            )
+        except zipfile.BadZipFile as err:
+            raise ValueError("Archive invalide : fichier ZIP attendu") from err
+        if code != 0:
+            raise ValueError(
+                "Archive invalide : aucun fichier attendu"
+            )
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    load_config(force=True)
+    return backup_dir
 
 
 def save_config(body: dict) -> tuple[dict, bool]:
@@ -3171,6 +3295,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _download(self, status: int, body: bytes, content_type: str, filename: str) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header(
+            "Content-Disposition", f'attachment; filename="{filename}"'
+        )
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self._security_headers()
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
@@ -3624,6 +3761,114 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and path == "/api/config":
             self._json(200, public_config(load_config()))
+            return
+
+        if method == "GET" and path == "/api/config/backup":
+            try:
+                archive = build_config_backup()
+            except ValueError as err:
+                self._json(500, {"error": str(err)})
+                return
+            except OSError as err:
+                self._json(500, {"error": f"Export impossible : {err}"})
+                return
+            self._download(
+                200,
+                archive,
+                "application/zip",
+                config_backup_filename(),
+            )
+            return
+
+        if method == "POST" and path == "/api/config/restore":
+            # Le front envoie le zip en base64 dans un JSON : pas de parseur
+            # multipart dans la stdlib, et le corps reste un objet JSON simple
+            # (mêmes conventions d'erreur que le reste de l'API).
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                self._json(400, {"error": "Longueur de requête invalide"})
+                return
+            if length <= 0:
+                self._json(400, {"error": "Archive vide"})
+                return
+            if length > BACKUP_MAX_BYTES * 2:
+                self._json(413, {
+                    "error": (
+                        "Archive trop volumineuse "
+                        f"(max {BACKUP_MAX_BYTES // (1024 * 1024)} Mo)"
+                    )
+                })
+                return
+            try:
+                payload = json.loads(
+                    self.rfile.read(length).decode("utf-8-sig")
+                )
+            except (UnicodeDecodeError, ValueError):
+                self._json(400, {"error": "Corps JSON invalide"})
+                return
+            encoded = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(encoded, str) or not encoded:
+                self._json(400, {"error": "Archive manquante"})
+                return
+            try:
+                archive = b64decode(encoded, validate=True)
+            except (Base64Error, ValueError):
+                self._json(400, {"error": "Archive base64 invalide"})
+                return
+            if not archive:
+                self._json(400, {"error": "Archive vide"})
+                return
+            if len(archive) > BACKUP_MAX_BYTES:
+                self._json(413, {
+                    "error": (
+                        "Archive trop volumineuse "
+                        f"(max {BACKUP_MAX_BYTES // (1024 * 1024)} Mo)"
+                    )
+                })
+                return
+            quiesced = False
+
+            def prepare_restore() -> None:
+                nonlocal quiesced
+                _quiesce_for_restore(app)
+                quiesced = True
+
+            try:
+                backup_dir = restore_config_backup(
+                    archive, before_apply=prepare_restore
+                )
+            except BackupTooLarge as err:
+                self._json(413, {"error": str(err)})
+                if quiesced:
+                    self._schedule_shutdown(restart=True)
+                return
+            except ValueError as err:
+                self._json(400, {"error": str(err)})
+                if quiesced:
+                    # Le moteur a été arrêté avant l'échec : on redémarre
+                    # pour revenir à un serveur sain dans tous les cas.
+                    self._schedule_shutdown(restart=True)
+                return
+            except Exception as err:  # noqa: BLE001
+                self._json(500, {
+                    "error": f"Restauration impossible : {err}"
+                })
+                if quiesced:
+                    self._schedule_shutdown(restart=True)
+                return
+            try:
+                app.store.log(
+                    "info", f"Configuration restaurée ({backup_dir})"
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(200, {
+                "ok": True,
+                "restart_required": True,
+                "backup_dir": backup_dir,
+            })
+            self._schedule_shutdown(restart=True)
             return
 
         if method == "PUT" and path == "/api/config":

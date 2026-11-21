@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import io
 import os
 import shutil
 import sys
@@ -16,20 +17,54 @@ ALLOWED = {"config.json", "data/state.json", "data/energy.json"}
 ALLOWED_PREFIX = "data/history/"
 
 
-def export_zip(out_path: str) -> int:
+def safe_name(raw: str) -> str:
+    """Nom d'archive autorisé, ou chaîne vide (traversée de dossier refusée)."""
+    text = str(raw or "").replace("\\", "/")
+    if not text or text.startswith("/"):
+        return ""
+    parts = text.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return ""
+    if len(parts[0]) == 2 and parts[0][1] == ":":
+        return ""
+    if text in ALLOWED or text.startswith(ALLOWED_PREFIX):
+        return text
+    return ""
+
+
+def _zip_items(zf: zipfile.ZipFile, root: str) -> list[str]:
+    present = []
+    for src, arc in ITEMS:
+        path = os.path.join(root, src)
+        if os.path.isfile(path):
+            zf.write(path, arc)
+            present.append(arc)
+        elif os.path.isdir(path):
+            for dirpath, _, files in os.walk(path):
+                for name in files:
+                    full = os.path.join(dirpath, name)
+                    rel = os.path.relpath(full, root).replace(os.sep, "/")
+                    if not safe_name(rel):
+                        continue
+                    zf.write(full, rel)
+                    present.append(rel)
+    return present
+
+
+def export_bytes(root: str = ".") -> bytes | None:
+    """Contenu du zip d'export, ou None si aucun fichier n'existe."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        present = _zip_items(zf, root)
+    if not present:
+        return None
+    return buffer.getvalue()
+
+
+def export_zip(out_path: str, root: str = ".") -> int:
     present = []
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for src, arc in ITEMS:
-            if os.path.isfile(src):
-                zf.write(src, arc)
-                present.append(arc)
-            elif os.path.isdir(src):
-                for root, _, files in os.walk(src):
-                    for name in files:
-                        full = os.path.join(root, name)
-                        rel = os.path.relpath(full, ".").replace(os.sep, "/")
-                        zf.write(full, rel)
-                        present.append(rel)
+        present = _zip_items(zf, root)
     if not present:
         try:
             os.remove(out_path)
@@ -46,32 +81,43 @@ def export_zip(out_path: str) -> int:
     return 0
 
 
-def import_zip(zip_path: str, backup_dir: str) -> int:
+def import_zip(zip_path: str, backup_dir: str, root: str = ".") -> int:
     with zipfile.ZipFile(zip_path) as zf:
-        names = [n.replace("\\", "/").lstrip("/") for n in zf.namelist() if not n.endswith("/")]
-        selected = [n for n in names if n in ALLOWED or n.startswith(ALLOWED_PREFIX)]
-        if not selected:
+        entries = []
+        seen = set()
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            name = safe_name(info.filename)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            entries.append((info, name))
+        if not entries:
             print(
                 "Archive invalide : aucun fichier attendu (config.json, data/state.json, data/energy.json, data/history/*).",
                 file=sys.stderr,
             )
             return 2
 
+        root_path = os.path.abspath(root)
         backed = []
-        for name in selected:
-            if os.path.exists(name):
-                dest = os.path.join(backup_dir, name)
-                os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-                shutil.copy2(name, dest)
+        for _, name in entries:
+            dest = os.path.join(root_path, name)
+            if os.path.exists(dest):
+                backup = os.path.join(root_path, backup_dir, name)
+                os.makedirs(os.path.dirname(backup) or ".", exist_ok=True)
+                shutil.copy2(dest, backup)
                 backed.append(name)
 
-        for name in selected:
-            os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
-            with zf.open(name) as src, open(name, "wb") as out:
+        for info, name in entries:
+            dest = os.path.join(root_path, name)
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+            with zf.open(info) as src, open(dest, "wb") as out:
                 shutil.copyfileobj(src, out)
 
     print(f"Import terminé depuis : {zip_path}")
-    for n in selected:
+    for _, n in entries:
         print(f"  + {n}")
     if backed:
         print(f"Sauvegarde des fichiers remplacés : {backup_dir}/")
