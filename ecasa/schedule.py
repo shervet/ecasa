@@ -73,46 +73,18 @@ def _monday_week_type(monday_date: date, settings: dict, overrides: dict) -> str
 
 
 def week_type(moment: datetime, settings: dict, overrides: dict) -> str:
-    """Renvoie 'A' ou 'B' pour la semaine qui contient `moment`.
+    """Renvoie 'A' ou 'B' pour la semaine ISO qui contient `moment`.
 
     Trois modes :
       - parity   : semaine ISO impaire = A, paire = B (avec option d'inversion)
       - explicit : tout en `default_week`, sauf les semaines listees
       - none     : toujours A
 
-    En mode parity, le reglage ``week_switch_day`` permet de basculer le
-    vendredi (a ``friday_switch_minutes``) au lieu du lundi : le week-end
-    utilise alors la semaine suivante.
+    L'identite de la semaine suit toujours la parite ISO de son lundi :
+    ``week_switch_day`` et ``friday_switch_minutes`` ne la modifient pas
+    (ils ne servent qu'aux bornes de l'import Pronote, cote garde).
     """
-    mode = settings.get("week_mode", "parity")
-
     monday_date = moment.date() - timedelta(days=moment.weekday())
-
-    if mode == "parity" and str(
-        settings.get("week_switch_day", "monday")
-    ).lower() == "friday":
-        switched = False
-        if moment.weekday() in (5, 6):
-            # Samedi / dimanche : la bascule du vendredi a eu lieu.
-            switched = True
-        elif moment.weekday() == 4:
-            raw_switch = settings.get("friday_switch_minutes")
-            try:
-                switch_min = (
-                    460
-                    if raw_switch is None or str(raw_switch).strip() == ""
-                    else int(float(raw_switch))
-                )
-            except (TypeError, ValueError):
-                switch_min = 460
-            switch_min = max(0, min(1439, switch_min))
-            now_min = moment.hour * 60 + moment.minute
-            switched = now_min >= switch_min
-        if switched:
-            return _monday_week_type(
-                monday_date + timedelta(days=7), settings, overrides
-            )
-
     return _monday_week_type(monday_date, settings, overrides)
 
 

@@ -73,7 +73,7 @@ class WeekTypeTests(unittest.TestCase):
 
 
 class WeekTypeFridaySwitchTests(unittest.TestCase):
-    """Bascule de semaine le vendredi (garde alternee).
+    """Le reglage "friday" ne change pas l'identite ISO de la semaine.
 
     Semaine ISO 2 (paire -> B) : du 5 au 11 janvier 2026. Semaine ISO 3
     (impaire -> A) : du 12 au 18 janvier 2026.
@@ -83,30 +83,35 @@ class WeekTypeFridaySwitchTests(unittest.TestCase):
         self.settings = {
             "week_mode": "parity",
             "week_switch_day": "friday",
-            "friday_switch_minutes": "460",  # 07:40
+            "friday_switch_minutes": "460",  # 07:40 (borne de l'import Pronote)
         }
 
     def test_weekdays_stay_on_current_week(self):
-        # Lundi..jeudi : la semaine en cours n'a pas encore bascule.
+        # La parite ISO du lundi s'applique a toute la semaine, sans bascule.
         self.assertEqual(week_type(datetime(2026, 1, 5, 10, 0), self.settings, {}), "B")
         self.assertEqual(week_type(datetime(2026, 1, 7, 10, 0), self.settings, {}), "B")
         self.assertEqual(week_type(datetime(2026, 1, 8, 18, 0), self.settings, {}), "B")
         self.assertEqual(week_type(datetime(2026, 1, 12, 10, 0), self.settings, {}), "A")
         self.assertEqual(week_type(datetime(2026, 1, 15, 18, 0), self.settings, {}), "A")
 
-    def test_friday_before_switch_time_stays_on_current_week(self):
+    def test_friday_before_switch_time_keeps_iso_week(self):
         self.assertEqual(week_type(datetime(2026, 1, 9, 7, 30), self.settings, {}), "B")
 
-    def test_friday_from_switch_time_moves_to_next_week(self):
-        # 07:40 exactement : l'heure de bascule est incluse.
-        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 40), self.settings, {}), "A")
-        self.assertEqual(week_type(datetime(2026, 1, 9, 18, 0), self.settings, {}), "A")
-        # Semaine impaire -> la suivante est paire.
-        self.assertEqual(week_type(datetime(2026, 1, 16, 18, 0), self.settings, {}), "B")
+    def test_friday_from_switch_time_keeps_iso_week(self):
+        # Meme a 07:40 (heure de bascule de l'import), vendredi reste en B.
+        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 40), self.settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 9, 18, 0), self.settings, {}), "B")
+        # La semaine impaire reste A, elle aussi toute la journee.
+        self.assertEqual(week_type(datetime(2026, 1, 16, 18, 0), self.settings, {}), "A")
 
-    def test_weekend_moves_to_next_week(self):
-        self.assertEqual(week_type(datetime(2026, 1, 10, 12, 0), self.settings, {}), "A")
-        self.assertEqual(week_type(datetime(2026, 1, 11, 12, 0), self.settings, {}), "A")
+    def test_weekend_stays_on_current_week(self):
+        self.assertEqual(week_type(datetime(2026, 1, 10, 12, 0), self.settings, {}), "B")
+        self.assertEqual(week_type(datetime(2026, 1, 11, 12, 0), self.settings, {}), "B")
+
+    def test_saturday_iso47_real_server_case_is_a(self):
+        # Cas reel du serveur : samedi 21/11/2026, semaine ISO 47 (impaire).
+        settings = {"week_mode": "parity", "week_switch_day": "friday"}
+        self.assertEqual(week_type(datetime(2026, 11, 21, 12, 0), settings, {}), "A")
 
     def test_monday_switch_keeps_weekend_on_current_week(self):
         settings = {"week_mode": "parity", "week_switch_day": "monday"}
@@ -114,9 +119,9 @@ class WeekTypeFridaySwitchTests(unittest.TestCase):
         self.assertEqual(week_type(datetime(2026, 1, 10, 12, 0), settings, {}), "B")
         self.assertEqual(week_type(datetime(2026, 1, 11, 12, 0), settings, {}), "B")
 
-    def test_bad_switch_minutes_falls_back_to_0740(self):
+    def test_bad_switch_minutes_has_no_effect(self):
         settings = {**self.settings, "friday_switch_minutes": "oops"}
-        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 40), settings, {}), "A")
+        self.assertEqual(week_type(datetime(2026, 1, 9, 7, 40), settings, {}), "B")
         self.assertEqual(week_type(datetime(2026, 1, 9, 7, 30), settings, {}), "B")
 
 
