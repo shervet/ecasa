@@ -402,12 +402,21 @@ function defaultPlanningWeek() {
   return store.state?.week || "A";
 }
 
+/** Index du jour d'alternance (garde) dans le tableau des jours : lundi=0, vendredi=4. */
+function alternanceDayIndex() {
+  const switchDay = store.state?.settings?.week_switch_day ?? store.config?.pronote_switch_day ?? "monday";
+  return switchDay === "friday" ? 4 : 0;
+}
+
 /** Jours verrouillés (cours Pronote) d'une semaine d'une pièce : aucun si la semaine n'est pas liée. */
 function lockedDaysFor(t, weekKey) {
   const locked = [false, false, false, false, false, false, false];
   if (!t?.pronoteLinked || !pronoteLinkedWeeks().includes(weekKey)) return locked;
   const schoolDays = store.config?.pronote_school_days?.[String(t.targetId)]?.[weekKey] || [];
-  return locked.map((_, index) => !!schoolDays[index]);
+  for (let index = 0; index < locked.length; index += 1) locked[index] = !!schoolDays[index];
+  // Le jour de garde reste modifiable même s'il est marqué comme jour de cours.
+  locked[alternanceDayIndex()] = false;
+  return locked;
 }
 
 /** Conserve les créneaux des jours verrouillés de `previous` dans `next`. */
@@ -608,10 +617,7 @@ function paintRooms() {
     // entièrement modifiable, même si la pièce est liée sur l'autre semaine.
     const linkedWeeks = pronoteLinkedWeeks();
     const isLinkedWeek = isLinked && linkedWeeks.includes(week);
-    const schoolDaysMap = store.config?.pronote_school_days || {};
-    const schoolDays = isLinkedWeek
-      ? (schoolDaysMap[String(t.targetId)]?.[week] || [false, false, false, false, false, false, false])
-      : [false, false, false, false, false, false, false];
+    const locked = lockedDaysFor(t, week);
     html += '<div class="room-plan' + (isLinkedWeek ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '" style="scroll-margin-top: calc(var(--topbar-h) + 56px)">';
     html += '<div class="room-plan-head">';
     html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + (linkedModel ? ' <span class="pill pill-model" style="margin-left:6px">' + icon("link", 12) + ' ' + escapeHtml(linkedModel.name) + '</span>' : '') + '</div>';
@@ -625,7 +631,7 @@ function paintRooms() {
       const d = parseDate(date) || new Date();
       const dom = String(d.getDate()).padStart(2, "0") + "/" + String(d.getMonth() + 1).padStart(2, "0");
       const isToday = index === nowIndex && week === nowWeek;
-      const dayLocked = isLinkedWeek && !!schoolDays[index];
+      const dayLocked = locked[index];
       const slots = days[index] || [];
       const items = slots.slice().sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
       let rows = "";
