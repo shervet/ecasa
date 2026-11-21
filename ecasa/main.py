@@ -3628,6 +3628,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "PUT" and path == "/api/config":
             body = self._body()
+            before = load_config()
             try:
                 updated, restart = save_config(body)
             except ValueError as err:
@@ -3638,6 +3639,20 @@ class Handler(BaseHTTPRequestHandler):
                     "week_switch_day": updated.get("pronote_switch_day") or "monday",
                 })
                 app.engine.tick(force=True)
+            if (
+                updated.get("pronote_switch_day")
+                != before.get("pronote_switch_day")
+                or updated.get("pronote_weeks") != before.get("pronote_weeks")
+            ):
+                # Le jour d'alternance change le calcul des verrous Pronote :
+                # on relit le planning en arrière-plan pour ne pas bloquer la
+                # réponse HTTP sur l'appel réseau.
+                threading.Thread(
+                    target=run_pronote_auto_import,
+                    args=(app,),
+                    name="pronote-reimport",
+                    daemon=True,
+                ).start()
             self._json(200, {
                 "ok": True,
                 "restart_required": restart,

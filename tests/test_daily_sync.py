@@ -6,6 +6,7 @@ remplacé par un espion, et les services externes par des fonctions factices.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -536,6 +537,131 @@ class PronoteAutoImportWeeksTests(unittest.TestCase):
         room_days = self.config["pronote_school_days"][str(self.room_id)]
         self.assertEqual(room_days["A"], [True] * 7)
         self.assertEqual(room_days["B"], [True] * 7)
+
+
+class _ConfigHandler(main.Handler):
+    """Handler HTTP minimal : pas de socket, réponse capturée."""
+
+    def __init__(self, app, body):
+        self.server = mock.Mock()
+        self.server.app = app
+        self.client_address = ("127.0.0.1", 0)
+        self.command = "PUT"
+        self.path = "/api/config"
+        self._body_value = body
+        self.responses = []
+
+    def _body(self):
+        return self._body_value
+
+    def _json(self, status, payload):
+        self.responses.append((status, payload))
+
+
+class _InlineThread:
+    """Thread synchrone : le traitement d'arrière-plan est exécuté direct."""
+
+    def __init__(self, target=None, args=(), kwargs=None, **_):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        self._target(*self._args, **self._kwargs)
+
+
+class ConfigSwitchReimportTests(unittest.TestCase):
+    """PUT /api/config : changer le jour d'alternance relance l'import."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.store = MemoryStore(
+            str(base / "state.json"), str(base / "history")
+        )
+        self.addCleanup(self.store.close)
+        self.room_id = 2
+        self.config_path = base / "config.json"
+        self.config_path.write_text(
+            json.dumps({
+                **CONFIG,
+                "pronote_room_id": self.room_id,
+                "pronote_room_ids": [self.room_id],
+                "pronote_weeks": ["A"],
+                "pronote_switch_day": "monday",
+                "pronote_school_days": {
+                    str(self.room_id): {
+                        "A": [False] * 7,
+                        "B": [False] * 7,
+                    },
+                },
+            }),
+            encoding="utf-8",
+        )
+        self.app = FakeApp(self.store, FakeEnergy())
+        self.app.engine = mock.Mock()
+        self._original_cache = main._config_cache
+        main._config_cache = None
+        self.addCleanup(setattr, main, "_config_cache", self._original_cache)
+
+    def put_config(self, body):
+        plan = {
+            "days": [
+                [{"time": "07:00", "mode": "heat", "temp": 20.0}]
+                for _ in range(5)
+            ] + [[], []],
+            # Vendredi partiel : il reste éditable malgré des créneaux.
+            "scopes": [
+                ["full", 0], ["full", 0], ["full", 0], ["full", 0],
+                ["prefix", 3], ["full", 0], ["full", 0],
+            ],
+        }
+        handler = _ConfigHandler(self.app, body)
+        with mock.patch.object(
+            main, "CONFIG_PATH", self.config_path
+        ), mock.patch.object(
+            main, "build_pronote_plan", return_value=plan
+        ), mock.patch.object(
+            main.threading, "Thread", _InlineThread
+        ):
+            handler._api("PUT", "/api/config")
+        return handler.responses
+
+    def test_switch_day_change_reimports_school_days(self):
+        responses = self.put_config({"pronote_switch_day": "friday"})
+
+        self.assertEqual(responses[-1][0], 200)
+        self.assertTrue(responses[-1][1]["ok"])
+        config = main.load_config()
+        self.assertEqual(config["pronote_switch_day"], "friday")
+        self.assertEqual(
+            config["pronote_school_days"][str(self.room_id)]["A"],
+            [True, True, True, True, False, False, False],
+        )
+        self.assertEqual(self.store.settings()["week_switch_day"], "friday")
+
+    def test_same_switch_day_does_not_reimport(self):
+        with mock.patch.object(
+            main, "run_pronote_auto_import"
+        ) as reimport:
+            responses = self.put_config({"pronote_switch_day": "monday"})
+
+        self.assertEqual(responses[-1][0], 200)
+        reimport.assert_not_called()
+        self.assertEqual(
+            main.load_config()["pronote_school_days"][str(self.room_id)]["A"],
+            [False] * 7,
+        )
+
+    def test_weeks_change_reimports(self):
+        with mock.patch.object(
+            main, "run_pronote_auto_import"
+        ) as reimport:
+            responses = self.put_config({"pronote_weeks": ["A", "B"]})
+
+        self.assertEqual(responses[-1][0], 200)
+        reimport.assert_called_once()
 
 
 class ExternalServicesTests(unittest.TestCase):
