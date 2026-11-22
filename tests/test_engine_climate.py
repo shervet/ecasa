@@ -551,6 +551,98 @@ class PresenceTests(unittest.TestCase):
             upcoming.assert_called_once()
 
 
+class NextChangeWeekBoundaryTests(unittest.TestCase):
+    """Le prochain changement ne melange pas les semaines au passage A/B."""
+
+    NOW = datetime(2026, 11, 22, 13, 12)  # dimanche, semaine A (ISO 47)
+
+    def _store(self):
+        store = MemoryStore(None)
+        store.set_settings({"week_mode": "parity"})
+        store.upsert_device(9003, "Clim séjour")
+        room = store.add_room("Séjour semaine")
+        store.update_room(room["id"], {"actuator_device_id": 9003})
+        store.update_device(
+            9003,
+            {"room_id": room["id"], "device_type": "atlantic", "temp_min": 12},
+        )
+        return store, room
+
+    @staticmethod
+    def _days(sunday, monday=None):
+        days = [[] for _ in range(7)]
+        days[6] = list(sunday)
+        days[0] = list(monday or [])
+        return days
+
+    def _grid_b(self, store, room):
+        store.set_slots(
+            room_id=room["id"],
+            week="B",
+            days=self._days(
+                [
+                    {"time": "09:00", "mode": "cool", "temp": 19},
+                    {"time": "23:30", "mode": "cool", "temp": 16.5},
+                ],
+                [{"time": "00:00", "mode": "cool", "temp": 13}],
+            ),
+        )
+
+    def test_sunday_evening_takes_next_week_monday_not_sunday(self):
+        """Repro live : dimanche 13:12 A -> lundi 00:00 B (13 °C)."""
+        store, room = self._store()
+        store.set_slots(
+            room_id=room["id"],
+            week="A",
+            days=self._days(
+                [{"time": "00:00", "mode": "cool", "temp": 13}],
+                [
+                    {"time": "00:00", "mode": "cool", "temp": 17},
+                    {"time": "06:30", "mode": "cool", "temp": 19},
+                ],
+            ),
+        )
+        self._grid_b(store, room)
+
+        upcoming = Engine(store, FakeClient()).next_change(store.device(9003), self.NOW)
+
+        self.assertIsNotNone(upcoming)
+        self.assertEqual(upcoming.week, "B")
+        self.assertEqual(upcoming.slot["at"], datetime(2026, 11, 23, 0, 0))
+        self.assertEqual(upcoming.slot["temp"], 13.0)
+        self.assertNotEqual(upcoming.slot["at"], datetime(2026, 11, 22, 23, 30))
+        self.assertNotEqual(upcoming.slot["temp"], 16.5)
+
+    def test_no_slot_left_this_week_still_validates_other_week(self):
+        """Branche « plus de créneau cette semaine » : dimanche B ignore."""
+        store, room = self._store()
+        self._grid_b(store, room)
+
+        upcoming = Engine(store, FakeClient()).next_change(store.device(9003), self.NOW)
+
+        self.assertIsNotNone(upcoming)
+        self.assertEqual(upcoming.week, "B")
+        self.assertEqual(upcoming.slot["at"], datetime(2026, 11, 23, 0, 0))
+        self.assertEqual(upcoming.slot["temp"], 13.0)
+
+    def test_valid_slot_later_today_is_kept(self):
+        """Garde-fou : un créneau valide de la semaine courante reste servi."""
+        store, room = self._store()
+        store.set_slots(
+            room_id=room["id"],
+            week="A",
+            days=self._days([{"time": "23:00", "mode": "cool", "temp": 15}]),
+        )
+        self._grid_b(store, room)
+
+        upcoming = Engine(store, FakeClient()).next_change(store.device(9003), self.NOW)
+
+        self.assertIsNotNone(upcoming)
+        self.assertEqual(upcoming.week, "A")
+        self.assertEqual(upcoming.slot["at"], datetime(2026, 11, 22, 23, 0))
+        self.assertEqual(upcoming.slot["temp"], 15.0)
+
+
 if __name__ == "__main__":
     unittest.main()
 

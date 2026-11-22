@@ -894,6 +894,30 @@ class Engine:
             return "Hors gel"
         return MODE_LABELS.get(mode, mode)
 
+    @staticmethod
+    def _next_valid_slot(
+        slots: list[dict],
+        week: str,
+        cursor: datetime,
+        settings: dict,
+        overrides: dict,
+    ):
+        """Prochain créneau qui appartient réellement à `week`.
+
+        ``next_slot`` boucle sur 7 jours : au passage de semaine il peut donc
+        renvoyer un créneau de la semaine suivante (le dimanche soir de la
+        grille B reste dans la semaine A). On écarte ces candidats.
+        """
+        for _ in range(7):
+            candidate = next_slot(slots, cursor)
+            if not candidate:
+                return None
+            at = candidate.get("at")
+            if not at or week_type(at, settings, overrides) == week:
+                return candidate
+            cursor = at + timedelta(minutes=1)
+        return None
+
     def next_change(self, device: dict, now: datetime | None = None):
         now = now or datetime.now()
         settings = self.store.settings()
@@ -917,7 +941,13 @@ class Engine:
                     break
             if not slots_other:
                 slots_other = self.store.slots(device["device_id"], other_week)
-            upcoming = next_slot(slots_other, now)
+            upcoming = self._next_valid_slot(
+                slots_other,
+                other_week,
+                now,
+                settings,
+                self.store.week_overrides(),
+            )
             if not upcoming:
                 return None
             return Upcoming(upcoming, other_week, wiser)
@@ -933,7 +963,13 @@ class Engine:
                         break
                 if not slots_target:
                     slots_target = self.store.slots(device["device_id"], target_week)
-                target_upcoming = next_slot(slots_target, now)
+                target_upcoming = self._next_valid_slot(
+                    slots_target,
+                    target_week,
+                    now,
+                    settings,
+                    self.store.week_overrides(),
+                )
                 if target_upcoming:
                     return Upcoming(target_upcoming, target_week, wiser)
 
