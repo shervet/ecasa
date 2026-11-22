@@ -30,6 +30,11 @@ TICK_SECONDS = 10
 ANTI_FLAP_SECONDS = 45
 MIN_POLL_SECONDS = 30
 
+# Fenêtre d'apprentissage de la courbe de chauffe et préchauffage météo.
+CURVE_FIT_DAYS = 120
+WEATHER_WARM_CHUNK_DAYS = 30
+WEATHER_WARM_PAUSE_SECONDS = 0.2
+
 # Le Hub Wiser n'a pas de vrai mode "off" : on envoie une consigne hors gel.
 # 6 °C est la valeur utilisee par les thermostats Wiser pour la protection gel.
 WISER_FROST_TEMP = 6.0
@@ -663,34 +668,52 @@ class Engine:
         # Défaut sans échantillons suffisants.
         return 3.0, 0.0, True
 
+    # Scanner de montée : au plus 5 changements successifs, dans 48 h.
+    RISE_SCAN_CHANGES = 5
+    RISE_SCAN_HORIZON = timedelta(hours=48)
+
     def _next_rise(self, device: dict, current_desired: dict, now: datetime):
-        """Prochain changement planifié s'il s'agit d'une montée de consigne."""
-        upcoming = self.next_change(device, now)
-        if not upcoming:
-            return None
-        slot = upcoming.slot
-        mode = slot.get("mode")
-        next_temp = self.effective_temp(device, mode, slot.get("temp"))
-        cur_temp = current_desired.get("temp")
+        """Prochaine VRAIE montée de consigne dans l'horizon du scanner.
+
+        Le prochain changement n'est pas forcément une montée : minuit peut
+        reconduire exactement la consigne courante. On scanne alors les
+        changements suivants (au plus 5, dans 48 h) jusqu'à une consigne
+        strictement supérieure à la consigne courante. ``in_minutes`` reste
+        mesuré depuis ``now`` (et non depuis le curseur du scan).
+        """
         try:
-            next_temp_f = float(next_temp)
-            cur_temp_f = float(cur_temp)
+            cur_temp_f = float(current_desired.get("temp"))
         except (TypeError, ValueError):
             return None
-        # Montée de consigne uniquement (confort > réduit).
-        if next_temp_f <= cur_temp_f + 0.05:
-            return None
-        in_minutes = slot.get("in_minutes")
-        try:
-            in_minutes_f = float(in_minutes)
-        except (TypeError, ValueError):
-            in_minutes_f = None
-        return {
-            "upcoming": upcoming,
-            "temp": next_temp_f,
-            "mode": mode,
-            "in_minutes": in_minutes_f,
-        }
+
+        horizon = now + self.RISE_SCAN_HORIZON
+        cursor = now
+        for _ in range(self.RISE_SCAN_CHANGES):
+            upcoming = self.next_change(device, cursor)
+            if not upcoming:
+                return None
+            slot = upcoming.slot
+            at = slot.get("at")
+            if at is None or at > horizon:
+                return None
+            mode = slot.get("mode")
+            try:
+                next_temp_f = float(
+                    self.effective_temp(device, mode, slot.get("temp"))
+                )
+            except (TypeError, ValueError):
+                return None
+            if next_temp_f > cur_temp_f + 0.05:
+                return {
+                    "upcoming": upcoming,
+                    "temp": next_temp_f,
+                    "mode": mode,
+                    "in_minutes": (at - now).total_seconds() / 60.0,
+                }
+            # Changement sans montée (même consigne ou descente) : on continue
+            # juste après cet instant.
+            cursor = at + timedelta(minutes=1)
+        return None
 
     def _advance_desired(self, device: dict, room: dict, current_desired: dict, slots, now: datetime):
         """Retourne l'état désiré avancé si une montée imminente le justifie."""
@@ -716,6 +739,47 @@ class Engine:
             }
         return None
 
+    def _warm_weather_cache(self) -> None:
+        """Préchauffe le cache météo de la fenêtre du fit (T_ext des montées).
+
+        Réutilise l'appel multi-jours des statistiques
+        (``weather.hourly(lat, lon, start, end)``), par chunks mensuels : la
+        rafale d'appels quotidiens déclenchait le disjoncteur météo et forçait
+        le repli à 10 °C tous les jours. Un chunk en échec n'interrompt pas les
+        suivants ni le fit ; le repli existant reste le secours.
+        """
+        weather = self.weather
+        if weather is None:
+            return
+        config = self._config()
+        if not config or not config.get("weather_enabled", True):
+            return
+        try:
+            latitude = float(config.get("weather_latitude"))
+            longitude = float(config.get("weather_longitude"))
+        except (TypeError, ValueError):
+            return
+
+        today = datetime.now().date()
+        start = today - timedelta(days=CURVE_FIT_DAYS)
+        chunks = []
+        cursor = start
+        while cursor <= today:
+            chunk_end = min(cursor + timedelta(days=WEATHER_WARM_CHUNK_DAYS - 1), today)
+            chunks.append((cursor, chunk_end))
+            cursor = chunk_end + timedelta(days=1)
+        # Du plus récent au plus ancien : les montées proches de now d'abord.
+        chunks.reverse()
+
+        for index, (chunk_start, chunk_end) in enumerate(chunks):
+            try:
+                weather.hourly(latitude, longitude, chunk_start, chunk_end)
+            except Exception:  # noqa: BLE001 - un chunk en échec ne bloque rien
+                continue
+            if index < len(chunks) - 1:
+                # Limite de débit Open-Meteo : petite pause entre les chunks.
+                time.sleep(WEATHER_WARM_PAUSE_SECONDS)
+
     def refresh_room_curve_fit(self, room_id: int, force: bool = False) -> None:
         """Recalcule et persiste le fit de courbe de chauffe pour une pièce."""
         try:
@@ -731,6 +795,10 @@ class Engine:
             if time.time() < next_at:
                 return
 
+        # La dépendance à la température extérieure vient du cache météo :
+        # on le réchauffe avant d'extraire les transitions.
+        self._warm_weather_cache()
+
         counters: dict = {}
         fit_counters: dict = {}
         transitions = heating_curve.room_transitions(
@@ -738,6 +806,7 @@ class Engine:
             room_id,
             weather=self.weather,
             config=self._config(),
+            days=CURVE_FIT_DAYS,
             counters=counters,
         )
         fit = heating_curve.fit_tau(transitions, counters=fit_counters)

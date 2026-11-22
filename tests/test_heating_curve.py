@@ -4,9 +4,11 @@ import math
 import threading
 import time
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+from unittest import mock
 
+from ecasa import heating_curve
 from ecasa.engine import Engine
 from ecasa.main import _enrich_room_heating_curve
 from ecasa.heating_curve import (
@@ -610,6 +612,105 @@ class CurveFitDebugTests(unittest.TestCase):
                 for _ in range(6)
             ],
         )
+
+
+class WeatherWarmTests(unittest.TestCase):
+    """Le cache météo est réchauffé par chunks avant l'apprentissage."""
+
+    DAYS = (9, 8, 7, 6, 5, 4)
+
+    def _refresh(self, weather):
+        rows = []
+        for n in self.DAYS:
+            rows += _rise_rows(_moment(n))
+        store, room_id = _store_with_rises(rows)
+        engine = Engine(
+            store, _Client(), weather=weather, config_getter=lambda: CONFIG
+        )
+        snapshot = {}
+        real = heating_curve.room_transitions
+
+        def spy(*args, **kwargs):
+            snapshot.setdefault("calls_before", len(weather.calls))
+            return real(*args, **kwargs)
+
+        with mock.patch.object(
+            heating_curve, "room_transitions", side_effect=spy
+        ), mock.patch("ecasa.engine.time.sleep"):
+            engine.refresh_room_curve_fit(room_id, force=True)
+        return store.room(room_id)["curve_fit"], snapshot
+
+    def test_cache_is_warmed_by_monthly_chunks_before_transitions(self):
+        weather = WarmingWeather()
+        fit, snapshot = self._refresh(weather)
+
+        self.assertGreaterEqual(len(weather.calls), 1)
+        # Au moins un appel couvre une grande partie de la fenêtre de 120 j.
+        today = date.today()
+        self.assertEqual(weather.calls[0][1], today)
+        self.assertLessEqual(
+            min(start for start, _end in weather.calls),
+            today - timedelta(days=90),
+        )
+        self.assertTrue(
+            any((end - start).days >= 20 for start, end in weather.calls)
+        )
+        # Réchauffage terminé avant l'extraction des transitions.
+        self.assertEqual(snapshot["calls_before"], len(weather.calls))
+        self.assertEqual(fit["debug"]["source"], "meteo")
+        self.assertNotIn("t_out_fallback", fit)
+        self.assertEqual(fit["n"], 6)
+
+    def test_one_failing_chunk_does_not_interrupt_the_fit(self):
+        today = date.today()
+
+        def fail_oldest(start, _end):
+            return (today - start).days >= 90
+
+        weather = WarmingWeather(fail_chunk=fail_oldest)
+        fit, _snapshot = self._refresh(weather)
+
+        self.assertGreaterEqual(len(weather.calls), 2)
+        self.assertEqual(fit["n"], 6)
+        self.assertEqual(fit["debug"]["source"], "meteo")
+
+    def test_all_chunks_failing_still_fits_with_fallback(self):
+        weather = WarmingWeather(fail_chunk=lambda _start, _end: True)
+        fit, _snapshot = self._refresh(weather)
+
+        self.assertEqual(fit["n"], 6)
+        self.assertEqual(fit["debug"]["source"], "fallback_10c")
+        self.assertIs(fit["t_out_fallback"], True)
+
+
+class WarmingWeather:
+    """Météo factice : chunks multi-jours mémorisés dans le cache du service."""
+
+    def __init__(self, fail_chunk=None):
+        self._lock = threading.Lock()
+        self._cache = {}
+        self.calls = []
+        self.fail_chunk = fail_chunk
+
+    def hourly(self, latitude, longitude, start, end):
+        self.calls.append((start, end))
+        if self.fail_chunk is not None and self.fail_chunk(start, end):
+            raise WeatherError("chunk météo indisponible")
+        hours = {}
+        day = start
+        while day <= end:
+            hours[day.isoformat()] = {8: 5.0 + day.day % 5}
+            day += timedelta(days=1)
+        result = SimpleNamespace(hours=hours)
+        key = (
+            round(float(latitude), 3),
+            round(float(longitude), 3),
+            start.isoformat(),
+            end.isoformat(),
+        )
+        with self._lock:
+            self._cache[key] = (time.time() + 600.0, result)
+        return result
 
 
 class SnapshotHeatingCurveTests(unittest.TestCase):

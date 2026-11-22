@@ -440,6 +440,120 @@ class HeatingCurveAdvanceTests(unittest.TestCase):
         self.assertNotIn("avance", source)
 
 
+class NextRiseScanTests(unittest.TestCase):
+    """La cible de courbe vise la vraie montée, pas le prochain changement."""
+
+    NOW = datetime(2026, 11, 22, 13, 25)  # dimanche, semaine A (ISO 47)
+
+    def _engine(self, days):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur Hugo")
+        room = store.add_room("Hugo")
+        store.update_room(room["id"], {"actuator_device_id": 9001})
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+        return Engine(store, FakeClient()), store
+
+    @staticmethod
+    def _days(sunday=None, monday=None, tuesday=None, wednesday=None):
+        days = [[] for _ in range(7)]
+        days[6] = list(sunday or [])
+        days[0] = list(monday or [])
+        days[1] = list(tuesday or [])
+        days[2] = list(wednesday or [])
+        return days
+
+    def test_equal_change_at_midnight_is_skipped_for_the_real_rise(self):
+        """Repro live Hugo : dimanche 13 °C, lundi 00:00 = 13, lundi 16:00 = 19."""
+        engine, store = self._engine(
+            self._days(
+                sunday=[{"time": "00:00", "mode": "heat", "temp": 13}],
+                monday=[
+                    {"time": "00:00", "mode": "heat", "temp": 13},
+                    {"time": "16:00", "mode": "heat", "temp": 19},
+                ],
+            )
+        )
+
+        rise = engine._next_rise(
+            store.device(9001), {"mode": "heat", "temp": 13.0}, self.NOW
+        )
+
+        self.assertIsNotNone(rise)
+        self.assertEqual(rise["temp"], 19.0)
+        self.assertNotEqual(rise["temp"], 13.0)
+        self.assertEqual(rise["mode"], "heat")
+        # Lundi 16:00 - dimanche 13:25 = 26 h 35.
+        self.assertAlmostEqual(rise["in_minutes"], 26 * 60 + 35, places=3)
+        self.assertEqual(
+            rise["upcoming"].slot["at"], datetime(2026, 11, 23, 16, 0)
+        )
+
+    def test_scans_several_equal_changes_before_a_rise(self):
+        engine, store = self._engine(
+            self._days(
+                sunday=[{"time": "00:00", "mode": "heat", "temp": 13}],
+                monday=[
+                    {"time": "00:00", "mode": "heat", "temp": 13},
+                    {"time": "06:00", "mode": "heat", "temp": 13},
+                    {"time": "16:00", "mode": "heat", "temp": 19},
+                ],
+            )
+        )
+
+        rise = engine._next_rise(
+            store.device(9001), {"mode": "heat", "temp": 13.0}, self.NOW
+        )
+
+        self.assertIsNotNone(rise)
+        self.assertEqual(rise["temp"], 19.0)
+        self.assertEqual(
+            rise["upcoming"].slot["at"], datetime(2026, 11, 23, 16, 0)
+        )
+
+    def test_no_rise_within_48h_returns_none(self):
+        """Une montée au-delà de l'horizon de 48 h est ignorée."""
+        engine, store = self._engine(
+            self._days(
+                sunday=[{"time": "00:00", "mode": "heat", "temp": 13}],
+                monday=[{"time": "00:00", "mode": "heat", "temp": 13}],
+                tuesday=[{"time": "00:00", "mode": "heat", "temp": 13}],
+                wednesday=[{"time": "00:00", "mode": "heat", "temp": 19}],
+            )
+        )
+
+        self.assertIsNone(
+            engine._next_rise(
+                store.device(9001), {"mode": "heat", "temp": 13.0}, self.NOW
+            )
+        )
+
+    def test_scan_stops_after_five_changes(self):
+        """Plus de 5 changements sans montée : le scan s'arrête (None)."""
+        engine, store = self._engine(
+            self._days(
+                sunday=[{"time": "00:00", "mode": "heat", "temp": 13}],
+                monday=[
+                    {"time": "00:00", "mode": "heat", "temp": 13},
+                    {"time": "06:00", "mode": "heat", "temp": 13},
+                    {"time": "12:00", "mode": "heat", "temp": 13},
+                    {"time": "18:00", "mode": "heat", "temp": 13},
+                ],
+                tuesday=[
+                    {"time": "00:00", "mode": "heat", "temp": 13},
+                    {"time": "06:00", "mode": "heat", "temp": 19},
+                ],
+            )
+        )
+
+        self.assertIsNone(
+            engine._next_rise(
+                store.device(9001), {"mode": "heat", "temp": 13.0}, self.NOW
+            )
+        )
+
+
 class PresenceTests(unittest.TestCase):
     """Mode Présent/Absent : l'absence domine override et planning."""
 

@@ -194,6 +194,45 @@ def _as_float(value):
         return None
 
 
+def _cached_weather(weather, latitude: float, longitude: float, day):
+    """Résultat météo déjà en cache couvrant ``day`` (aucun appel réseau).
+
+    Cherche d'abord la clé d'un jour (ancien chemin), puis les chunks
+    multi-jours écrits par les statistiques et le préchauffage du fit
+    (``weather.hourly(lat, lon, start, end)``).
+    """
+    lock = getattr(weather, "_lock", None)
+    cache = getattr(weather, "_cache", None)
+    if lock is None or not isinstance(cache, dict):
+        return None
+
+    import time as _time
+
+    now_ts = _time.time()
+    lat = round(latitude, 3)
+    lon = round(longitude, 3)
+    target = day.isoformat()
+    with lock:
+        cached = cache.get((lat, lon, target, target))
+        if cached and cached[0] > now_ts:
+            return cached[1]
+        for key, value in list(cache.items()):
+            if not isinstance(key, tuple) or len(key) != 4:
+                continue
+            if key[0] != lat or key[1] != lon:
+                continue
+            if not value or value[0] <= now_ts:
+                continue
+            try:
+                start_day = datetime.fromisoformat(str(key[2])).date()
+                end_day = datetime.fromisoformat(str(key[3])).date()
+            except (TypeError, ValueError):
+                continue
+            if start_day <= day <= end_day:
+                return value[1]
+    return None
+
+
 def _outside_temp_at(weather, config, moment: datetime):
     """Température extérieure à l'heure de ``moment`` via le cache météo passé.
 
@@ -213,23 +252,8 @@ def _outside_temp_at(weather, config, moment: datetime):
             return None
 
         day = moment.date()
-        result = None
-        # 1) Lecture directe du cache en mémoire si disponible (aucun appel réseau).
-        key = (
-            round(latitude, 3),
-            round(longitude, 3),
-            day.isoformat(),
-            day.isoformat(),
-        )
-        lock = getattr(weather, "_lock", None)
-        cache = getattr(weather, "_cache", None)
-        if lock is not None and isinstance(cache, dict):
-            import time as _time
-
-            with lock:
-                cached = cache.get(key)
-                if cached and cached[0] > _time.time():
-                    result = cached[1]
+        # Cache en mémoire uniquement (jour seul ou chunk multi-jours).
+        result = _cached_weather(weather, latitude, longitude, day)
 
         # 2) Donnée absente du cache : pas de nouvel appel réseau.
         if result is None:
