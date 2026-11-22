@@ -668,16 +668,16 @@ class Engine:
         # Défaut sans échantillons suffisants.
         return 3.0, 0.0, True
 
-    # Scanner de montée : au plus 5 changements successifs, dans 48 h.
-    RISE_SCAN_CHANGES = 5
-    RISE_SCAN_HORIZON = timedelta(hours=48)
+    # Scanner de montée : au plus 10 changements successifs, dans 8 jours.
+    RISE_SCAN_CHANGES = 10
+    RISE_SCAN_HORIZON = timedelta(days=8)
 
     def _next_rise(self, device: dict, current_desired: dict, now: datetime):
         """Prochaine VRAIE montée de consigne dans l'horizon du scanner.
 
         Le prochain changement n'est pas forcément une montée : minuit peut
         reconduire exactement la consigne courante. On scanne alors les
-        changements suivants (au plus 5, dans 48 h) jusqu'à une consigne
+        changements suivants (au plus 10, dans 8 jours) jusqu'à une consigne
         strictement supérieure à la consigne courante. ``in_minutes`` reste
         mesuré depuis ``now`` (et non depuis le curseur du scan).
         """
