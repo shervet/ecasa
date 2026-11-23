@@ -25,6 +25,7 @@ from ecasa.energy import (  # noqa: E402
     parse_energy_day,
     parse_energy_days,
     parse_energy_month,
+    parse_energy_periods,
     parse_energy_year,
     parse_med_start,
     test_energy as check_energy,
@@ -201,11 +202,12 @@ class ServiceTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
-    def build(self, view="month", month=None, config=None, day=None, days=None):
+    def build(self, view="month", month=None, config=None, day=None, days=None,
+              periods=None):
         service = EnergyService(fetcher=FakeFetcher())
         return build_energy(
             service, config or CONFIG, view=view, month=month, today=TODAY,
-            day=day, days=days,
+            day=day, days=days, periods=periods,
         )
 
     def test_month_view(self):
@@ -342,6 +344,45 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(second["label"], "2025")
         self.assertEqual(second["values"], [4.0, None, None, None, 6.0])
         self.assertEqual(second["color"], "var(--series-1)")
+
+    def test_week_view_period_count_5_and_12(self):
+        five = self.build("week", periods=5)
+        self.assertTrue(five["ok"])
+        self.assertEqual(five["window"]["size"], 5)
+        # S7 → S11 : cinq semaines, aucune donnée à retirer en tête.
+        self.assertEqual(five["labels"], ["S7", "S8", "S9", "S10", "S11"])
+
+        twelve = self.build("week", periods=12)
+        self.assertTrue(twelve["ok"])
+        self.assertEqual(twelve["window"]["size"], 12)
+        # Les semaines de tête sans donnée (déc. 2024) sont retirées.
+        self.assertEqual(twelve["labels"][0], "S1")
+        self.assertEqual(twelve["labels"][-1], "S11")
+        self.assertLessEqual(len(twelve["labels"]), 12)
+
+    def test_month_view_period_count_5_and_12(self):
+        five = self.build("month", periods=5)
+        self.assertTrue(five["ok"])
+        self.assertEqual(five["window"]["size"], 5)
+        self.assertEqual(five["labels"], ["Déc 24", "Jan 25", "Fév 25", "Mar 25"])
+
+        twelve = self.build("month", periods=12)
+        self.assertTrue(twelve["ok"])
+        self.assertEqual(twelve["window"]["size"], 12)
+        self.assertEqual(twelve["labels"], ["Déc 24", "Jan 25", "Fév 25", "Mar 25"])
+
+    def test_day_view_period_count_5_and_12(self):
+        five = self.build("day", month=1, day="2025-01-20", periods=5)
+        self.assertTrue(five["ok"])
+        self.assertEqual(five["window"]["size"], 5)
+        self.assertEqual(five["window"]["start"], 16)
+        self.assertEqual(five["window"]["end"], 20)
+
+        twelve = self.build("day", month=1, day="2025-01-20", periods=12)
+        self.assertTrue(twelve["ok"])
+        self.assertEqual(twelve["window"]["size"], 12)
+        self.assertEqual(twelve["window"]["start"], 9)
+        self.assertEqual(len(twelve["labels"]), 12)
 
     def test_week_view_explicit_day_selects_week(self):
         # Le paramètre ``day`` désigne un jour au sein de la semaine de
@@ -1064,6 +1105,14 @@ class HelpersTests(unittest.TestCase):
         self.assertEqual(parse_energy_days("abc"), 7)
         self.assertEqual(parse_energy_days("0"), 1)
         self.assertEqual(parse_energy_days("99"), 31)
+
+    def test_parse_energy_periods(self):
+        self.assertEqual(parse_energy_periods("5"), 5)
+        self.assertEqual(parse_energy_periods("12"), 12)
+        self.assertEqual(parse_energy_periods(None), 7)
+        self.assertEqual(parse_energy_periods("abc"), 7)
+        self.assertEqual(parse_energy_periods("0"), 1)
+        self.assertEqual(parse_energy_periods("99"), 12)
 
     def test_parse_energy_year(self):
         self.assertEqual(parse_energy_year("2024-12-01", TODAY), 2024)

@@ -111,6 +111,59 @@ class WeatherService:
                 }
         return result
 
+    def cached_hours(self, latitude: float, longitude: float, start: date,
+                     end: date) -> dict[str, dict[int, float]]:
+        """Températures horaires déjà en cache, sans aucun appel réseau.
+
+        Les chunks horaires valides (clé ``(lat, lon, début, fin)``) qui
+        recouvrent la plage sont fusionnés. Les entrées expirées et les
+        prévisions journalières sont ignorées.
+        """
+        try:
+            latitude = round(float(latitude), 3)
+            longitude = round(float(longitude), 3)
+        except (TypeError, ValueError):
+            return {}
+        if start > end:
+            return {}
+
+        now = time.time()
+        with self._lock:
+            entries = list(self._cache.items())
+
+        merged: dict[str, dict[int, float]] = {}
+        for key, cached in entries:
+            if not isinstance(key, tuple) or len(key) != 4:
+                continue
+            if key[0] != latitude or key[1] != longitude:
+                continue
+            if not cached or cached[0] <= now:
+                continue
+            try:
+                chunk_start = date.fromisoformat(str(key[2]))
+                chunk_end = date.fromisoformat(str(key[3]))
+            except ValueError:
+                continue
+            if chunk_end < start or chunk_start > end:
+                continue
+            hours = getattr(cached[1], "hours", None)
+            if not isinstance(hours, dict):
+                continue
+            for day, values in hours.items():
+                try:
+                    day_date = date.fromisoformat(str(day))
+                except ValueError:
+                    continue
+                if day_date < start or day_date > end:
+                    continue
+                bucket = merged.setdefault(str(day), {})
+                for hour, value in (values or {}).items():
+                    try:
+                        bucket[int(hour)] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+        return merged
+
     def daily(self, latitude: float, longitude: float, days: int = 7):
         """Prévisions journalières Météo-France (via Open-Meteo).
 

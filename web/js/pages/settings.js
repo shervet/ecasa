@@ -2397,32 +2397,32 @@ function bindRoomDrag(host) {
 }
 
 let settingsModelsCache = [];
+let settingsLinksCache = {};
 async function loadSettingsModels() {
   try {
     const payload = await get("/api/models");
     settingsModelsCache = Array.isArray(payload?.models) ? payload.models : [];
+    settingsLinksCache =
+      payload?.links && typeof payload.links === "object" ? payload.links : {};
   } catch {
     settingsModelsCache = [];
+    settingsLinksCache = {};
   }
   return settingsModelsCache;
 }
-function modelOptionsSettings() {
+function modelOptionsSettings(selectedId = "") {
   const saved = Array.isArray(settingsModelsCache) ? settingsModelsCache : [];
-  return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
+  return saved
+    .map(
+      (m) =>
+        `<option value="${escapeHtml(String(m.id || ""))}"${
+          String(m.id) === String(selectedId) ? " selected" : ""
+        }>${escapeHtml(m.name)}</option>`
+    )
+    .join("");
 }
 
 
-function cloneDaysSettings(days) {
-  const source = Array.isArray(days) ? days : [];
-  return Array.from({ length: 7 }, (_, index) => {
-    const list = Array.isArray(source[index]) ? source[index] : [];
-    return list.map((slot) => ({
-      time: slot.time || "00:00",
-      mode: slot.mode || "off",
-      temp: Number(slot.temp ?? 20),
-    }));
-  });
-}
 async function openRoomEditor(room) {
   await loadSettingsModels();
   // Snapshot enrichi : heating_curve porte la table et l'état d'apprentissage.
@@ -2437,6 +2437,12 @@ async function openRoomEditor(room) {
     ? `🌡 T extérieure utilisée : ${fmtTemp(hcInfo.t_out)} °C${hcInfo.t_out_fallback ? " · apprentissage en repli (10 °C)" : ""}`
     : "🌡 T extérieure indisponible — τ non corrigé par la météo";
   const devices = store.state?.devices || [];
+  const roomLink = room ? settingsLinksCache[String(room.id)] : null;
+  const linkedModel = roomLink
+    ? settingsModelsCache.find(
+        (item) => String(item.id) === String(roomLink.model_id)
+      ) || null
+    : null;
   const options = (selected) =>
     `<option value="">Aucun</option>${devices
       .map(
@@ -2488,13 +2494,21 @@ async function openRoomEditor(room) {
     <label class="field">
       <span class="label">Modèle de semaine</span>
       <div class="input-row">
-        <select class="select" data-model style="flex:1">
+        <select class="select" data-model style="flex:1"${linkedModel ? " disabled" : ""}>
           <option value="">— choisir un modèle —</option>
-          ${modelOptionsSettings()}
+          ${modelOptionsSettings(linkedModel?.id)}
         </select>
-        <button class="btn btn-sm" type="button" data-apply-model>${icon("check", 14)} Appliquer</button>
+        ${
+          linkedModel
+            ? `<button class="btn btn-sm btn-ghost" type="button" data-unlink-model>${icon("unlink", 14)} Délier</button>`
+            : `<button class="btn btn-sm" type="button" data-link-model>${icon("link", 14)} Lier</button>`
+        }
       </div>
-      <span class="hint">Remplace le planning de la pièce par le modèle choisi (semaines A et B).</span>
+      ${
+        linkedModel
+          ? `<span class="hint"><span class="pill ${roomLink?.pending ? "pill-warn" : "pill-ok"}">${roomLink?.pending ? "À synchroniser" : "Synchronisée"}</span> « ${escapeHtml(linkedModel.name)} » est lié : le planning de la pièce suit chaque enregistrement du modèle. Délier conserve le planning actuel.</span>`
+          : '<span class="hint">Lier copie immédiatement le planning du modèle (semaines A et B), puis le maintient synchronisé à chaque enregistrement.</span>'
+      }
     </label>` : ""}
   `;
 
@@ -2528,27 +2542,56 @@ async function openRoomEditor(room) {
       }
     });
 
-    const applyBtn = body.querySelector("[data-apply-model]");
-    applyBtn?.addEventListener("click", async () => {
+    const linkBtn = body.querySelector("[data-link-model]");
+    linkBtn?.addEventListener("click", async () => {
       const select = body.querySelector("[data-model]");
-      const idx = Number(select?.value);
-      if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-      const saved = Array.isArray(settingsModelsCache) ? settingsModelsCache : await loadSettingsModels();
-      const m = saved[idx];
-      if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
-      const deviceId = room.actuator_device_id || room.thermostat_device_id;
-      if (!deviceId) { toast("Aucun appareil associé à cette pièce.", { type: "warn" }); return; }
-      if (!confirm(`Appliquer le modèle « ${m.name} » à ${room.name} ?`)) return;
-      applyBtn.disabled = true;
+      const modelId = String(select?.value || "");
+      if (!modelId) {
+        toast("Choisis un modèle.", { type: "warn" });
+        return;
+      }
+      const m = settingsModelsCache.find(
+        (item) => String(item.id) === modelId
+      );
+      if (!m) {
+        toast("Modèle introuvable.", { type: "warn" });
+        return;
+      }
+      if (
+        !confirm(
+          `Lier la pièce « ${room.name} » au modèle « ${m.name} » ?\nLe planning de la pièce est remplacé par le modèle et suivra ensuite ses modifications.`
+        )
+      ) {
+        return;
+      }
+      linkBtn.disabled = true;
       try {
-        await put(`/api/programs/${deviceId}/A`, { days: cloneDaysSettings(m.days?.A) });
-        await put(`/api/programs/${deviceId}/B`, { days: cloneDaysSettings(m.days?.B) });
+        await put(`/api/model-links/${room.id}`, { model_id: modelId });
         await refreshState({ silent: true });
-        toast(`Modèle « ${m.name} » appliqué.`);
+        await openRoomEditor(room);
+        renderRooms();
+        toast(`Pièce liée au modèle « ${m.name} ».`);
       } catch (err) {
         toastError(err);
-      } finally {
-        applyBtn.disabled = false;
+        linkBtn.disabled = false;
+      }
+    });
+
+    body.querySelector("[data-unlink-model]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (!confirm(`Délier la pièce « ${room.name} » de son modèle ?\nSon planning actuel est conservé.`)) {
+        return;
+      }
+      button.disabled = true;
+      try {
+        await del(`/api/model-links/${room.id}`);
+        await refreshState({ silent: true });
+        await openRoomEditor(room);
+        renderRooms();
+        toast("Pièce déliée du modèle (planning conservé).", { type: "info" });
+      } catch (err) {
+        toastError(err);
+        button.disabled = false;
       }
     });
   }

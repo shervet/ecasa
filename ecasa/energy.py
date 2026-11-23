@@ -526,6 +526,7 @@ def _cut_as_of(points: dict[date, float], view: str, ref: date) -> dict[date, fl
 
 def build_energy(service, config: dict, view: str = "month", month=None,
                  today: date | None = None, day=None, days=None,
+                 periods: int | None = None,
                  refresh: bool = False, weather_service=None,
                  as_of: bool = False) -> dict:
     """Construit la réponse de ``GET /api/energy``.
@@ -535,16 +536,16 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     périodes d'une année sur l'autre.
 
     En vue ``day``, ``day`` (date ISO) fixe le jour de référence de la
-    fenêtre glissante et ``days`` sa taille (7 par défaut).
+    fenêtre glissante et ``periods`` (ou ``days``) sa taille (7 par défaut).
 
     En vue ``week``, ``day`` désigne un jour au sein de la semaine de
     référence (seuls le mois et le jour du mois comptent) : le bloc affiché
-    est formé des 7 semaines ISO (lundi → dimanche) terminées par cette
-    semaine, comparées d'année en année sur les mêmes jours calendaires.
-    ``days`` est ignoré.
+    est formé des ``periods`` semaines ISO (lundi → dimanche) terminées par
+    cette semaine, comparées d'année en année sur les mêmes jours
+    calendaires. ``days`` est ignoré.
 
-    En vue ``month``, le bloc affiché est formé des 7 mois terminés par le
-    mois sélectionné ; ``day`` (date ISO) fournit alors l'année de
+    En vue ``month``, le bloc affiché est formé des ``periods`` mois terminés
+    par le mois sélectionné ; ``day`` (date ISO) fournit alors l'année de
     référence (année courante par défaut) pour la navigation.
 
     Toutes les vues renvoient une série par année (avec une ``color``
@@ -564,7 +565,10 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     view = view if view in ENERGY_VIEWS else "month"
     month = parse_energy_month(month, today)
     ref_day = parse_energy_day(day, month)
-    window_size = parse_energy_days(days)
+    window_size = parse_energy_days(
+        periods if periods is not None else days
+    )
+    period_count = parse_energy_periods(periods, 7)
 
     provider = str(config.get("energy_provider") or "myelectricaldata").strip().lower()
     if provider == "consoapi":
@@ -653,10 +657,10 @@ def build_energy(service, config: dict, view: str = "month", month=None,
     if view == "day":
         window = _day_window(points, month, ref_day, window_size, today)
     elif view == "week":
-        window = _week_window(points, month, ref_day, today)
+        window = _week_window(points, month, ref_day, today, period_count)
     elif view == "month":
         window = _month_window(
-            points, month, parse_energy_year(day, today), today
+            points, month, parse_energy_year(day, today), today, period_count
         )
     as_of_limit = None
     if as_of:
@@ -666,7 +670,7 @@ def build_energy(service, config: dict, view: str = "month", month=None,
             as_of_limit = ref.isoformat()
     payload["as_of"] = bool(as_of and as_of_limit)
     payload["as_of_limit"] = as_of_limit
-    _fill_view(payload, points, view, month, today, window)
+    _fill_view(payload, points, view, month, today, window, period_count)
     outdoor = None
     if weather_service is not None and view in ("day", "week", "month"):
         try:
@@ -776,6 +780,15 @@ def parse_energy_days(value, default: int = 7) -> int:
     return min(31, max(1, size))
 
 
+def parse_energy_periods(value, default: int = 7) -> int:
+    """Nombre de périodes affichées (1 à 12, 7 par défaut)."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(12, max(1, count))
+
+
 def parse_energy_year(value, today: date | None = None) -> int:
     """Année de référence de la vue ``month`` (année courante par défaut).
 
@@ -859,8 +872,8 @@ def _day_window(points: dict[date, float], month: int, ref_day: int | None,
 
 
 def _week_window(points: dict[date, float], month: int, ref_day: int | None,
-                 today: date) -> dict:
-    """Bloc de 7 semaines ISO (lundi → dimanche) affiché par la vue ``week``.
+                 today: date, count: int = 7) -> dict:
+    """Bloc de ``count`` semaines ISO (lundi → dimanche) de la vue ``week``.
 
     La date de référence est reconstruite dans l'année courante à partir du
     mois sélectionné et du jour du mois (``ref_day``) : comme pour la vue
@@ -868,9 +881,9 @@ def _week_window(points: dict[date, float], month: int, ref_day: int | None,
     les **mêmes jours calendaires de chaque année**. Sans ``ref_day``, la
     semaine courante s'applique.
 
-    Le bloc se termine sur la semaine de référence et remonte six semaines
-    en arrière. Les semaines de tête sans aucune donnée (quelle que soit
-    l'année) sont retirées : pas de barres vides, le bloc est simplement
+    Le bloc se termine sur la semaine de référence et remonte ``count - 1``
+    semaines en arrière. Les semaines de tête sans aucune donnée (quelle que
+    soit l'année) sont retirées : pas de barres vides, le bloc est simplement
     plus court quand l'historique débute.
 
     Bornage : la référence ne dépasse jamais ``today`` ni le dernier jour
@@ -925,10 +938,11 @@ def _week_window(points: dict[date, float], month: int, ref_day: int | None,
                     continue
         return False
 
-    # 7 semaines consécutives terminées par la semaine de référence ; on
-    # retire les semaines de tête entièrement vides (première donnée).
+    # ``count`` semaines consécutives terminées par la semaine de référence ;
+    # on retire les semaines de tête entièrement vides (première donnée).
     mondays = [
-        ref_monday - timedelta(weeks=offset) for offset in range(6, -1, -1)
+        ref_monday - timedelta(weeks=offset)
+        for offset in range(count - 1, -1, -1)
     ]
     while len(mondays) > 1 and not week_has_data(mondays[0]):
         mondays.pop(0)
@@ -972,14 +986,14 @@ def _week_window(points: dict[date, float], month: int, ref_day: int | None,
 
     can_prev = ref_monday > first and any(
         week_has_data(ref_monday - timedelta(weeks=offset))
-        for offset in range(1, 8)
+        for offset in range(1, count + 1)
     )
     can_next = ref_monday < limit
 
     return {
         "month": month,
         "iso_week": ref_monday.isocalendar()[1],
-        "size": 7,
+        "size": count,
         "weeks": weeks,
         "ref": ref_monday,
         "first": first,
@@ -990,11 +1004,12 @@ def _week_window(points: dict[date, float], month: int, ref_day: int | None,
     }
 
 
-def _months_back(end_key: tuple[int, int]) -> list[tuple[int, int]]:
-    """Les 7 paires ``(année, mois)`` consécutives terminées par ``end_key``."""
+def _months_back(end_key: tuple[int, int],
+                 count: int = 7) -> list[tuple[int, int]]:
+    """Les ``count`` paires ``(année, mois)`` consécutives terminées par ``end_key``."""
     months = []
     year, month = end_key
-    for _ in range(7):
+    for _ in range(max(1, int(count))):
         months.append((year, month))
         month -= 1
         if month == 0:
@@ -1005,8 +1020,8 @@ def _months_back(end_key: tuple[int, int]) -> list[tuple[int, int]]:
 
 
 def _month_window(points: dict[date, float], month: int, ref_year: int,
-                  today: date) -> dict:
-    """Bloc de 7 mois consécutifs affiché par la vue ``month``.
+                  today: date, count: int = 7) -> dict:
+    """Bloc de ``count`` mois consécutifs affiché par la vue ``month``.
 
     Le mois de référence est le mois sélectionné, placé dans l'année
     ``ref_year`` (année courante par défaut ; la navigation par flèches
@@ -1014,8 +1029,8 @@ def _month_window(points: dict[date, float], month: int, ref_year: int,
     calendaire** d'une année sur l'autre ; l'année du libellé est celle de
     la position dans le calendrier de référence.
 
-    Le bloc remonte six mois en arrière ; les mois de tête sans aucune
-    donnée (quelle que soit l'année) sont retirés, comme pour la vue
+    Le bloc remonte ``count - 1`` mois en arrière ; les mois de tête sans
+    aucune donnée (quelle que soit l'année) sont retirés, comme pour la vue
     semaine.
 
     Clés renvoyées :
@@ -1031,7 +1046,7 @@ def _month_window(points: dict[date, float], month: int, ref_year: int,
       vide).
     """
     ref_key = (ref_year, month)
-    months = _months_back(ref_key)
+    months = _months_back(ref_key, count)
 
     def month_has_data(number: int) -> bool:
         return any(day.month == number for day in points)
@@ -1071,13 +1086,13 @@ def _month_window(points: dict[date, float], month: int, ref_year: int,
         previous_key = ref_key[0] - 1, 12
     can_prev = ref_key > first_key and any(
         month_has_data(number)
-        for _, number in _months_back(previous_key)
+        for _, number in _months_back(previous_key, count)
     )
     can_next = ref_key < limit_key
 
     return {
         "month": month,
-        "size": 7,
+        "size": count,
         "months": columns,
         "ref": f"{ref_key[0]:04d}-{ref_key[1]:02d}",
         "first": f"{first_key[0]:04d}-{first_key[1]:02d}",
@@ -1122,7 +1137,8 @@ def _tooltip_row(year: int, total: float | None, count: int,
 
 
 def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
-               today: date, window: dict | None = None) -> None:
+               today: date, window: dict | None = None,
+               periods: int = 7) -> None:
     if view == "year":
         # Une barre par année : uniquement les années avec au moins une
         # donnée (année complète par défaut, l'année en cours reste
@@ -1181,7 +1197,7 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         # année avec donnée dans le bloc affiché. ``window`` expose des
         # repères JJ/MM (affichage) et ISO (navigation côté client :
         # comparaison lexicographique fiable).
-        window = window or _week_window(points, month, None, today)
+        window = window or _week_window(points, month, None, today, periods)
         weeks = window["weeks"]
         mdays_set = {mday for week in weeks for mday in week["mdays"]}
         years = sorted(
@@ -1258,7 +1274,7 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         return
 
     if view == "day":
-        window = window or _day_window(points, month, None, 7, today)
+        window = window or _day_window(points, month, None, periods, today)
         day_pairs = window["days"]  # list of (month, day) tuples
         day_keys = set(day_pairs)
         selected = {
@@ -1336,7 +1352,7 @@ def _fill_view(payload: dict, points: dict[date, float], view: str, month: int,
         return
 
     # Vue mois : une barre par mois (total mensuel), une série par année.
-    window = window or _month_window(points, month, today.year, today)
+    window = window or _month_window(points, month, today.year, today, periods)
     columns = window["months"]
     month_numbers = {column["month"] for column in columns}
     years = sorted({day.year for day in points if day.month in month_numbers})

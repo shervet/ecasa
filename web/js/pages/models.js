@@ -384,6 +384,29 @@ function modelName(modelId) {
   return found ? found.name : "";
 }
 
+/* --------------------------------------------------------------- liens */
+
+/** Index du modèle visé par `#/models/model:<id>` (lien depuis le Planning). */
+function deepLinkModelIndex() {
+  const match = /^#\/models\/model:([^/]+)/.exec(location.hash);
+  if (!match) return null;
+  let id = match[1];
+  try {
+    id = decodeURIComponent(id);
+  } catch {
+    /* identifiant déjà décodé */
+  }
+  const index = models.findIndex((model) => String(model.id) === id);
+  return index >= 0 ? index : null;
+}
+
+/** Quitte l'édition profonde en revenant à l'URL de la liste. */
+function clearDeepLink() {
+  if (/^#\/models\/model:/.test(location.hash)) {
+    history.replaceState(null, "", "#/models");
+  }
+}
+
 function gridHtml(days) {
   let html = '<div class="week-grid">';
   for (let index = 0; index < 7; index++) {
@@ -591,6 +614,7 @@ function deleteModel() {
   if (!confirm(`Supprimer le modèle « ${model.name} » ?`)) return;
   models.splice(selectedIndex, 1);
   markDirty();
+  clearDeepLink();
   selectedIndex = null;
   render();
   toast("Modèle supprimé.", { type: "info" });
@@ -742,6 +766,7 @@ function bind() {
   });
   page.querySelector("[data-new]")?.addEventListener("click", openCreateSheet);
   page.querySelector("[data-back]")?.addEventListener("click", () => {
+    clearDeepLink();
     selectedIndex = null;
     render();
   });
@@ -762,7 +787,10 @@ function bind() {
       if (!confirm(`Supprimer le modèle « ${model.name} » ?`)) return;
       models.splice(index, 1);
       markDirty();
-      if (selectedIndex === index) selectedIndex = null;
+      if (selectedIndex === index) {
+        clearDeepLink();
+        selectedIndex = null;
+      }
       render();
       toast("Modèle supprimé.", { type: "info" });
     });
@@ -827,7 +855,7 @@ export default {
     root = view;
     root.innerHTML = `<div class="boot" style="min-height:220px"><span class="spinner"></span><p>Chargement des modèles…</p></div>`;
     await loadModels();
-    selectedIndex = null;
+    selectedIndex = deepLinkModelIndex();
     week = "A";
     dirty = false;
     render();

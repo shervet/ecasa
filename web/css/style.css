@@ -1138,6 +1138,16 @@ svg {
   color: var(--series-4);
 }
 
+a.pill-model-link {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a.pill-model-link:hover,
+a.pill-model-link:focus-visible {
+  text-decoration: underline;
+}
+
 .pill-ghost {
   background: transparent;
   border: 1px solid var(--line);

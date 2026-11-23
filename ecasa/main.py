@@ -64,7 +64,7 @@ from .pronote import (
 )
 from . import heating_curve
 from .schedule import MODE_LABELS, MODES, WEEKDAY_NAMES, find_slot, week_type
-from .stats import RANGES, build_stats, parse_anchor
+from .stats import RANGES, annual_temperature, build_stats, parse_anchor
 from .storage import MemoryStore, dumps
 from .weather import WeatherError, WeatherService
 from .wiser import MockWiserClient, WiserClient, WiserError
@@ -3660,6 +3660,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, payload)
             return
 
+        if method == "GET" and path == "/api/stats/temperature":
+            query = parse_qs(urlparse(self.path).query)
+            range_name = (query.get("range") or ["year"])[0]
+            if range_name != "year":
+                self._json(400, {"error": "Période invalide (year attendu)"})
+                return
+            rooms = [
+                {**room, "devices": app.store.room_devices(room["id"])}
+                for room in app.store.rooms()
+            ]
+            payload = annual_temperature(
+                app.store, app.weather, rooms, load_config()
+            )
+            self._json(200, payload)
+            return
+
         if method == "GET" and path == "/api/energy":
             query = parse_qs(urlparse(self.path).query)
             view = (query.get("view") or ["month"])[0]
@@ -3672,6 +3688,20 @@ class Handler(BaseHTTPRequestHandler):
             # Vue « Jour » : fenêtre glissante (paramètres optionnels).
             day = (query.get("day") or [""])[0]
             days = (query.get("days") or [""])[0]
+            # Nombre de périodes affichées (jour, semaine, mois).
+            periods_raw = (query.get("periods") or [""])[0]
+            periods = None
+            if periods_raw:
+                try:
+                    periods = int(periods_raw)
+                except (TypeError, ValueError):
+                    self._json(400, {"error": "Paramètre periods invalide"})
+                    return
+                if periods not in (5, 7, 12):
+                    self._json(400, {
+                        "error": "Paramètre periods invalide (5, 7 ou 12 attendu)"
+                    })
+                    return
             # Synchro manuelle : contourne le cache (préchargé à 3 h).
             refresh = (query.get("refresh") or [""])[0].lower() in (
                 "1", "true", "oui", "yes",
@@ -3689,8 +3719,8 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 build_energy(
                     service, config, view, month, day=day, days=days,
-                    refresh=refresh, weather_service=app.weather,
-                    as_of=as_of,
+                    periods=periods, refresh=refresh,
+                    weather_service=app.weather, as_of=as_of,
                 ),
             )
             return

@@ -283,7 +283,7 @@ function setupInstall() {
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("/sw.js?v=107", { updateViaCache: "none" })
+        .register("/sw.js?v=116", { updateViaCache: "none" })
         .catch((err) => {
           console.warn("[ecasa] service worker", err);
         });

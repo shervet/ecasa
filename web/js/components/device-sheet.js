@@ -31,32 +31,30 @@ const DURATIONS = [
 ];
 
 let cachedModels = null;
+let cachedLinks = {};
 
 async function loadDeviceModels() {
   try {
     const payload = await get("/api/models");
     cachedModels = Array.isArray(payload?.models) ? payload.models : [];
+    cachedLinks =
+      payload?.links && typeof payload.links === "object" ? payload.links : {};
   } catch {
     cachedModels = cachedModels || [];
   }
   return cachedModels;
 }
 
-function modelOptionsDevice() {
+function modelOptionsDevice(selectedId = "") {
   const saved = Array.isArray(cachedModels) ? cachedModels : [];
-  return saved.map((m, i) => `<option value="${i}">${escapeHtml(m.name)}</option>`).join("");
-}
-
-function cloneDaysDevice(days) {
-  const source = Array.isArray(days) ? days : [];
-  return Array.from({ length: 7 }, (_, index) => {
-    const list = Array.isArray(source[index]) ? source[index] : [];
-    return list.map((slot) => ({
-      time: slot.time || "00:00",
-      mode: slot.mode || "off",
-      temp: Number(slot.temp ?? 20),
-    }));
-  });
+  return saved
+    .map(
+      (m) =>
+        `<option value="${escapeHtml(String(m.id || ""))}"${
+          String(m.id) === String(selectedId) ? " selected" : ""
+        }>${escapeHtml(m.name)}</option>`
+    )
+    .join("");
 }
 
 export async function openDeviceSheet(deviceId) {
@@ -82,6 +80,12 @@ export async function openDeviceSheet(deviceId) {
   let minutes = 60;
 
   const room = store.state.rooms?.find((item) => Number(item.id) === Number(device.room_id));
+  const roomLink = room ? cachedLinks[String(room.id)] : null;
+  const linkedModel = roomLink
+    ? (cachedModels || []).find(
+        (item) => String(item.id) === String(roomLink.model_id)
+      ) || null
+    : null;
 
   // Modes de la pièce : un Wiser ne sait que chauffer, mais la pièce peut
   // contenir une climatisation. On affiche alors les modes de clim, grisés
@@ -181,16 +185,29 @@ export async function openDeviceSheet(deviceId) {
       <div class="stack mt-1" data-program></div>
     </div>
 
-    <div class="field">
-      <span class="label">Appliquer un modèle</span>
+    ${
+      room
+        ? `<div class="field">
+      <span class="label">Modèle de la pièce</span>
       <div class="input-row">
-        <select class="select" data-model style="flex:1">
+        <select class="select" data-model style="flex:1"${linkedModel ? " disabled" : ""}>
           <option value="">— choisir un modèle —</option>
-          ${modelOptionsDevice()}
+          ${modelOptionsDevice(linkedModel?.id)}
         </select>
-        <button class="btn btn-sm" type="button" data-apply-model>${icon("check", 14)} Appliquer</button>
+        ${
+          linkedModel
+            ? `<button class="btn btn-sm btn-ghost" type="button" data-unlink-model>${icon("unlink", 14)} Délier</button>`
+            : `<button class="btn btn-sm" type="button" data-link-model>${icon("link", 14)} Lier</button>`
+        }
       </div>
-    </div>
+      ${
+        linkedModel
+          ? `<span class="hint"><span class="pill ${roomLink?.pending ? "pill-warn" : "pill-ok"}">${roomLink?.pending ? "À synchroniser" : "Synchronisée"}</span> « ${escapeHtml(linkedModel.name)} » est lié à ${escapeHtml(room.name || "cette pièce")}. Délier conserve le planning actuel.</span>`
+          : '<span class="hint">Lier copie immédiatement le planning du modèle dans la pièce, puis le maintient synchronisé à chaque enregistrement.</span>'
+      }
+    </div>`
+        : ""
+    }
   `;
 
   const footer = document.createElement("div");
@@ -280,24 +297,57 @@ export async function openDeviceSheet(deviceId) {
     }
   });
 
-  body.querySelector("[data-apply-model]")?.addEventListener("click", async (event) => {
+  body.querySelector("[data-link-model]")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const select = body.querySelector("[data-model]");
-    const idx = Number(select?.value);
-    if (!Number.isInteger(idx) || idx < 0) { toast("Choisis un modèle.", { type: "warn" }); return; }
-    const saved = Array.isArray(cachedModels) ? cachedModels : [];
-    const m = saved[idx];
-    if (!m) { toast("Modèle introuvable.", { type: "warn" }); return; }
-    if (!confirm(`Appliquer le modèle « ${m.name} » à ${device.name} ?`)) return;
+    const modelId = String(select?.value || "");
+    if (!modelId) {
+      toast("Choisis un modèle.", { type: "warn" });
+      return;
+    }
+    const m = (cachedModels || []).find((item) => String(item.id) === modelId);
+    if (!m) {
+      toast("Modèle introuvable.", { type: "warn" });
+      return;
+    }
+    if (
+      !confirm(
+        `Lier la pièce « ${room.name || device.name} » au modèle « ${m.name} » ?\nLe planning de la pièce est remplacé par le modèle et suivra ensuite ses modifications.`
+      )
+    ) {
+      return;
+    }
     button.disabled = true;
     try {
-      await put(`/api/programs/${device.device_id}/A`, { days: cloneDaysDevice(m.days?.A) });
-      await put(`/api/programs/${device.device_id}/B`, { days: cloneDaysDevice(m.days?.B) });
+      await put(`/api/model-links/${room.id}`, { model_id: modelId });
       await refreshState({ silent: true });
-      toast(`Modèle « ${m.name} » appliqué.`);
+      closeSheet();
+      window.setTimeout(() => openDeviceSheet(deviceId), 120);
+      toast(`Pièce liée au modèle « ${m.name} ».`);
     } catch (err) {
       toastError(err);
-    } finally {
+      button.disabled = false;
+    }
+  });
+
+  body.querySelector("[data-unlink-model]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (
+      !confirm(
+        `Délier la pièce « ${room.name || device.name} » de son modèle ?\nSon planning actuel est conservé.`
+      )
+    ) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      await del(`/api/model-links/${room.id}`);
+      await refreshState({ silent: true });
+      closeSheet();
+      window.setTimeout(() => openDeviceSheet(deviceId), 120);
+      toast("Pièce déliée du modèle (planning conservé).", { type: "info" });
+    } catch (err) {
+      toastError(err);
       button.disabled = false;
     }
   });

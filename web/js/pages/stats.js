@@ -57,11 +57,13 @@ let requestId = 0;
 let energyView = readPref("stats.energyView", "month");
 let energyMonth = Number(readPref("stats.energyMonth", new Date().getMonth() + 1));
 let energyDay = readPref("stats.energyDay", todayIso());
-let energyDays = Number(readPref("stats.energyDays", 7));
 let energyAsOf = readPref("stats.energyAsOf", "0") === "1";
 let energyInitial = true;
 let energyRequestId = 0;
 let energyPayload = null;
+let annualTempRequest = 0;
+let periodCount = Number(readPref("statsPeriodCount", 7));
+const PERIOD_COUNTS = [5, 7, 12];
 let temperatureTooltipAbort = null;
 const hiddenTempSeries = new Set();
 const hiddenEnergySeries = new Set();
@@ -76,7 +78,7 @@ export default {
     if (!Number.isInteger(energyMonth) || energyMonth < 1 || energyMonth > 12) {
       energyMonth = new Date().getMonth() + 1;
     }
-    if (!Number.isInteger(energyDays) || energyDays < 1) energyDays = 7;
+    if (!PERIOD_COUNTS.includes(periodCount)) periodCount = 7;
     if (!parseDate(energyDay)) energyDay = todayIso();
     const energyDate = parseDate(energyDay);
     if (energyDate && energyDate.getMonth() + 1 !== energyMonth) {
@@ -111,6 +113,7 @@ export default {
         </div>
 
         <div id="energyContent" class="mt-2"></div>
+        <div id="annualTemp" class="mt-2"></div>
       </div>
     `;
 
@@ -126,10 +129,12 @@ export default {
     // La carte énergie charge en arrière-plan : un appel Enedis lent ne
     // retarde pas l'affichage des courbes de température.
     loadEnergy();
+    loadAnnualTemperature();
   },
 
   unmount() {
     energyRequestId += 1;
+    annualTempRequest += 1;
     temperatureTooltipAbort?.abort();
     temperatureTooltipAbort = null;
     energyPayload = null;
@@ -522,7 +527,8 @@ async function loadEnergy(refresh = false) {
         // comptent ; en vue semaine, le mois et le jour du mois).
         month: isNav ? energyMonth : undefined,
         day: isNav && !energyInitial ? energyDay : undefined,
-        days: energyView === "day" ? energyDays : undefined,
+        // Nombre de périodes affichées (jour, semaine, mois) : 5, 7 ou 12.
+        periods: isNav ? periodCount : undefined,
         // Option « à date » : coupe les autres années à la dernière conso.
         as_of: energyAsOf ? 1 : undefined,
         // Synchro manuelle : force l'appel à Enedis au lieu du cache de 3 h.
@@ -557,6 +563,59 @@ async function loadEnergy(refresh = false) {
     root.querySelector("#energyRetry")?.addEventListener("click", loadEnergy);
     toastError(err);
   }
+}
+
+async function loadAnnualTemperature() {
+  if (!root) return;
+  const host = root.querySelector("#annualTemp");
+  if (!host) return;
+
+  const id = ++annualTempRequest;
+  host.innerHTML = `<div class="card card-pad">
+    <div class="boot" style="min-height:96px"><span class="spinner"></span><p>Température annuelle…</p></div>
+  </div>`;
+
+  try {
+    const payload = await get("/api/stats/temperature?range=year");
+    if (id !== annualTempRequest || !root) return;
+    paintAnnualTemperature(payload);
+  } catch (err) {
+    if (id !== annualTempRequest || !root) return;
+    host.innerHTML = `<div class="card card-pad">
+      <div class="hint is-bad">${escapeHtml(err.message)}</div>
+    </div>`;
+  }
+}
+
+function paintAnnualTemperature(payload) {
+  const host = root?.querySelector("#annualTemp");
+  if (!host) return;
+
+  const days = Number(payload?.coverage_days) || 0;
+  const pct = Number(payload?.coverage_pct);
+  const hasValue = payload?.avg_c !== null && payload?.avg_c !== undefined;
+  const sourceLabel =
+    payload?.source_label ||
+    (payload?.source === "rooms" ? "pièces" : payload?.source === "weather" ? "météo" : "");
+  const coverage =
+    days > 0
+      ? days >= 300
+        ? `${days} j`
+        : `${days} j (${Number.isFinite(pct) ? fmtNumber(pct, 1) : Math.round((days * 100) / 365)} %)`
+      : "";
+  const sub = hasValue ? `${sourceLabel} · ${coverage}` : "pas de relevés sur l'année";
+  const value = hasValue ? `${fmtTemp(payload.avg_c)} °C` : "—";
+
+  host.innerHTML = `<div class="kpi">
+    <div class="k-label">${icon("thermometer", 14)} Température moyenne sur l'année</div>
+    <div class="k-value">${escapeHtml(value)}</div>
+    <div class="k-sub">${escapeHtml(sub)}</div>
+    ${
+      hasValue
+        ? `<p class="hint mt-2">Fenêtre du ${fmtDate(payload.start)} au ${fmtDate(payload.end)} · source ${escapeHtml(sourceLabel)}.</p>`
+        : '<p class="hint mt-2">Aucun relevé météo en cache ni mesure des pièces sur les 365 derniers jours.</p>'
+    }
+  </div>`;
 }
 
 function paintEnergy(payload) {
@@ -601,6 +660,16 @@ function paintEnergy(payload) {
             `<button type="button" data-energy-view="${key}" class="${key === energyView ? "is-active" : ""}">${label}</button>`
         ).join("")}
       </div>
+      ${
+        isNav
+          ? `<div class="segmented" id="energyPeriods" title="Nombre de périodes affichées">
+              ${PERIOD_COUNTS.map(
+                (count) =>
+                  `<button type="button" data-period-count="${count}" class="${count === periodCount ? "is-active" : ""}">${count}</button>`
+              ).join("")}
+            </div>`
+          : ""
+      }
       <span class="row" style="gap:6px;align-items:center">
         <label class="switch" title="Arrête la comparaison des autres années à la dernière date de conso de l'année en cours (ex. 16 nov). Vues Semaine, Mois, Année.">
           <input type="checkbox" id="energyAsOf"${energyAsOf ? " checked" : ""}>
@@ -698,6 +767,22 @@ function paintEnergy(payload) {
     });
   });
 
+  host.querySelectorAll("[data-period-count]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const next = Number(button.dataset.periodCount);
+      if (!PERIOD_COUNTS.includes(next) || next === periodCount) return;
+      periodCount = next;
+      writePref("statsPeriodCount", periodCount);
+      host.querySelectorAll("[data-period-count]").forEach((item) => {
+        item.classList.toggle(
+          "is-active",
+          Number(item.dataset.periodCount) === periodCount
+        );
+      });
+      loadEnergy();
+    });
+  });
+
   host.querySelector("#energyAsOf")?.addEventListener("change", (event) => {
     energyAsOf = event.target.checked;
     writePref("stats.energyAsOf", energyAsOf ? "1" : "0");
@@ -757,7 +842,7 @@ function defaultEnergyDay(month) {
 function shiftEnergy(direction) {
   if (energyView === "week") shiftEnergyWeek(direction);
   else if (energyView === "month") shiftEnergyMonth(direction);
-  else if (energyView === "day") shiftEnergyDay(direction * 7);
+  else if (energyView === "day") shiftEnergyDay(direction * periodCount);
 }
 
 function shiftEnergyWeek(direction) {

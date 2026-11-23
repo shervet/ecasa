@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ecasa.stats import (  # noqa: E402
+    annual_temperature,
     build_stats,
     parse_anchor,
     period_bounds,
@@ -32,6 +33,20 @@ class FakeWeather:
 
     def hourly(self, latitude, longitude, start, end):
         return FakeResult(self.hours)
+
+
+class FakeAnnualWeather:
+    """Cache météo déjà chargé (aucun appel réseau)."""
+
+    def __init__(self, hours):
+        self.hours = hours
+
+    def cached_hours(self, latitude, longitude, start, end):
+        return {
+            day: values
+            for day, values in self.hours.items()
+            if start.isoformat() <= day <= end.isoformat()
+        }
 
 
 class FakeStore:
@@ -375,6 +390,107 @@ class SetpointSourceTests(unittest.TestCase):
         self.assertEqual(buckets[8]["ambient"], 18.2)
         self.assertEqual(buckets[8]["count"], 2)
         self.assertEqual(stats["setpoint_device_id"], 28129468)
+
+
+class AnnualTemperatureTests(unittest.TestCase):
+    """Température moyenne annuelle : couverture, source et messages."""
+
+    TODAY = date(2026, 11, 20)
+    CONFIG = {
+        "weather_enabled": True,
+        "weather_latitude": 48.85,
+        "weather_longitude": 2.35,
+    }
+
+    @staticmethod
+    def make_weather(days, temperature=10.0):
+        hours = {}
+        for offset in range(days):
+            day = AnnualTemperatureTests.TODAY - timedelta(days=offset)
+            hours[day.isoformat()] = {12: temperature}
+        return hours
+
+    def annual(self, weather_hours=None, rows=None, config=None):
+        weather = FakeAnnualWeather(weather_hours or {})
+        store = DeviceStore(rows or [])
+        return annual_temperature(
+            store,
+            weather,
+            [make_room()],
+            config or self.CONFIG,
+            today=self.TODAY,
+        )
+
+    def test_full_year_uses_weather(self):
+        payload = self.annual(self.make_weather(365, 11.5))
+        self.assertEqual(payload["range"], "year")
+        self.assertEqual(payload["window_days"], 365)
+        self.assertEqual(payload["start"], "2025-11-21")
+        self.assertEqual(payload["end"], "2026-11-20")
+        self.assertEqual(payload["avg_c"], 11.5)
+        self.assertEqual(payload["coverage_days"], 365)
+        self.assertEqual(payload["coverage_pct"], 100.0)
+        self.assertEqual(payload["source"], "weather")
+        self.assertEqual(payload["source_label"], "météo")
+        self.assertIsNone(payload["message"])
+
+    def test_partial_coverage_reports_percentage(self):
+        payload = self.annual(self.make_weather(180, 12.0))
+        self.assertEqual(payload["avg_c"], 12.0)
+        self.assertEqual(payload["coverage_days"], 180)
+        self.assertEqual(payload["coverage_pct"], 49.3)
+        self.assertEqual(payload["source"], "weather")
+
+    def test_no_data_yields_explicit_message(self):
+        payload = self.annual()
+        self.assertIsNone(payload["avg_c"])
+        self.assertEqual(payload["coverage_days"], 0)
+        self.assertEqual(payload["coverage_pct"], 0.0)
+        self.assertIsNone(payload["source"])
+        self.assertEqual(payload["message"], "pas de relevés sur l'année")
+
+    def test_best_coverage_wins(self):
+        # 100 jours de météo contre 200 jours de pièces : les pièces l'emportent.
+        rows = []
+        for offset in range(200):
+            day = self.TODAY - timedelta(days=offset)
+            rows.append({
+                "device_id": 7,
+                "ts": f"{day.isoformat()}T09:00:00",
+                "ambient": 20.0,
+            })
+        payload = self.annual(self.make_weather(100, 10.0), rows)
+        self.assertEqual(payload["avg_c"], 20.0)
+        self.assertEqual(payload["coverage_days"], 200)
+        self.assertEqual(payload["source"], "rooms")
+        self.assertEqual(payload["source_label"], "pièces")
+
+    def test_weather_wins_on_equal_coverage(self):
+        rows = []
+        for offset in range(180):
+            day = self.TODAY - timedelta(days=offset)
+            rows.append({
+                "device_id": 7,
+                "ts": f"{day.isoformat()}T09:00:00",
+                "ambient": 20.0,
+            })
+        payload = self.annual(self.make_weather(180, 10.0), rows)
+        self.assertEqual(payload["avg_c"], 10.0)
+        self.assertEqual(payload["source"], "weather")
+
+    def test_weather_disabled_falls_back_to_rooms(self):
+        rows = [
+            {"device_id": 7, "ts": "2026-11-20T09:00:00", "ambient": 19.0},
+            {"device_id": 7, "ts": "2026-11-19T09:00:00", "ambient": 21.0},
+        ]
+        payload = self.annual(
+            self.make_weather(365, 10.0),
+            rows,
+            dict(self.CONFIG, weather_enabled=False),
+        )
+        self.assertEqual(payload["avg_c"], 20.0)
+        self.assertEqual(payload["coverage_days"], 2)
+        self.assertEqual(payload["source"], "rooms")
 
 
 if __name__ == "__main__":

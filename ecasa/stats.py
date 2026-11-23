@@ -21,6 +21,112 @@ RANGE_LABELS = {
     "month": "Mois",
 }
 
+ANNUAL_DAYS = 365
+
+
+def annual_temperature(store, weather, rooms, config: dict,
+                       today: date | None = None) -> dict:
+    """Température moyenne sur les 365 derniers jours.
+
+    Deux sources sont comparées, sans nouvel appel réseau :
+
+    - le cache météo déjà présent (chunks horaires de ``WeatherService``) ;
+    - les échantillons horaires des pièces (``store.samples``).
+
+    La source qui couvre le plus de jours est retenue ; à couverture égale,
+    la météo est prioritaire car elle ne dépend pas des pièces équipées.
+    """
+    today = today or datetime.now().date()
+    start = today - timedelta(days=ANNUAL_DAYS - 1)
+
+    weather_hours = {}
+    if config.get("weather_enabled", True):
+        try:
+            latitude = float(config.get("weather_latitude"))
+            longitude = float(config.get("weather_longitude"))
+        except (TypeError, ValueError):
+            latitude = longitude = None
+        if latitude is not None and longitude is not None:
+            cached_hours = getattr(weather, "cached_hours", None)
+            if callable(cached_hours):
+                try:
+                    weather_hours = cached_hours(
+                        latitude, longitude, start, today
+                    ) or {}
+                except Exception:  # noqa: BLE001 - statistique facultative
+                    weather_hours = {}
+
+    weather_values = [
+        value
+        for day_values in weather_hours.values()
+        for value in day_values.values()
+        if value is not None
+    ]
+    weather_days = sum(
+        1
+        for day_values in weather_hours.values()
+        if any(value is not None for value in day_values.values())
+    )
+    weather_avg = _average(weather_values)
+
+    sample_values: list[float] = []
+    sample_days: set[str] = set()
+    start_dt = datetime.combine(start, time.min)
+    end_dt = datetime.combine(today, time(23, 59, 59))
+    for room in rooms or []:
+        for device in room.get("devices") or []:
+            try:
+                device_id = int(device["device_id"])
+            except (TypeError, ValueError):
+                continue
+            try:
+                rows = store.samples(device_id, start_dt, end_dt)
+            except Exception:  # noqa: BLE001 - une pièce ne bloque pas l'ensemble
+                continue
+            for row in rows:
+                ambient = _as_float(row.get("ambient"))
+                if ambient is None:
+                    continue
+                try:
+                    moment = datetime.fromisoformat(str(row["ts"]))
+                except (TypeError, ValueError):
+                    continue
+                if not start <= moment.date() <= today:
+                    continue
+                sample_values.append(ambient)
+                sample_days.add(moment.date().isoformat())
+
+    sample_avg = _average(sample_values)
+    sample_coverage = len(sample_days)
+
+    if weather_avg is not None and (
+        sample_avg is None or weather_days >= sample_coverage
+    ):
+        avg_c, coverage_days, source, source_label = (
+            weather_avg, weather_days, "weather", "météo"
+        )
+    elif sample_avg is not None:
+        avg_c, coverage_days, source, source_label = (
+            sample_avg, sample_coverage, "rooms", "pièces"
+        )
+    else:
+        avg_c, coverage_days, source, source_label = (
+            None, 0, None, None
+        )
+
+    return {
+        "range": "year",
+        "start": start.isoformat(),
+        "end": today.isoformat(),
+        "window_days": ANNUAL_DAYS,
+        "avg_c": avg_c,
+        "coverage_days": coverage_days,
+        "coverage_pct": round(coverage_days * 100 / ANNUAL_DAYS, 1),
+        "source": source,
+        "source_label": source_label,
+        "message": None if avg_c is not None else "pas de relevés sur l'année",
+    }
+
 
 def parse_anchor(value) -> date:
     """Date de référence (aujourd'hui si absente ou invalide)."""

@@ -620,7 +620,7 @@ function paintRooms() {
     const locked = lockedDaysFor(t, week);
     html += '<div class="room-plan' + (isLinkedWeek ? " room-plan--linked" : "") + '" data-room-anchor="' + t.id + '" style="scroll-margin-top: calc(var(--topbar-h) + 56px)">';
     html += '<div class="room-plan-head">';
-    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + (linkedModel ? ' <span class="pill pill-model" style="margin-left:6px">' + icon("link", 12) + ' ' + escapeHtml(linkedModel.name) + '</span>' : '') + '</div>';
+    html += '<div class="room-plan-title">' + escapeHtml(t.label) + ' <span class="pill pill-ghost" style="margin-left:6px">Semaine ' + escapeHtml(week) + '</span>' + (isLinkedWeek ? ' <span class="pill pill-accent" style="margin-left:6px">Lié à Pronote</span>' : '') + (linkedModel ? ' <a class="pill pill-model pill-model-link" href="#/models/model:' + encodeURIComponent(linkedModel.id) + '" style="margin-left:6px" title="Ouvrir le modèle « ' + escapeHtml(linkedModel.name) + ' »">' + icon("link", 12) + ' ' + escapeHtml(linkedModel.name) + '</a>' : '') + '</div>';
     html += deviceSelect;
     html += '<button class="btn btn-sm btn-danger btn-icon" type="button" data-clear-room="' + t.id + '" title="Vider cette pièce" aria-label="Vider cette pièce">' + icon("trash", 14) + '</button>';
     html += '</div>';

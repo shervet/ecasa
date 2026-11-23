@@ -294,6 +294,40 @@ class ModelLinkTests(StoreTestCase):
         slots = store.slots(room_id=1, week="A")
         self.assertEqual([(slot["minutes"], slot["temp"]) for slot in slots], [(360, 21.0)])
 
+    def test_model_edit_propagates_to_every_linked_room(self):
+        store, model_id = self.make_linked()
+        store.set_room_model_link(2, model_id)
+        store.apply_model_to_room(1, model_id)
+        store.apply_model_to_room(2, model_id)
+        new_days = [[{"time": "06:00", "mode": "heat", "temp": 21}]] + [[]] * 6
+        store.set_week_models([
+            {"id": model_id, "name": "Confort",
+             "days": {"A": new_days, "B": new_days}},
+        ])
+        for room_id in (1, 2):
+            slots = store.slots(room_id=room_id, week="A")
+            self.assertEqual(
+                [(slot["minutes"], slot["temp"]) for slot in slots],
+                [(360, 21.0)],
+            )
+            self.assertTrue(store.room_matches_model(room_id, model_id))
+
+    def test_detach_keeps_copy_and_stops_propagation(self):
+        store, model_id = self.make_linked()
+        store.apply_model_to_room(1, model_id)
+        copied = store.slots(room_id=1, week="A")
+        self.assertTrue(copied)
+        store.set_room_model_link(1, None)
+        self.assertIsNone(store.link_for_room(1))
+        # La copie locale est conservée après le détachement.
+        self.assertEqual(store.slots(room_id=1, week="A"), copied)
+        new_days = [[{"time": "06:00", "mode": "cool", "temp": 24}]] + [[]] * 6
+        store.set_week_models([
+            {"id": model_id, "name": "Confort",
+             "days": {"A": new_days, "B": new_days}},
+        ])
+        self.assertEqual(store.slots(room_id=1, week="A"), copied)
+
     def test_pronote_locked_days_preserved(self):
         store, model_id = self.make_linked()
         locked = [[{"time": "08:00", "mode": "off", "temp": 16}]] + [[]] * 6
