@@ -68,6 +68,7 @@ from .stats import RANGES, annual_temperature, build_stats, parse_anchor
 from .storage import MemoryStore, dumps
 from .weather import WeatherError, WeatherService
 from .wiser import MockWiserClient, WiserClient, WiserError
+from .mdns import start_mdns
 
 APP_NAME = "eCasa"
 START_TS = time.time()
@@ -5037,6 +5038,11 @@ def main() -> None:
     app.cpu_sampler = cpu_sampler
     cpu_sampler.start()
 
+    mdns_announcer = None
+    if not bool(config.get("mock")):
+        mdns_announcer = start_mdns(port)
+    app.mdns = mdns_announcer
+
     tailscale_startup = apply_tailscale_startup(config)
 
     def _stop(signum, frame):  # noqa: ARG001
@@ -5080,6 +5086,8 @@ def main() -> None:
         daily_sync.stop()
         update_watch.stop()
         cpu_sampler.stop()
+        if mdns_announcer is not None:
+            mdns_announcer.stop()
         engine.stop()
         store.close()
         server.server_close()
