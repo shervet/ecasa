@@ -61,7 +61,6 @@ let energyAsOf = readPref("stats.energyAsOf", "0") === "1";
 let energyInitial = true;
 let energyRequestId = 0;
 let energyPayload = null;
-let annualTempRequest = 0;
 let periodCount = Number(readPref("statsPeriodCount", 7));
 const PERIOD_COUNTS = [5, 7, 12];
 let temperatureTooltipAbort = null;
@@ -113,7 +112,6 @@ export default {
         </div>
 
         <div id="energyContent" class="mt-2"></div>
-        <div id="annualTemp" class="mt-2"></div>
       </div>
     `;
 
@@ -129,12 +127,10 @@ export default {
     // La carte énergie charge en arrière-plan : un appel Enedis lent ne
     // retarde pas l'affichage des courbes de température.
     loadEnergy();
-    loadAnnualTemperature();
   },
 
   unmount() {
     energyRequestId += 1;
-    annualTempRequest += 1;
     temperatureTooltipAbort?.abort();
     temperatureTooltipAbort = null;
     energyPayload = null;
@@ -225,7 +221,7 @@ function paint() {
   const series = [
     { key: "ambient", label: "Ambiance", color: "var(--warm)", values: buckets.map((b) => b.ambient) },
     { key: "setpoint", label: "Consigne", color: "var(--primary)", values: buckets.map((b) => b.setpoint), dashed: true, step: true },
-    { key: "outside", label: "Extérieur", color: "var(--cool)", values: buckets.map((b) => b.outside), area: false },
+    { key: "outside", label: "Température", color: "var(--cool)", values: buckets.map((b) => b.outside), area: false, y2: true },
   ];
 
   const weather = data.weather || {};
@@ -254,7 +250,7 @@ function paint() {
         <div style="margin-top:12px">
           ${lineChart({
             series,
-            labels: buckets.map((bucket) => bucket.short || bucket.label),
+            labels: buckets.map((bucket) => fmtBucketLabel(bucket, range)),
             height: 260,
             unit: "°C",
           })}
@@ -499,9 +495,65 @@ function periodLabel(payload) {
   const start = parseDate(payload.start);
   const end = parseDate(payload.end);
   if (!start || !end) return payload.range_label || "—";
-  if (payload.range === "day") return fmtDate(start, { weekday: "long", day: "numeric", month: "long" });
-  if (payload.range === "week") return `du ${fmtDate(start)} au ${fmtDate(end)}`;
-  return `${start.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}`;
+  if (payload.range === "day") {
+    // Jour : ligne1 = jourNuméro mois, ligne2 = semaine / semaine courte
+    const dayNum = start.getDate();
+    const month = start.toLocaleString("fr-FR", { month: "short" });
+    const weekday = start.toLocaleString("fr-FR", { weekday: "short" });
+    // Exemple : "3 nov. || lun." ou "3 || nov."
+    // On préfère jour + mois court en ligne1, semaine court en ligne2
+    if (weekday) return `${dayNum} ${month} || ${weekday}`;
+    return `${dayNum} ${month} ||`;
+  }
+  if (payload.range === "week") {
+    // Semaine : ligne1 = jour court de la semaine, ligne2 = plage de dates
+    const dow = start.toLocaleString("fr-FR", { weekday: "short" });
+    const dayStart = start.getDate();
+    const monthStart = start.toLocaleString("fr-FR", { month: "short" });
+    const dayEnd = end.getDate();
+    const monthEnd = end.toLocaleString("fr-FR", { month: "short" });
+    return `${dow} || ${dayStart} ${monthStart} − ${dayEnd} ${monthEnd}`;
+  }
+  // mois et année
+  const month = start.toLocaleString("fr-FR", { month: "short" });
+  const year = start.getFullYear();
+  return `${month} || ${year}`;
+}
+
+/** Étiquette deux lignes pour un bucket du graphique. */
+function fmtBucketLabel(bucket, range) {
+  if (!bucket) return "—";
+  if (range === "day") {
+    const label = bucket.label || bucket.short || "";
+    if (label.includes("/")) {
+      const parts = label.split("/");
+      if (parts.length === 2) {
+        return `${parts[0]} || ${parts[1]}`;
+      }
+    }
+    return label;
+  }
+  if (range === "week") {
+    const label = bucket.label || bucket.short || "";
+    if (label.includes(" ")) {
+      const parts = label.split(" ");
+      if (parts.length >= 2) {
+        return `${parts[0]} || ${parts[1]}`;
+      }
+    }
+    return label;
+  }
+  if (range === "month") {
+    const label = bucket.label || bucket.short || "";
+    if (label.includes("/")) {
+      const parts = label.split("/");
+      if (parts.length === 2) {
+        return `${parts[0]} || ${parts[1]}`;
+      }
+    }
+    return label;
+  }
+  return bucket.label || bucket.short || "";
 }
 
 /* ------------------------------------------------------- consommation */
@@ -563,59 +615,6 @@ async function loadEnergy(refresh = false) {
     root.querySelector("#energyRetry")?.addEventListener("click", loadEnergy);
     toastError(err);
   }
-}
-
-async function loadAnnualTemperature() {
-  if (!root) return;
-  const host = root.querySelector("#annualTemp");
-  if (!host) return;
-
-  const id = ++annualTempRequest;
-  host.innerHTML = `<div class="card card-pad">
-    <div class="boot" style="min-height:96px"><span class="spinner"></span><p>Température annuelle…</p></div>
-  </div>`;
-
-  try {
-    const payload = await get("/api/stats/temperature?range=year");
-    if (id !== annualTempRequest || !root) return;
-    paintAnnualTemperature(payload);
-  } catch (err) {
-    if (id !== annualTempRequest || !root) return;
-    host.innerHTML = `<div class="card card-pad">
-      <div class="hint is-bad">${escapeHtml(err.message)}</div>
-    </div>`;
-  }
-}
-
-function paintAnnualTemperature(payload) {
-  const host = root?.querySelector("#annualTemp");
-  if (!host) return;
-
-  const days = Number(payload?.coverage_days) || 0;
-  const pct = Number(payload?.coverage_pct);
-  const hasValue = payload?.avg_c !== null && payload?.avg_c !== undefined;
-  const sourceLabel =
-    payload?.source_label ||
-    (payload?.source === "rooms" ? "pièces" : payload?.source === "weather" ? "météo" : "");
-  const coverage =
-    days > 0
-      ? days >= 300
-        ? `${days} j`
-        : `${days} j (${Number.isFinite(pct) ? fmtNumber(pct, 1) : Math.round((days * 100) / 365)} %)`
-      : "";
-  const sub = hasValue ? `${sourceLabel} · ${coverage}` : "pas de relevés sur l'année";
-  const value = hasValue ? `${fmtTemp(payload.avg_c)} °C` : "—";
-
-  host.innerHTML = `<div class="kpi">
-    <div class="k-label">${icon("thermometer", 14)} Température moyenne sur l'année</div>
-    <div class="k-value">${escapeHtml(value)}</div>
-    <div class="k-sub">${escapeHtml(sub)}</div>
-    ${
-      hasValue
-        ? `<p class="hint mt-2">Fenêtre du ${fmtDate(payload.start)} au ${fmtDate(payload.end)} · source ${escapeHtml(sourceLabel)}.</p>`
-        : '<p class="hint mt-2">Aucun relevé météo en cache ni mesure des pièces sur les 365 derniers jours.</p>'
-    }
-  </div>`;
 }
 
 function paintEnergy(payload) {

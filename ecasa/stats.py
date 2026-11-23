@@ -472,3 +472,133 @@ def _max(values: list[float]) -> float | None:
 
 def _round(value) -> float | None:
     return round(value, 1) if value is not None else None
+
+
+def temperature_series(range_name: str, buckets: list[dict],
+                       weather_hours: dict[str, dict[int, float]] | None,
+                       config: dict) -> list[dict[str, float | None]]:
+    """Return temperature series aligned on consumption buckets.
+
+    For each bucket, returns ``{"label": str, "avg_c": float|None}``.
+    If a bucket has fewer than 50 % of its hours with valid temperature data,
+    ``avg_c`` is ``None`` (rendered as a hole in the curve).
+
+    The function handles ``day`` (24 hourly buckets), ``week`` (7 daily buckets),
+    ``month`` (daily buckets for the month) and ``year`` (12 monthly buckets).
+    """
+    if weather_hours is None:
+        return [{"label": bucket["label"], "avg_c": None} for bucket in buckets]
+
+    result: list[dict[str, float | None]] = []
+    today = datetime.now().date()
+    start = today - timedelta(days=365 - 1)
+
+    # ---- day : 24 buckets representing hours ----
+    if range_name == "day":
+        for bucket in buckets:
+            hour = bucket["hour"]  # 0..23
+            day_str = bucket["date"]
+            day_values = weather_hours.get(day_str, {})
+            hour_val = day_values.get(hour)
+            if hour_val is not None and isinstance(hour_val, (int, float)):
+                result.append({"label": bucket["label"], "avg_c": _round(hour_val)})
+            else:
+                # Count coverage across the whole window
+                covered = 0
+                total = 0
+                for ds, hv in weather_hours.items():
+                    try:
+                        d = datetime.fromisoformat(ds).date()
+                    except ValueError:
+                        continue
+                    if start <= d <= today:
+                        total += 1
+                        if hour in hv:
+                            covered += 1
+                if total > 0 and covered / total >= 0.5:
+                    # average over covered days for this hour
+                    vals = [hv[hour] for ds, hv in weather_hours.items()
+                            if _in_range(datetime.fromisoformat(ds).date(), start, today)
+                            and hour in hv]
+                    if vals:
+                        result.append({"label": bucket["label"], "avg_c": _round(sum(vals) / len(vals))})
+                    else:
+                        result.append({"label": bucket["label"], "avg_c": None})
+                else:
+                    result.append({"label": bucket["label"], "avg_c": None})
+        return result
+
+    # ---- week : 7 buckets representing days ----
+    if range_name == "week":
+        for bucket in buckets:
+            day_str = bucket["date"]
+            day_values = weather_hours.get(day_str, {})
+            values = list(day_values.values())
+            if values:
+                non_none = [v for v in values if v is not None]
+                if len(non_none) / len(values) >= 0.5:
+                    avg = _average(non_none)
+                    result.append({"label": bucket["label"], "avg_c": avg})
+                else:
+                    result.append({"label": bucket["label"], "avg_c": None})
+            else:
+                result.append({"label": bucket["label"], "avg_c": None})
+        return result
+
+    # ---- month : daily buckets for the month ----
+    if range_name == "month":
+        for bucket in buckets:
+            day_str = bucket["date"]
+            day_values = weather_hours.get(day_str, {})
+            values = list(day_values.values())
+            if values:
+                non_none = [v for v in values if v is not None]
+                if len(non_none) / len(values) >= 0.5:
+                    avg = _average(non_none)
+                    result.append({"label": bucket["label"], "avg_c": avg})
+                else:
+                    result.append({"label": bucket["label"], "avg_c": None})
+            else:
+                result.append({"label": bucket["label"], "avg_c": None})
+        return result
+
+    # ---- year : 12 monthly buckets ----
+    if range_name == "year":
+        # Group all hourly temps by month (1-12)
+        months_temps: dict[int, list[float]] = {m: [] for m in range(1, 13)}
+        for day_str, hour_vals in weather_hours.items():
+            try:
+                d = datetime.fromisoformat(day_str).date()
+            except ValueError:
+                continue
+            if d > today or d < start:
+                continue
+            month = d.month
+            for h in range(24):
+                if h in hour_vals:
+                    months_temps[month].append(hour_vals[h])
+        for i, bucket in enumerate(buckets):
+            month = i + 1  # buckets ordered Jan..Dec
+            vals = months_temps.get(month, [])
+            # 50% des heures de ce mois sur les 365 derniers jours
+            total_hours_in_month = 31 * 24  # approximation; on vérifie le nombre d'éléments réels
+            if len(vals) >= 0.5 * (31 * 24):  # ~50% coverage
+                avg = _average(vals) if vals else None
+                result.append({"label": bucket["label"], "avg_c": avg})
+            else:
+                result.append({"label": bucket["label"], "avg_c": None})
+        return result
+
+    # unknown range
+    return [{"label": bucket["label"], "avg_c": None} for bucket in buckets]
+
+
+def _in_range(d: datetime.date, start: datetime.date, today: datetime.date) -> bool:
+    return start <= d <= today
+
+
+def _average(values: list[float]) -> float | None:
+    clean = [value for value in values if value is not None]
+    if not clean:
+        return None
+    return round(sum(clean) / len(clean), 1)
