@@ -27,6 +27,28 @@ function niceMax(value, divisions = 4) {
 }
 
 /**
+ * Pas des labels d'abscisses : ne garde que ceux qui tiennent reellement
+ * dans la largeur disponible, avec un plancher de 3 labels affiches.
+ */
+export function computeLabelStep({
+  count = 0,
+  labels = [],
+  innerW = 0,
+  primaryFont = 10.5,
+  secondaryFont = 9.5,
+  maxLabels = 12,
+} = {}) {
+  const longest = labels.reduce(
+    (m, l) => Math.max(m, ...String(l).split("|").map((p) => p.length)),
+    0
+  );
+  const estLabelW = Math.max(longest * primaryFont * 0.62, secondaryFont * 4) + 16;
+  const fit = Math.max(3, Math.floor(innerW / estLabelW));
+  const effectiveMax = Math.max(3, Math.min(maxLabels, fit));
+  return Math.max(1, Math.ceil(count / effectiveMax));
+}
+
+/**
  * Courbes multi-séries.
  * series: [{ key, label, color, values: (number|null)[], dashed?, area? }]
  */
@@ -129,7 +151,14 @@ export function lineChart({
     grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${unit}</text>`;
   }
 
-  const step = Math.max(1, Math.ceil(count / 8));
+  const step = computeLabelStep({
+    count,
+    labels,
+    innerW,
+    primaryFont,
+    secondaryFont,
+    maxLabels: 8,
+  });
   let xLabels = "";
   for (let i = 0; i < count; i += step) {
     const label = labels[i];
@@ -371,7 +400,14 @@ grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-a
     });
   }
 
-  const step = Math.max(1, Math.ceil(count / maxLabels));
+  const step = computeLabelStep({
+    count,
+    labels,
+    innerW,
+    primaryFont,
+    secondaryFont,
+    maxLabels,
+  });
   let xLabels = "";
   const textFont = primaryFont;
   const tspanFont = secondaryFont;
