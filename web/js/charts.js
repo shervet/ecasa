@@ -167,7 +167,8 @@ export function lineChart({
     const textFont = primaryFont;
     const tspanFont = secondaryFont;
     if (parts.length > 1) {
-      xLabels += `<text x="${x(i).toFixed(1)}" y="${H - (TOUCH ? primaryFont + secondaryFont + 5 : 20)}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x(i).toFixed(1)}" dy="${TOUCH ? Math.round(0.9 * secondaryFont) : 12}" font-size="${tspanFont}">${escapeHtml(parts[1])}</tspan></text>`;
+      const line1Y = TOUCH ? H - M.bottom + Math.round(0.72 * primaryFont) + 4 : H - 20;
+      xLabels += `<text x="${x(i).toFixed(1)}" y="${line1Y}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x(i).toFixed(1)}" dy="${TOUCH ? Math.round(0.9 * secondaryFont) : 12}" font-size="${tspanFont}">${escapeHtml(parts[1])}</tspan></text>`;
     } else {
       xLabels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(label)}</text>`;
     }
@@ -417,7 +418,8 @@ grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-a
     const x = M.left + groupW * i + groupW / 2;
     const parts = String(label).split("|");
     if (parts.length > 1) {
-      xLabels += `<text x="${x.toFixed(1)}" y="${H - (TOUCH ? primaryFont + secondaryFont + 5 : 20)}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x.toFixed(1)}" dy="${TOUCH ? Math.round(0.9 * secondaryFont) : 12}" font-size="${tspanFont}">${escapeHtml(parts[1])}</tspan></text>`;
+      const line1Y = TOUCH ? H - M.bottom + Math.round(0.72 * primaryFont) + 4 : H - 20;
+      xLabels += `<text x="${x.toFixed(1)}" y="${line1Y}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(parts[0])}<tspan x="${x.toFixed(1)}" dy="${TOUCH ? Math.round(0.9 * secondaryFont) : 12}" font-size="${tspanFont}">${escapeHtml(parts[1])}</tspan></text>`;
     } else {
       xLabels += `<text x="${x.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="${textFont}" fill="var(--faint)">${escapeHtml(label)}</text>`;
     }
