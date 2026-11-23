@@ -108,6 +108,68 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("year", payload["error"])
 
+    def test_week_stats_endpoint_fills_temperature_buckets(self):
+        room = self.store.add_room("Chambre test")
+        device_id = 9002
+        self.store.upsert_device(device_id, "Chambre (Wiser)")
+        self.store.update_room(room["id"], {"actuator_device_id": device_id})
+        self.store.update_device(
+            device_id,
+            {"room_id": room["id"], "device_type": "wiser"},
+        )
+
+        # Semaine du lundi 16 au dimanche 22 novembre : le jeudi 20 n'a
+        # aucune mesure et doit rester a None.
+        rows = []
+        hours = {}
+        for day in range(16, 23):
+            if day == 20:
+                continue
+            day_key = f"2026-11-{day:02d}"
+            hours[day_key] = {8: 10.0 + day, 9: 12.0 + day}
+            for hour, ambient in ((8, 2.0 + day), (9, 4.0 + day)):
+                rows.append(
+                    {
+                        "device_id": device_id,
+                        "ts": f"{day_key}T{hour:02d}:00:00",
+                        "ambient": ambient,
+                        "setpoint": 19.0,
+                    }
+                )
+        self.store.add_samples(rows)
+        self.weather.hourly.return_value = SimpleNamespace(
+            hours=hours,
+            source="fake-meteo",
+            latitude=48.85,
+            longitude=2.35,
+        )
+
+        status, payload = self.call(
+            "GET",
+            f"/api/stats?range=week&room_id={room['id']}&date=2026-11-18",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["start"], "2026-11-16")
+        self.assertEqual(payload["end"], "2026-11-22")
+        buckets = {item["date"]: item for item in payload["buckets"]}
+        self.assertEqual(len(payload["buckets"]), 7)
+
+        monday = buckets["2026-11-16"]
+        self.assertEqual(monday["ambient"], 19.0)
+        self.assertEqual(monday["setpoint"], 19.0)
+        self.assertEqual(monday["outside"], 27.0)
+        self.assertEqual(monday["count"], 2)
+
+        tuesday = buckets["2026-11-17"]
+        self.assertEqual(tuesday["ambient"], 20.0)
+        self.assertEqual(tuesday["outside"], 28.0)
+
+        empty = buckets["2026-11-20"]
+        self.assertIsNone(empty["ambient"])
+        self.assertIsNone(empty["setpoint"])
+        self.assertIsNone(empty["outside"])
+        self.assertEqual(empty["count"], 0)
+
     def test_energy_rejects_invalid_period_count(self):
         for value in ("6", "0", "13", "abc"):
             status, payload = self.call(

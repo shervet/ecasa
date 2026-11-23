@@ -218,10 +218,21 @@ function paint() {
     sub.textContent = `${data.room_name} · ${periodLabel(data)} · ${summary.samples || 0} mesure${summary.samples > 1 ? "s" : ""}`;
   }
 
+  const outsideValues = buckets.map((b) => b.outside);
+  const outsideCount = outsideValues.filter((value) => Number.isFinite(value)).length;
   const series = [
     { key: "ambient", label: "Ambiance", color: "var(--warm)", values: buckets.map((b) => b.ambient) },
     { key: "setpoint", label: "Consigne", color: "var(--primary)", values: buckets.map((b) => b.setpoint), dashed: true, step: true },
-    { key: "outside", label: "Température", color: "var(--cool)", values: buckets.map((b) => b.outside), area: false, y2: true },
+    {
+      key: "outside",
+      label: "Température",
+      color: "var(--cool)",
+      values: outsideValues,
+      area: false,
+      // Un point unique sur l'axe droit n'est pas trace par lineChart :
+      // on le dessine alors sur l'axe principal pour rester visible.
+      y2: outsideCount > 1,
+    },
   ];
 
   const weather = data.weather || {};
