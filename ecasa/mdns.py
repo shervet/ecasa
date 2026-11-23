@@ -271,12 +271,12 @@ def _create_socket() -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    except OSError:
+    except Exception:  # noqa: BLE001
         pass
     try:
         # Windows
         sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_REUSEPORT", socket.SO_REUSEADDR), 1)
-    except OSError:
+    except Exception:  # noqa: BLE001
         pass
     try:
         sock.bind(("", MDNS_PORT))
@@ -287,15 +287,15 @@ def _create_socket() -> socket.socket:
         group = socket.inet_aton(MDNS_ADDR)
         mreq = struct.pack("4sL", group, socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    except OSError:
+    except Exception:  # noqa: BLE001
         pass
     try:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack("b", 255))
-    except OSError:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack("B", 255))
+    except Exception:  # noqa: BLE001
         pass
     try:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, struct.pack("b", 1))
-    except OSError:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, struct.pack("B", 1))
+    except Exception:  # noqa: BLE001
         pass
     sock.settimeout(1.0)
     return sock
@@ -350,6 +350,8 @@ class MdnsAnnouncer:
             pass
 
     def _announce(self) -> None:
+        if self.sock is None:
+            return
         try:
             ip = self.get_ip()
             packet = build_announcement(
@@ -366,6 +368,7 @@ class MdnsAnnouncer:
         try:
             self.sock = self.sock_factory()
         except Exception as err:  # noqa: BLE001
+            self.sock = None
             print(f"[mdns] demarrage impossible : {err}")
             return
 

@@ -229,10 +229,15 @@ class MdnsBuildTests(unittest.TestCase):
             raise OSError("no network")
 
         announcer = mdns.MdnsAnnouncer(port=8780, sock_factory=bad_factory, announce_interval=0.01)
-        # must not raise
-        announcer.start()
-        announcer._thread.join(timeout=1)
+        # must not raise, must report and stay inert
+        with mock.patch("builtins.print") as printed:
+            announcer.start()
+            announcer._thread.join(timeout=1)
         announcer.stop()
+        printed.assert_any_call("[mdns] demarrage impossible : no network")
+        self.assertIsNone(announcer.sock)
+        announcer._announce()
+        announcer._send(b"noop")
 
     def test_start_mdns_failure_does_not_raise(self):
         with mock.patch("ecasa.mdns.MdnsAnnouncer.start", side_effect=RuntimeError("boom")):
@@ -283,6 +288,59 @@ class MdnsRuntimeTests(unittest.TestCase):
             all_types.extend(r["type"] for r in parsed["answers"])
         self.assertIn(mdns.TYPE_PTR, all_types)
         self.assertIn(mdns.TYPE_A, all_types)
+
+
+class MdnsRealSocketTests(unittest.TestCase):
+    """Tests avec vrai socket UDP/multicast (pas de mock)."""
+
+    def test_create_socket_real(self):
+        sock = mdns._create_socket()
+        try:
+            self.assertEqual(sock.family, socket.AF_INET)
+            self.assertEqual(sock.type, socket.SOCK_DGRAM)
+            port = sock.getsockname()[1]
+            # 5353 si disponible, sinon port ephemeral (fallback)
+            self.assertTrue(port == mdns.MDNS_PORT or port > 1024)
+            payload = mdns.build_announcement("127.0.0.1", 8780, hostname="pi")
+            sock.sendto(payload, (mdns.MDNS_ADDR, mdns.MDNS_PORT))
+        finally:
+            sock.close()
+
+    def test_ttl_option(self):
+        sock = mdns._create_socket()
+        try:
+            value = sock.getsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL)
+            if isinstance(value, bytes):
+                value = value[0]
+            self.assertEqual(value, 255)
+        finally:
+            sock.close()
+
+    def test_start_mdns_real_start_stop(self):
+        sent = []
+
+        def record_send(_self, payload):
+            sent.append(payload)
+
+        with mock.patch.object(mdns.MdnsAnnouncer, "_send", record_send):
+            announcer = mdns.start_mdns(8780, hostname="pi", announce_interval=60)
+            self.assertIsNotNone(announcer)
+            try:
+                for _ in range(100):
+                    if sent:
+                        break
+                    import time
+                    time.sleep(0.02)
+                self.assertIsNotNone(announcer.sock)
+                self.assertGreaterEqual(len(sent), 1)
+                parsed = parse_dns_packet(sent[0])
+                self.assertTrue(any(r["type"] == mdns.TYPE_PTR for r in parsed["answers"]))
+                self.assertTrue(announcer._thread.is_alive())
+            finally:
+                announcer.stop()
+                if announcer._thread:
+                    announcer._thread.join(timeout=3)
+        self.assertFalse(announcer._thread.is_alive())
 
 
 class MdnsMainIntegrationTests(unittest.TestCase):
