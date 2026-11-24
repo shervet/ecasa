@@ -4935,6 +4935,8 @@ class Handler(BaseHTTPRequestHandler):
                     "absence_start",
                     "absence_until",
                     "preheat_max_minutes",
+                    "atlantic_fan_default",
+                    "atlantic_airflow_default",
                 )
             ):
                 app.engine.tick(force=True)

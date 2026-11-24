@@ -374,53 +374,7 @@ function engineSection() {
     </div>
     ${store.state?.status?.last_error ? `<div class="hint is-bad">${escapeHtml(store.state.status.last_error)}</div>` : ""}`,
     `<button class="btn" type="button" data-sync>${icon("refresh", 16)} Synchroniser les appareils</button>
-     <button class="btn" type="button" data-apply>${icon("zap", 16)} Appliquer maintenant</button>
-     <button class="btn btn-primary" type="button" data-save="engine">${icon("save", 16)} Enregistrer</button>`
-  );
-}
-
-function climateSection() {
-  const settings = store.state?.settings || {};
-  const fan = String(settings.atlantic_fan_default ?? "");
-  const airflow = String(settings.atlantic_airflow_default ?? "");
-  return section(
-    "climate",
-    "Climatisation Atlantic",
-    "fan",
-    `${selectRow(
-      "Soufflerie par défaut",
-      "atlantic_fan_default",
-      fan,
-      [
-        ["", "Inchangée (télécommande)"],
-        ["auto", "Automatique"],
-        ["low", "Basse"],
-        ["med", "Moyenne"],
-        ["high", "Haute"],
-      ],
-      {
-        sub: "Vitesse appliquée quand eCasa pilote la clim. « Inchangée » laisse le réglage de la télécommande.",
-      }
-    )}
-    ${selectRow(
-      "Orientation du flux d'air",
-      "atlantic_airflow_default",
-      airflow,
-      [
-        ["", "Inchangée (télécommande)"],
-        ["swing", "Balayage automatique"],
-        ["pos1", "Position 1 (vers le haut)"],
-        ["pos2", "Position 2"],
-        ["pos3", "Position 3"],
-        ["pos4", "Position 4"],
-        ["pos5", "Position 5"],
-        ["pos6", "Position 6 (vers le bas)"],
-      ],
-      {
-        sub: "Position fixe des volets ou balayage. Les positions disponibles dépendent du modèle de clim.",
-      }
-    )}`,
-    `<button class="btn btn-primary" type="button" data-save="climate">${icon("save", 16)} Enregistrer</button>`
+     <button class="btn" type="button" data-apply>${icon("zap", 16)} Appliquer maintenant</button>`
   );
 }
 
@@ -456,8 +410,7 @@ function weeksSection() {
         Semaine en cours : <strong style="color:var(--text)">${escapeHtml(store.state?.week || "—")}</strong>
         ${store.state?.iso_week ? ` · ISO ${store.state.iso_week}` : ""}
       </div>
-    </div>`,
-    `<button class="btn btn-primary" type="button" data-save="weeks">${icon("save", 16)} Enregistrer</button>`
+    </div>`
   );
 }
 
@@ -521,8 +474,7 @@ function schoolSection() {
     <div class="row-between wrap" style="gap:10px">
       <span class="hint" id="schoolNext">Prochaine fermeture : —</span>
       <button class="btn" type="button" data-school-refresh>${icon("refresh", 16)} Actualiser le calendrier</button>
-    </div>`,
-    `<button class="btn btn-primary" type="button" data-save="school">${icon("save", 16)} Enregistrer</button>`
+    </div>`
   );
 }
 
@@ -609,7 +561,6 @@ function connectorPanels(c) {
         <div class="row wrap" style="gap:8px;margin-top:4px">
           <button class="btn" type="button" data-connector-sync="${escapeHtml(item.id)}">${icon("refresh", 16)} Synchroniser</button>
           <button class="btn" type="button" data-connector-test="${escapeHtml(item.id)}">${icon("shield", 16)} Tester</button>
-          <button class="btn btn-primary" type="button" data-save="devices">${icon("save", 16)} Enregistrer</button>
         </div>
         <div class="hint" data-connector-result="${escapeHtml(item.id)}"></div>
         <div class="stack" data-connector-devices="${escapeHtml(item.id)}" style="margin-top:8px"></div>
@@ -747,6 +698,12 @@ function devicesSection() {
       )}
       <div class="hint" id="atlanticTestResult"></div>
 
+      <div class="row wrap" style="gap:8px;margin-top:4px">
+        <button class="btn" type="button" data-test="atlantic">${icon("shield", 16)} Tester</button>
+        <button class="btn" type="button" id="discover">${icon("search", 16)} Voir le compte Atlantic</button>
+        <button class="btn" type="button" data-sync>${icon("refresh", 16)} Synchroniser</button>
+      </div>
+
       ${Boolean(cfg_.email || cfg_.password_set) ? `
       <details class="card card-pad" style="margin-top:8px">
         <summary class="card-title" style="cursor:pointer">${icon("fan", 16)} Réglages climatisation (soufflerie / orientation)</summary>
@@ -780,20 +737,11 @@ function devicesSection() {
             ],
             { sub: "Position fixe des volets ou balayage." }
           )}
-          <div class="row wrap" style="gap:8px">
-            <button class="btn btn-primary" type="button" data-save="climate">${icon("save", 16)} Enregistrer</button>
-          </div>
         </div>
       </details>` : ""}
 
       <!-- Liste des appareils Atlantic (Cozytouch). -->
       <div class="stack" id="atlanticDevicesList" style="margin-top:8px"></div>
-      <div class="row wrap" style="gap:8px;margin-top:4px">
-        <button class="btn" type="button" data-test="atlantic">${icon("shield", 16)} Tester</button>
-        <button class="btn btn-primary" type="button" data-save="atlantic">${icon("save", 16)} Enregistrer</button>
-        <button class="btn" type="button" id="discover">${icon("search", 16)} Voir le compte Atlantic</button>
-        <button class="btn" type="button" data-sync>${icon("refresh", 16)} Synchroniser</button>
-      </div>
     </details>
 
     <details class="stack brand-panel" style="margin-top:18px">
@@ -817,7 +765,6 @@ function devicesSection() {
       </details>
       <div class="row wrap" style="gap:8px;margin-top:4px">
         <button class="btn" type="button" id="wiserImportPrograms">${icon("download", 16)} Import programmes</button>
-        <button class="btn btn-primary" type="button" data-save="wiser">${icon("save", 16)} Enregistrer</button>
       </div>
     </details>
     ${connectorPanels(cfg_)}` ,
@@ -1037,8 +984,7 @@ function pronoteSection() {  const c = cfg();
       </label>
     </div>
     <div class="hint" id="pronoteTestResult"></div>`,
-    `<button class="btn" type="button" data-test="pronote">${icon("shield", 16)} Tester la connexion</button>
-     <button class="btn btn-primary" type="button" data-save="pronote">${icon("save", 16)} Enregistrer</button>`
+    `<button class="btn" type="button" data-test="pronote">${icon("shield", 16)} Tester la connexion</button>`
   );
 }
 
@@ -1076,8 +1022,7 @@ function weatherSection() {
         <input class="input" data-key="weather_longitude" data-number type="number" min="-180" max="180" step="0.0001" value="${escapeHtml(c.weather_longitude ?? 2.3522)}">
       </label>
     </div>
-    <p class="hint">Astuce : clique droit sur ta maison dans une carte, « Copier les coordonnées ».</p>`,
-    `<button class="btn btn-primary" type="button" data-save="weather">${icon("save", 16)} Enregistrer</button>`
+    <p class="hint">Astuce : clique droit sur ta maison dans une carte, « Copier les coordonnées ».</p>`
   );
 }
 
@@ -1178,8 +1123,7 @@ function energySection() {
           <button class="btn" type="button" data-test="energy" data-provider="consoapi">${icon("shield", 16)} Tester la connexion</button>
         </div>
       </div>
-    </details>`,
-    `<button class="btn btn-primary" type="button" data-save="energy">${icon("save", 16)} Enregistrer</button>`
+    </details>`
   );
 }
 
@@ -1214,8 +1158,7 @@ function storageSection() {
         <button class="btn btn-sm" type="button" id="storageFlush">${icon("save", 14)} Forcer l'écriture</button>
       </div>
       <div id="storageInfo" class="stack"></div>
-    </div>`,
-    `<button class="btn btn-primary" type="button" data-save="storage">${icon("save", 16)} Enregistrer</button>`
+    </div>`
   );
 }
 
@@ -1306,8 +1249,7 @@ function serverSection() {
       <summary class="card-title summary-row" style="cursor:pointer">${icon("refresh", 16)} Mise à jour</summary>
       <div style="margin-top:8px">${updateSection()}</div>
     </details>
-    </div>` ,
-    `<button class="btn btn-primary" type="button" data-save="server">${icon("save", 16)} Enregistrer</button>`
+    </div>`
   );
 }
 
@@ -1361,8 +1303,7 @@ function tailscaleSection() {
         <button class="btn btn-sm" type="button" id="tsInstall">${icon("download", 14)} Installer / désinstaller</button>
       </div>
       <p class="hint mt-2">« Dépublier » coupe l'accès via l'URL HTTPS : pour republier depuis un autre appareil, ouvre eCasa sur le réseau local (port 8780).</p>
-    </div>`,
-    `<button class="btn btn-primary" type="button" data-save="tailscale">${icon("save", 16)} Enregistrer</button>`
+    </div>`
   );
 }
 
@@ -1603,9 +1544,33 @@ function bind() {
     });
   });
 
-  root.querySelectorAll("[data-save]").forEach((button) => {
-    button.addEventListener("click", () => saveSection(button.dataset.save, button));
-  });
+  // Enregistrement automatique : plus de bouton « Enregistrer » dans les
+  // sections. On sauvegarde à la validation du champ (change), avec un
+  // anti-rebond pour les champs numériques/textes.
+  for (const name of [
+    "engine",
+    "weeks",
+    "school",
+    "weather",
+    "energy",
+    "storage",
+    "server",
+    "pronote",
+    "devices",
+  ]) {
+    const container = root.querySelector(`#sec-${name}`);
+    if (!container) continue;
+    container.addEventListener("change", (event) => {
+      // Les interrupteurs de marque ont leur propre logique (appareils).
+      if (event.target.closest("[data-brand-toggle], [data-connector-enabled]")) {
+        return;
+      }
+      // Évite le double enregistrement des sous-sections du serveur
+      // (moteur, stockage, Tailscale sont imbriqués dans #sec-server).
+      event.stopPropagation();
+      scheduleAutoSave(name);
+    });
+  }
 
   root.querySelector('[data-key="school_zone"]')?.addEventListener("change", () => {
     loadSchoolCalendar();
@@ -1649,7 +1614,10 @@ function bind() {
   root.querySelectorAll("#energyProviderPicker [data-provider]").forEach((button) => {
     button.addEventListener("click", () => {
       const value = button.dataset.provider;
-      if (energyProviderInput) energyProviderInput.value = value;
+      if (energyProviderInput) {
+        energyProviderInput.value = value;
+        energyProviderInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       root.querySelectorAll("#energyProviderPicker [data-provider]").forEach((item) =>
         item.classList.toggle("is-active", item === button)
       );
@@ -1784,7 +1752,10 @@ root.querySelector("#tsInstall")?.addEventListener("click", () => {
   root.querySelector("#hostPicker")?.querySelectorAll("[data-host]").forEach((button) => {
     button.addEventListener("click", () => {
       const input = root.querySelector('#sec-server [data-key="host"]');
-      if (input) input.value = button.dataset.host;
+      if (input) {
+        input.value = button.dataset.host;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       root.querySelectorAll("#hostPicker [data-host]").forEach((item) => item.classList.toggle("is-active", item === button));
     });
   });
@@ -1794,7 +1765,21 @@ root.querySelector("#tsInstall")?.addEventListener("click", () => {
 
 /* --------------------------------------------------------------- save */
 
-async function saveSection(name, button) {
+const autoSaveTimers = new Map();
+
+/** Enregistre une section peu après le dernier changement (anti-rebond). */
+function scheduleAutoSave(name) {
+  const previous = autoSaveTimers.get(name);
+  if (previous) clearTimeout(previous);
+  const timer = setTimeout(() => {
+    autoSaveTimers.delete(name);
+    if (!root || !root.isConnected) return;
+    saveSection(name, null, { silent: true });
+  }, 400);
+  autoSaveTimers.set(name, timer);
+}
+
+async function saveSection(name, button, { silent = false } = {}) {
   if (!root) return;
   const container = root.querySelector(`#sec-${name}`);
   if (!container) return;
@@ -1811,16 +1796,8 @@ async function saveSection(name, button) {
       };
       const payload = await put("/api/settings", settings);
       if (store.state) store.state.settings = payload.settings;
-      toast("Moteur mis à jour.");
+      if (!silent) toast("Moteur mis à jour.");
       paintEngineState();
-    } else if (name === "climate") {
-      const settings = {
-        atlantic_fan_default: container.querySelector('[data-key="atlantic_fan_default"]')?.value || "",
-        atlantic_airflow_default: container.querySelector('[data-key="atlantic_airflow_default"]')?.value || "",
-      };
-      const payload = await put("/api/settings", settings);
-      if (store.state) store.state.settings = payload.settings;
-      toast("Réglages de la clim enregistrés.");
     } else if (name === "weeks") {
       const settings = {
         week_mode: container.querySelector('[data-key="week_mode"]')?.value || "parity",
@@ -1838,7 +1815,7 @@ async function saveSection(name, button) {
       const payload = await put("/api/settings", settings);
       if (store.state) store.state.settings = payload.settings;
       await refreshState({ silent: true });
-      toast("Alternance des semaines enregistrée.");
+      if (!silent) toast("Alternance des semaines enregistrée.");
     } else {
       const body = collect(container);
       if (name === "devices") {
@@ -1891,6 +1868,19 @@ async function saveSection(name, button) {
       }
       const payload = await put("/api/config", body);
       store.config = payload.config;
+      if (name === "devices") {
+        // Soufflerie / orientation sont des *settings* du moteur, pas des
+        // clés de config.json : elles se sauvegardent via /api/settings.
+        const fan = container.querySelector('[data-key="atlantic_fan_default"]');
+        const airflow = container.querySelector('[data-key="atlantic_airflow_default"]');
+        if (fan || airflow) {
+          const settings = {};
+          if (fan) settings.atlantic_fan_default = fan.value || "";
+          if (airflow) settings.atlantic_airflow_default = airflow.value || "";
+          const settingsPayload = await put("/api/settings", settings);
+          if (store.state) store.state.settings = settingsPayload.settings;
+        }
+      }
       if (name === "energy") {
         const clear = container.querySelector('[data-key="med_token_clear"]');
         if (clear) clear.checked = false;
@@ -1899,7 +1889,7 @@ async function saveSection(name, button) {
       await refreshSystem({ silent: true });
       renderStorage();
       renderSystem();
-      toast("Réglages enregistrés.");
+      if (!silent) toast("Réglages enregistrés.");
       if (name === "weather") window.refreshWeather?.();
       if (name === "tailscale") await loadTailscale();
       if (name === "update") await loadUpdate();
@@ -2085,10 +2075,16 @@ async function findWiser(event) {
       useButton.addEventListener("click", () => {
         const hostInput = root.querySelector('#sec-wiser [data-key="wiser_host"]');
         const secretInput = root.querySelector('#sec-wiser [data-key="wiser_secret"]');
-        if (hostInput) hostInput.value = `http://${useButton.dataset.useWiser}`;
+        if (hostInput) {
+          hostInput.value = `http://${useButton.dataset.useWiser}`;
+          hostInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
         const secret = candidates[index]?.secret;
-        if (secretInput && secret) secretInput.value = secret;
-        toast("Hub renseigné. Pense à enregistrer.", { type: "info" });
+        if (secretInput && secret) {
+          secretInput.value = secret;
+          secretInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        toast("Hub renseigné.", { type: "info" });
         closeSheet();
       });
     });
@@ -2213,10 +2209,19 @@ async function searchWeatherCity() {
         const latInput = root.querySelector('#sec-weather [data-key="weather_latitude"]');
         const lonInput = root.querySelector('#sec-weather [data-key="weather_longitude"]');
         const cityInput = root.querySelector('#sec-weather [data-key="weather_city"]');
-        if (latInput) latInput.value = lat;
-        if (lonInput) lonInput.value = lon;
-        if (cityInput && useButton.dataset.cityName) cityInput.value = useButton.dataset.cityName;
-        toast("Ville et coordonnées remplies. Pense à enregistrer.", { type: "info" });
+        if (latInput) {
+          latInput.value = lat;
+          latInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        if (lonInput) {
+          lonInput.value = lon;
+          lonInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        if (cityInput && useButton.dataset.cityName) {
+          cityInput.value = useButton.dataset.cityName;
+          cityInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        toast("Ville et coordonnées remplies.", { type: "info" });
       });
     });
   } catch (err) {
