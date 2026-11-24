@@ -465,6 +465,7 @@ class Engine:
                 "mode_raw": "4",
                 "temp": temp,
                 "ambient": ambient,
+                "humidity": room_data.get("humidity"),
                 "has_room_stat": room_data.get("has_room_stat", False),
                 "available": bool(self.wiser_rooms),
             }
@@ -501,6 +502,7 @@ class Engine:
 
         # Vérification si un thermostat d'ambiance Wiser est associé pour la température
         wiser_ambient = None
+        wiser_humidity = None
         wiser_sensor_name = None
         sensor_dev_id = device.get("temp_sensor_device_id")
         if sensor_dev_id:
@@ -510,6 +512,7 @@ class Engine:
                 with self._lock:
                     w_room = self.wiser_rooms.get(wiser_room_id, {})
                 wiser_ambient = w_room.get("temp")
+                wiser_humidity = w_room.get("humidity")
                 wiser_sensor_name = sensor_dev.get("name")
 
         return {
@@ -520,6 +523,7 @@ class Engine:
             "temp": _as_float(caps.get(self.setpoint_cap(device, mode))),
             "ambient": ambient_split,
             "wiser_ambient": wiser_ambient,
+            "wiser_humidity": wiser_humidity,
             "wiser_sensor_name": wiser_sensor_name,
             "prog": _mode_value(caps.get(prog_cap)) if prog_cap else None,
             "fan": fan_name,

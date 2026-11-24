@@ -219,8 +219,16 @@ export function roomSummary(state, room) {
     .map((d) => (d.desired ? Number(d.desired.temp) : null))
     .filter((value) => Number.isFinite(value));
 
+  // Humidité relative : uniquement les appareils qui en exposent une (Wiser).
+  const humidities = devices
+    .map((d) => Number(d.current?.humidity ?? d.current?.wiser_humidity))
+    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100);
+
   const ambient = ambients.length
     ? ambients.reduce((sum, value) => sum + value, 0) / ambients.length
+    : null;
+  const humidity = humidities.length
+    ? humidities.reduce((sum, value) => sum + value, 0) / humidities.length
     : null;
   const target = targets.length ? targets[targets.length - 1] : null;
 
@@ -228,6 +236,7 @@ export function roomSummary(state, room) {
     devices,
     primary,
     ambient,
+    humidity,
     target,
     mode: primary?.desired?.mode || primary?.current?.mode || null,
     source: primary?.source || null,

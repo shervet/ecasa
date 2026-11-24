@@ -443,6 +443,9 @@ function paintRooms() {
     const mode = summary.mode || "off";
     const next = summary.next;
     const override = summary.override;
+    const humidity = Number.isFinite(summary.humidity)
+      ? Math.round(summary.humidity)
+      : null;
     const label = modeLabel(mode, store.meta);
 
     // Indicateurs de liaison : modèle de planning et/ou Pronote.
@@ -488,7 +491,7 @@ function paintRooms() {
             <span class="value">${fmtTemp(summary.ambient)}</span><span class="unit">°C</span>
           </div>
           <div class="room-target" data-goto-room="${room.id}" role="button" tabindex="0" title="Ouvrir le planning de cette pièce">
-            Consigne
+            <span class="room-target-label">Consigne${humidity !== null ? `<span class="room-humidity" title="Humidité relative">${humidity} %</span>` : ""}</span>
             <strong>${fmtTemp(summary.target)} °C</strong>
             ${advanceBadge}
             ${summary.until ? `jusqu'à ${fmtTime(summary.until)}` : next ? `${inWords(next.in_minutes)} → ${fmtTemp(next.temp)} °C` : "planning"}

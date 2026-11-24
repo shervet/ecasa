@@ -1724,6 +1724,19 @@ a.pill-model-link:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.room-humidity {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .room-foot {
   display: flex;
   align-items: center;
@@ -3696,5 +3709,100 @@ details.sub-section > div > .settings-section.card {
 }
 details.sub-section > div > .settings-section.card > .card-head {
   display: none;
+}
+
+/* ------------------------------------------------------- appareils (cadres) */
+
+.device-section {
+  margin-top: 10px;
+}
+
+.device-section > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.device-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.device-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.device-summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.device-summary-title svg {
+  flex: none;
+  color: var(--primary);
+}
+
+.device-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.device-section[data-off] .device-name,
+.device-section[data-off] .device-summary-title svg {
+  color: var(--muted);
+}
+
+.device-body {
+  margin-top: 12px;
+}
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
+}
+
+.device-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.device-meta span {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.device-meta strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }
 

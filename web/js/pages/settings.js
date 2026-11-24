@@ -1277,7 +1277,7 @@ function serverSection() {
     <div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
       <div class="row-between wrap" style="gap:10px">
         <div>
-          <strong style="font-size:13px">Configuration complète</strong>
+          <strong style="font-size:13px">Sauvegarde complète</strong>
           <p class="hint mt-1">Archive ZIP : config.json (clés API et mot de passe inclus), état, énergie et historique.</p>
         </div>
         <div class="row wrap" style="gap:8px">
@@ -1288,9 +1288,6 @@ function serverSection() {
       </div>
     </div>
     <div class="row wrap" style="gap:8px">
-      <button class="btn" type="button" id="exportBtn">${icon("download", 15)} Exporter les données</button>
-      <button class="btn" type="button" id="importBtn">${icon("upload", 15)} Importer</button>
-      <input id="importFile" type="file" accept="application/json,.json" hidden>
       <button class="btn btn-danger" type="button" data-stop>${icon("power", 15)} Arrêter le serveur</button>
     </div>
     <details class="stack sub-section" style="margin-top:18px">
@@ -1765,9 +1762,6 @@ function bind() {
     renderSystem();
   });
 
-  root.querySelector("#exportBtn")?.addEventListener("click", exportData);
-  root.querySelector("#importBtn")?.addEventListener("click", () => root.querySelector("#importFile")?.click());
-  root.querySelector("#importFile")?.addEventListener("change", importData);
   root.querySelector("#configExportBtn")?.addEventListener("click", exportConfigBackup);
   root.querySelector("#configImportBtn")?.addEventListener("click", () => root.querySelector("#configImportFile")?.click());
   root.querySelector("#configImportFile")?.addEventListener("change", importConfigBackup);
@@ -2846,21 +2840,66 @@ function renderDevices() {
       .map((device) => {
         const isWiser = device.device_type === "wiser";
         const isOn = Number(device.enabled) !== 0;
-        const disabled = !isOn;
-        const room = roomName(device.room_id);
+        const room = roomName(device.room_id) || "Sans pièce";
         const ambient = device.current?.ambient ?? device.current?.wiser_ambient;
-        return row(
-          `${escapeHtml(device.name)} <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>`,
-          `${escapeHtml(room || "Sans pièce")} · ${fmtTemp(ambient)} °C
-            · plage ${fmtTemp(device.temp_min ?? (device.device_type === "wiser" ? 0 : 16))}–${fmtTemp(device.temp_max ?? 30)} °C
-            · hors gel ${fmtTemp(device.frost_temp ?? (isWiser ? 10 : 16))} °C${isWiser ? "" : ` (${modeLabel(device.frost_mode || "heat", store.meta)})`}
-            ${isOn ? "" : " · pilotage désactivé"}
-            ${device.current?.available === false ? " · hors ligne" : ""}`,
-          `<button class="icon-btn" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}"${disabled ? " disabled" : ""}>${icon("edit", 18)}</button>
-           <button class="icon-btn" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}"${disabled ? " disabled" : ""}>${icon("trash", 18)}</button>`,
-          false,
-          disabled ? "is-off-row" : ""
-        );
+        const humidity = device.current?.humidity ?? device.current?.wiser_humidity;
+        const humidityLabel = Number.isFinite(Number(humidity))
+          ? ` · ${Math.round(Number(humidity))} %`
+          : "";
+        const tempMin = device.temp_min ?? (isWiser ? 0 : 16);
+        const tempMax = device.temp_max ?? 30;
+        const frostTemp = device.frost_temp ?? (isWiser ? 10 : 16);
+        const frostMode = isWiser
+          ? "Hors gel"
+          : modeLabel(device.frost_mode || "heat", store.meta);
+        const sensor = !isWiser && device.temp_sensor_device_id
+          ? (state.devices || []).find(
+              (item) =>
+                Number(item.device_id) === Number(device.temp_sensor_device_id)
+            )
+          : null;
+        const status = !isOn
+          ? { label: "Désactivé", cls: "pill-ghost" }
+          : device.current?.available === false
+            ? { label: "Hors ligne", cls: "pill-warn" }
+            : { label: "Actif", cls: "pill-ok" };
+
+        const meta = (label, value) => `
+          <div class="device-meta">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>`;
+
+        return `
+          <details class="sub-section device-section"${isOn ? "" : " data-off"}>
+            <summary class="device-summary">
+              <span class="device-summary-title">
+                ${icon(isWiser ? "hub" : "fan", 16)}
+                <span class="device-name">${escapeHtml(device.name)}</span>
+                <span class="pill ${isWiser ? "pill-accent" : "pill-ghost"}">${isWiser ? "Wiser" : "Atlantic"}</span>
+              </span>
+              <span class="device-summary-meta">
+                ${escapeHtml(room)} · ${ambient == null ? "—" : `${fmtTemp(ambient)} °C${humidityLabel}`}
+                <span class="pill ${status.cls}">${status.label}</span>
+              </span>
+            </summary>
+            <div class="device-body">
+              <div class="device-grid">
+                ${meta("Pièce", room)}
+                ${meta("Température", ambient == null ? "—" : `${fmtTemp(ambient)} °C${humidityLabel}`)}
+                ${meta("Plage", `${fmtTemp(tempMin)}–${fmtTemp(tempMax)} °C`)}
+                ${meta("Hors gel", `${fmtTemp(frostTemp)} °C (${frostMode})`)}
+                ${isWiser
+                  ? meta("Zone Wiser", String(device.wiser_room_id ?? "—"))
+                  : meta("Capteur dédié", sensor?.name || "Aucun (sonde de l'appareil)")}
+                ${meta("Identifiant", String(device.device_id))}
+              </div>
+              <div class="device-actions">
+                <button class="btn btn-sm" type="button" data-edit-device="${device.device_id}" aria-label="Modifier ${escapeHtml(device.name)}">${icon("edit", 15)} Modifier</button>
+                <button class="btn btn-sm btn-danger" type="button" data-delete-device="${device.device_id}" aria-label="Retirer ${escapeHtml(device.name)}">${icon("trash", 15)} Retirer</button>
+              </div>
+            </div>
+          </details>`;
       })
       .join("");
 
@@ -3233,54 +3272,6 @@ function fileToBase64(file) {
     };
     reader.readAsDataURL(file);
   });
-}
-
-async function exportData(event) {
-  const button = event.currentTarget;
-  button.disabled = true;
-  try {
-    const payload = await get("/api/export");
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `ecasa-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    toast("Sauvegarde téléchargée.");
-  } catch (err) {
-    toastError(err);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function importData(event) {
-  const input = event.currentTarget;
-  const file = input.files?.[0];
-  if (!file) return;
-
-  try {
-    const text = await file.text();
-    const payload = JSON.parse(text);
-    if (!confirm("Importer cette sauvegarde ? Les données actuelles seront remplacées.")) {
-      input.value = "";
-      return;
-    }
-    await post("/api/import", payload);
-    await refreshState({ silent: true });
-    await refreshConfig({ silent: true });
-    renderRooms();
-    renderDevices();
-    renderStorage();
-    toast("Sauvegarde importée.");
-  } catch (err) {
-    toastError(err);
-  } finally {
-    input.value = "";
-  }
 }
 
 async function restartServer(button) {

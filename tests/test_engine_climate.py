@@ -820,6 +820,45 @@ class NextChangeWeekBoundaryTests(unittest.TestCase):
         self.assertEqual(upcoming.slot["temp"], 15.0)
 
 
+class WiserHumidityTests(unittest.TestCase):
+    """L'humidité de la zone Wiser remonte dans le snapshot de l'appareil."""
+
+    def test_wiser_current_exposes_humidity(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Salon (Wiser)")
+        store.update_device(
+            9001, {"device_type": "wiser", "wiser_room_id": 1}
+        )
+        engine = Engine(store, FakeClient())
+        engine.wiser_rooms = {1: {"setpoint": 20.0, "temp": 21.0, "humidity": 48.0}}
+
+        current = engine.current(9001)
+
+        self.assertEqual(current["humidity"], 48.0)
+        self.assertEqual(current["ambient"], 21.0)
+
+    def test_atlantic_bridge_exposes_wiser_humidity(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Salon (Wiser)")
+        store.update_device(9001, {"device_type": "wiser", "wiser_room_id": 1})
+        store.upsert_device(28129468, "Clim")
+        store.update_device(
+            28129468,
+            {
+                "device_type": "atlantic",
+                "cap_mode": 7,
+                "cap_setpoint": 40,
+                "temp_sensor_device_id": 9001,
+            },
+        )
+        engine = Engine(store, FakeClient())
+        engine.wiser_rooms = {1: {"setpoint": 20.0, "temp": 21.0, "humidity": 47.5}}
+
+        current = engine.current(28129468)
+
+        self.assertEqual(current["wiser_humidity"], 47.5)
+
+
 if __name__ == "__main__":
     unittest.main()
 

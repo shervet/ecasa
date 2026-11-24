@@ -107,6 +107,35 @@ def _setpoint_celsius(value):
     return round(number, 1)
 
 
+def _humidity_percent(value):
+    """Humidite relative en %, ou None si absente ou hors plage.
+
+    Les thermostats Wiser exposent ``MeasuredHumidity`` en pourcentage. Certains
+    firmwares renvoient des dixiemes (450 -> 45 %) : on normalise sans jamais
+    afficher une valeur aberrante.
+    """
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    if number > 100:
+        # Certains firmwares renvoient des dixiemes (455 -> 45,5 %) ou des
+        # centiemes (4800 -> 48 %). Une valeur brute > 100 % n'a pas de sens.
+        if number <= 1000:
+            number = number / 10.0
+        elif number <= 10000:
+            number = number / 100.0
+        else:
+            return None
+    if not 0 <= number <= 100:
+        return None
+    return round(number, 1)
+
+
 def _extract_points(raw):
     """Extrait la liste des points d'une journee, quel que soit l'emballage."""
     if raw is None:
@@ -326,12 +355,24 @@ class WiserClient:
             calc_temp = r.get("CalculatedTemperature")
             setpoint = r.get("CurrentSetPoint")
             stat_id = r.get("RoomStatId")
+            stat = room_stats.get(stat_id) or {}
+
+            # L'humidite vient du thermostat d'ambiance quand il en expose une ;
+            # sinon certains firmwares la placent directement sur la piece.
+            humidity = _humidity_percent(
+                _first(stat, "MeasuredHumidity", "Humidity", "RelativeHumidity")
+            )
+            if humidity is None:
+                humidity = _humidity_percent(
+                    _first(r, "Humidity", "RelativeHumidity", "MeasuredHumidity")
+                )
 
             rooms.append({
                 "id": room_id,
                 "name": r.get("Name", f"Pièce {room_id}"),
                 "temp": round(calc_temp / 10.0, 1) if calc_temp and calc_temp != -32768 else None,
                 "setpoint": round(setpoint / 10.0, 1) if setpoint and setpoint != -32768 else None,
+                "humidity": humidity,
                 "mode": r.get("Mode", "Auto"),
                 "has_room_stat": bool(stat_id and stat_id in room_stats),
                 "heating_rate": r.get("HeatingRate", 0),
@@ -435,6 +476,7 @@ class MockWiserClient:
                 "name": "Salon (Thermostat Wiser)",
                 "temp": 21.4,
                 "setpoint": 20.0,
+                "humidity": 52.0,
                 "mode": "Auto",
                 "has_room_stat": True,
                 "schedule_id": 1,
@@ -444,6 +486,7 @@ class MockWiserClient:
                 "name": "Chambre Parentale",
                 "temp": 19.1,
                 "setpoint": 18.0,
+                "humidity": 47.0,
                 "mode": "Auto",
                 "has_room_stat": False,
                 "schedule_id": 2,
@@ -453,6 +496,7 @@ class MockWiserClient:
                 "name": "Bureau / Chambre 2",
                 "temp": 19.6,
                 "setpoint": 19.0,
+                "humidity": 55.0,
                 "mode": "Auto",
                 "has_room_stat": False,
                 "schedule_id": 3,
