@@ -492,10 +492,15 @@ function paintRooms() {
             <span class="value">${fmtTemp(summary.ambient)}</span><span class="unit">°C</span>
           </div>
           <div class="room-target" data-goto-room="${room.id}" role="button" tabindex="0" title="Ouvrir le planning de cette pièce">
-            <span class="room-target-label">Consigne${humidity !== null ? `<span class="room-humidity" title="Humidité relative">${humidity} %</span>` : ""}</span>
-            <strong>${fmtTemp(summary.target)} °C</strong>
-            ${advanceBadge}
-            ${summary.until ? `jusqu'à ${fmtTime(summary.until)}` : next ? `${inWords(next.in_minutes)} → ${fmtTemp(next.temp)} °C` : "planning"}
+            <span class="room-target-label">Consigne</span>
+            <span class="room-target-value">
+              <strong>${fmtTemp(summary.target)} °C</strong>
+              ${humidity !== null ? `<span class="room-humidity" title="Humidité relative">${humidity} %</span>` : ""}
+            </span>
+            <span class="room-target-meta">
+              ${advanceBadge}
+              ${summary.until ? `jusqu'à ${fmtTime(summary.until)}` : next ? `${inWords(next.in_minutes)} → ${fmtTemp(next.temp)} °C` : "planning"}
+            </span>
           </div>
         </div>
 
