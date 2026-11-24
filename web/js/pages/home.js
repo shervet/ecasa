@@ -489,13 +489,15 @@ function paintRooms() {
 
         <div class="room-main">
           <div class="room-temp" data-cal-room="${room.id}" role="button" tabindex="0" title="Voir le planning de la semaine">
-            <span class="value">${fmtTemp(summary.ambient)}</span><span class="unit">°C</span>
+            <span class="room-temp-line">
+              <span class="value">${fmtTemp(summary.ambient)}</span><span class="unit">°C</span>
+            </span>
+            ${humidity !== null ? `<span class="room-humidity" title="Humidité relative">${humidity} %</span>` : ""}
           </div>
           <div class="room-target" data-goto-room="${room.id}" role="button" tabindex="0" title="Ouvrir le planning de cette pièce">
             <span class="room-target-label">Consigne</span>
             <span class="room-target-value">
               <strong>${fmtTemp(summary.target)} °C</strong>
-              ${humidity !== null ? `<span class="room-humidity" title="Humidité relative">${humidity} %</span>` : ""}
             </span>
             <span class="room-target-meta">
               ${advanceBadge}
