@@ -11,10 +11,11 @@ import models from "./pages/models.js";
 import stats from "./pages/stats.js";
 import settings from "./pages/settings.js";
 import logs from "./pages/logs.js";
+import health from "./pages/health.js";
 
 // Le journal n'est plus dans le menu principal : il s'ouvre depuis
 // Réglages → Journal (route #/logs conservée).
-const PAGES = { home, planning, models, stats, settings, logs };
+const PAGES = { home, planning, models, stats, settings, logs, health };
 
 const NAV = [
   { id: "home", label: "Accueil", icon: "home" },
@@ -188,6 +189,10 @@ function updateChrome() {
 
   const dot = $("#statusDot");
   const label = $("#statusLabel");
+    dot.addEventListener("click", () => {
+      location.hash = "#/health";
+    });
+    dot.style.cursor = "pointer";
   if (dot && label) {
     dot.classList.remove("is-ok", "is-warn", "is-bad");
     if (!store.connected) {
@@ -283,7 +288,7 @@ function setupInstall() {
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("/sw.js?v=106", { updateViaCache: "none" })
+        .register("/sw.js?v=107", { updateViaCache: "none" })
         .catch((err) => {
           console.warn("[ecasa] service worker", err);
         });

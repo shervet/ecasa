@@ -3263,20 +3263,190 @@ def _process_rss() -> int | None:
         return None
 
 
-def system_info(store: MemoryStore, engine: Engine, config: dict) -> dict:
+def _disk_info() -> dict | None:
     data_dir = str(DATA_DIR)
-    disk = None
     try:
         usage = shutil.disk_usage(data_dir if os.path.isdir(data_dir) else str(ROOT))
-        disk = {
-            "path": data_dir,
-            "total": usage.total,
-            "used": usage.used,
-            "free": usage.free,
-            "percent": round(100 * usage.used / usage.total, 1) if usage.total else 0,
-        }
     except OSError:
+        return None
+    return {
+        "path": data_dir,
+        "total": usage.total,
+        "used": usage.used,
+        "free": usage.free,
+        "percent": round(100 * usage.used / usage.total, 1) if usage.total else 0,
+    }
+
+
+def _system_uptime_seconds() -> int | None:
+    try:
+        if os.path.isfile("/proc/uptime"):
+            raw = Path("/proc/uptime").read_text(encoding="utf-8").strip()
+            first = raw.split()[0]
+            return max(0, int(float(first)))
+    except Exception:  # noqa: BLE001
         pass
+    try:
+        import psutil  # type: ignore
+        boot = float(psutil.boot_time())
+        return max(0, int(time.time() - boot))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_POWER_STATUS_CACHE_LOCK = threading.Lock()
+_POWER_STATUS_CACHE = {"ts": 0.0, "data": None}
+_POWER_STATUS_CACHE_TTL = 12.0
+
+
+def _power_status_uncached() -> dict:
+    result = {
+        "supported": False,
+        "raw": None,
+        "undervoltage_history": False,
+        "incidents": [],
+        "ok": True,
+    }
+    try:
+        cmd = subprocess.run(
+            ["vcgencmd", "get_throttled"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return result
+    if cmd.returncode != 0:
+        return result
+    text = str(cmd.stdout or "").strip()
+    if not text:
+        return result
+    raw = text
+    if "=" in text:
+        raw = text.split("=", 1)[1].strip()
+    try:
+        value = int(raw, 16) if raw.lower().startswith("0x") else int(raw)
+    except ValueError:
+        return result
+    incidents = []
+    if value & (1 << 0):
+        incidents.append("Sous-tension en cours")
+    if value & (1 << 1):
+        incidents.append("Sous-tension détectée fréquemment")
+    if value & (1 << 16):
+        incidents.append("Historique : sous-tension détectée")
+    if value & (1 << 17):
+        incidents.append("Historique : throttling fréquent")
+    if value & (1 << 18):
+        incidents.append("Historique : limite de température atteinte")
+    if value & (1 << 19):
+        incidents.append("Throttling en cours")
+    result["supported"] = True
+    result["raw"] = f"0x{value:x}"
+    result["undervoltage_history"] = bool(
+        value & ((1 << 0) | (1 << 1) | (1 << 16))
+    )
+    result["incidents"] = incidents
+    result["ok"] = len(incidents) == 0
+    return result
+
+
+def power_status_snapshot() -> dict:
+    now = time.time()
+    with _POWER_STATUS_CACHE_LOCK:
+        cached = _POWER_STATUS_CACHE["data"]
+        if (
+            cached is not None
+            and now - float(_POWER_STATUS_CACHE["ts"] or 0.0) < _POWER_STATUS_CACHE_TTL
+        ):
+            return dict(cached)
+    fresh = _power_status_uncached()
+    with _POWER_STATUS_CACHE_LOCK:
+        _POWER_STATUS_CACHE["ts"] = now
+        _POWER_STATUS_CACHE["data"] = fresh
+    return dict(fresh)
+
+
+def _token_expires_in(client) -> int | None:
+    getter = getattr(client, "token_expires_in", None)
+    if not callable(getter):
+        return None
+    try:
+        value = getter()
+    except Exception:  # noqa: BLE001
+        return None
+    if value is None:
+        return None
+    try:
+        remaining = int(value)
+    except (TypeError, ValueError):
+        return None
+    return remaining if remaining >= 0 else 0
+
+
+def _services_health_snapshot(app, config: dict) -> dict:
+    state = load_sync_state()
+    pronote_day = str(state.get("pronote") or "").strip() or None
+    today = date.today().isoformat()
+    last_poll = (
+        app.engine.last_poll.isoformat(timespec="seconds")
+        if getattr(app.engine, "last_poll", None)
+        else None
+    )
+    running = bool(
+        getattr(app.engine, "_thread", None)
+        and app.engine._thread.is_alive()  # type: ignore[union-attr]
+    )
+    return {
+        "engine": {
+            "running": running,
+            "mock": bool(getattr(app.engine, "mock", False)),
+            "last_poll": last_poll,
+        },
+        "pronote": {
+            "last_sync_day": pronote_day,
+            "is_today": bool(pronote_day == today) if pronote_day else False,
+            "pronote_enabled": pronote_enabled(config),
+            "pronote_auto_enabled": pronote_auto_enabled(config),
+            "pronote_sync_minutes": pronote_sync_minutes(config),
+        },
+        "tokens": {
+            "atlantic": {
+                "expires_in_secondes": _token_expires_in(
+                    getattr(app.engine, "client", None)
+                )
+            }
+        },
+    }
+
+
+def health_snapshot(app, config: dict) -> dict:
+    return {
+        "ok": True,
+        "app": {
+            "version": __version__,
+            "uptime": int(time.time() - START_TS),
+            "started_at": datetime.fromtimestamp(START_TS).isoformat(
+                timespec="seconds"
+            ),
+            "pid": os.getpid(),
+            "mock": bool(getattr(app.engine, "mock", False)),
+        },
+        "system": {
+            "uptime": _system_uptime_seconds(),
+            "memory": _memory_info(),
+            "disk": _disk_info(),
+            "cpu_temp": _read_cpu_temp(),
+        },
+        "power": power_status_snapshot(),
+        "services": _services_health_snapshot(app, config),
+        "storage": app.store.storage_info(),
+        "update": update_state_snapshot(),
+    }
+
+
+def system_info(store: MemoryStore, engine: Engine, config: dict) -> dict:
     return {
         "app": {
             "name": APP_NAME,
@@ -3294,7 +3464,7 @@ def system_info(store: MemoryStore, engine: Engine, config: dict) -> dict:
         },
         "memory": _memory_info(),
         "process_rss": _process_rss(),
-        "disk": disk,
+        "disk": _disk_info(),
         "storage": store.storage_info(),
         "engine": {
             "running": bool(engine._thread and engine._thread.is_alive()),
@@ -3630,6 +3800,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and path == "/api/health":
             self._json(200, {"ok": True, "app": APP_NAME, "version": __version__})
+            return
+
+        if method == "GET" and path == "/api/system/health":
+            self._json(200, health_snapshot(app, load_config()))
             return
 
         if method == "GET" and path == "/api/weather":

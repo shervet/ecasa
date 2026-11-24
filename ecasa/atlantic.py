@@ -282,6 +282,13 @@ class AtlanticClient:
     def close(self) -> None:
         self._token = None
 
+    def token_expires_in(self) -> int | None:
+        """Durée restante du token (secondes), ou ``None`` si inconnu."""
+        if not self._token or self._expires_at <= 0:
+            return None
+        remaining = int(self._expires_at - time.time())
+        return remaining if remaining > 0 else 0
+
 
 class MockAtlanticClient:
     """Compte simule : permet de tester l'interface sans identifiants.
@@ -381,3 +388,6 @@ class MockAtlanticClient:
 
     def close(self) -> None:
         pass
+
+    def token_expires_in(self) -> int | None:
+        return None
