@@ -10,14 +10,32 @@ import { refreshState, roomSummary, store, subscribe } from "../state.js";
 
 let weather = null;
 
-function isAbsent() {
-  return String(store.state?.settings?.presence_mode || "present").toLowerCase() === "absent";
+function presenceInfo() {
+  const state = store.state;
+  if (state?.presence && typeof state.presence === "object") return state.presence;
+  const absent =
+    String(state?.settings?.presence_mode || "present").toLowerCase() === "absent";
+  return { active: absent, reason: absent ? "manual" : "present" };
 }
 
-/** Duo segmenté Présent/Absent : un seul bouton actif, aria-pressed synchronisé. */
+function isAbsent() {
+  return presenceInfo().active === true;
+}
+
+function isVacation() {
+  const presence = presenceInfo();
+  return presence.active === true && presence.reason === "vacation";
+}
+
+/** Trio Présent/Absent/Vacances : un seul bouton actif. */
 function syncPresence() {
   const absent = isAbsent();
-  for (const [id, active] of [["homePresent", !absent], ["homeAbsent", absent]]) {
+  const vacation = isVacation();
+  for (const [id, active] of [
+    ["homePresent", !absent],
+    ["homeAbsent", absent && !vacation],
+    ["homeVacation", vacation],
+  ]) {
     const button = document.getElementById(id);
     if (!button) continue;
     button.classList.toggle("btn-primary", active);
@@ -51,6 +69,7 @@ async function loadWeather() {
 
 import {
   escapeHtml,
+  fmtDate,
   fmtDateLong,
   fmtTemp,
   fmtTime,
@@ -77,7 +96,8 @@ export default {
           </div>
           <div class="page-actions" role="group" aria-label="Présence">
             <button class="btn${absent ? "" : " btn-primary"}" type="button" id="homePresent" aria-pressed="${absent ? "false" : "true"}">Présent</button>
-            <button class="btn${absent ? " btn-primary" : ""}" type="button" id="homeAbsent" aria-pressed="${absent ? "true" : "false"}">Absent</button>
+            <button class="btn${absent && !isVacation() ? " btn-primary" : ""}" type="button" id="homeAbsent" aria-pressed="${absent && !isVacation() ? "true" : "false"}">Absent</button>
+            <button class="btn${isVacation() ? " btn-primary" : ""}" type="button" id="homeVacation" aria-pressed="${isVacation() ? "true" : "false"}">Vacances</button>
           </div>
         </div>
 
@@ -93,12 +113,20 @@ export default {
     const setPresence = async (event) => {
       const button = event.currentTarget;
       const mode = button.id === "homeAbsent" ? "absent" : "present";
-      if (isAbsent() === (mode === "absent")) return;
+      if (button.id === "homeVacation") {
+        openVacationSheet();
+        return;
+      }
+      if (isAbsent() === (mode === "absent") && !isVacation()) return;
       button.disabled = true;
       try {
-        await put("/api/settings", { presence_mode: mode });
+        await put("/api/settings", {
+          presence_mode: mode,
+          absence_start: "",
+          absence_until: "",
+        });
         await refreshState({ silent: true });
-        syncPresence();
+        paint();
       } catch (err) {
         toastError(err);
       } finally {
@@ -107,6 +135,7 @@ export default {
     };
     view.querySelector("#homePresent")?.addEventListener("click", setPresence);
     view.querySelector("#homeAbsent")?.addEventListener("click", setPresence);
+    view.querySelector("#homeVacation")?.addEventListener("click", setPresence);
 
     paint();
     loadWeather().then(() => paint());
@@ -134,6 +163,105 @@ export default {
     paint();
   },
 };
+
+function todayISO() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function openVacationSheet() {
+  const presence = presenceInfo();
+  const start = presence.start || todayISO();
+  const until = presence.until || "";
+  const body = document.createElement("div");
+  body.className = "stack";
+  body.innerHTML = `
+    <p class="hint">La maison passe en hors gel pendant toute la période. Le planning Pronote n'est pas modifié : il reprend automatiquement au retour.</p>
+    <label class="field">
+      <span class="label">Début des vacances</span>
+      <input class="input" type="date" data-vacation-start value="${escapeHtml(start)}">
+    </label>
+    <label class="field">
+      <span class="label">Fin des vacances <span class="opt">incluse</span></span>
+      <input class="input" type="date" data-vacation-until value="${escapeHtml(until)}">
+    </label>
+    <p class="hint" id="vacationError" hidden style="color:var(--bad)"></p>
+  `;
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:8px;width:100%;flex-wrap:wrap";
+  footer.innerHTML = `
+    <button class="btn" type="button" data-vacation-clear>Annuler les vacances</button>
+    <button class="btn btn-primary" type="button" data-vacation-save>Programmer</button>
+  `;
+
+  const sheet = openSheet({
+    title: "Mode vacances",
+    sub: "Absence programmée, avec retour automatique",
+    body,
+    footer,
+  });
+  if (!sheet) return;
+
+  const errorNode = body.querySelector("#vacationError");
+  const showError = (message) => {
+    if (!errorNode) return;
+    errorNode.textContent = message;
+    errorNode.hidden = !message;
+  };
+
+  const save = async (event) => {
+    const startValue = String(body.querySelector("[data-vacation-start]")?.value || "");
+    const untilValue = String(body.querySelector("[data-vacation-until]")?.value || "");
+    if (!startValue) {
+      showError("Choisis une date de début.");
+      return;
+    }
+    if (untilValue && untilValue < startValue) {
+      showError("La fin doit être après le début.");
+      return;
+    }
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await put("/api/settings", {
+        presence_mode: "present",
+        absence_start: startValue,
+        absence_until: untilValue,
+      });
+      await refreshState({ silent: true });
+      paint();
+      sheet.close();
+    } catch (err) {
+      toastError(err);
+    } finally {
+      button.disabled = false;
+    }
+  };
+
+  const clear = async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await put("/api/settings", {
+        presence_mode: "present",
+        absence_start: "",
+        absence_until: "",
+      });
+      await refreshState({ silent: true });
+      paint();
+      sheet.close();
+    } catch (err) {
+      toastError(err);
+    } finally {
+      button.disabled = false;
+    }
+  };
+
+  footer.querySelector("[data-vacation-save]")?.addEventListener("click", save);
+  footer.querySelector("[data-vacation-clear]")?.addEventListener("click", clear);
+}
 
 function paint() {
   syncPresence();
@@ -189,6 +317,11 @@ function paintHero() {
       <div class="row wrap" style="gap:6px">
         ${state.status?.mock ? '<span class="pill pill-warn">Simulation</span>' : '<span class="pill pill-ok">Réel</span>'}
         <span class="pill pill-ghost">${state.status?.running ? "Moteur actif" : "Moteur arrêté"}</span>
+        ${state.presence?.active
+          ? `<span class="pill pill-warn">${state.presence.reason === "vacation"
+              ? `Vacances${state.presence.until ? ` jusqu'au ${fmtDate(state.presence.until)}` : ""}`
+              : "Absent"}</span>`
+          : ""}
         ${weather ? `<button class="pill pill-ghost" type="button" id="weatherToggle" style="cursor:pointer">${icon("cloud", 13)} Extérieur ${fmtTemp(weather.temp)} °C</button>` : ""}
       </div>
     </div>

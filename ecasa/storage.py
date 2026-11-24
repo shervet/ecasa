@@ -49,6 +49,12 @@ DEFAULT_SETTINGS = {
     "atlantic_fan_default": "",       # "" | low | med | high | auto
     "atlantic_airflow_default": "",   # "" | swing | pos1 ... pos6
     "presence_mode": "present",       # present | absent (l'absence domine les overrides)
+    # Fenetre de vacances / absence programmee (dates ISO, fin incluse).
+    # Une fenetre active rend la maison absente sans changer presence_mode.
+    "absence_start": "",
+    "absence_until": "",
+    # Avance maximale du prechauffage intelligent, en minutes.
+    "preheat_max_minutes": "120",
 }
 
 VALID_MODES = ("off", "auto", "cool", "heat", "dry", "fan")
@@ -514,6 +520,7 @@ class MemoryStore:
         allowed = (
             "name", "position", "thermostat_device_id", "actuator_device_id",
             "thermostat_cap_id", "actuator_cap_id", "heating_curve", "curve_fit",
+            "preheat",
         )
         with self._lock:
             room = next(
@@ -534,7 +541,7 @@ class MemoryStore:
                         room["position"] = int(changes["position"])
                     except (TypeError, ValueError) as err:
                         raise ValueError("Position de pièce invalide") from err
-                elif key == "heating_curve":
+                elif key in ("heating_curve", "preheat"):
                     value = changes[key]
                     room[key] = bool(value) if not isinstance(value, str) else value.lower() in ("1", "true", "on", "yes")
                 elif key == "curve_fit":

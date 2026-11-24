@@ -30,7 +30,7 @@ import time
 import zipfile
 from base64 import b64decode
 from binascii import Error as Base64Error
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -50,7 +50,14 @@ from .energy import (
     parse_med_start,
     test_energy,
 )
-from .engine import Engine, _caps, _mode_value, device_name
+from .engine import (
+    Engine,
+    _caps,
+    _mode_value,
+    absence_active,
+    device_name,
+    presence_status,
+)
 from .external_services import _run, restart_external_services
 from .find_wiser import scan_network
 from .pronote import (
@@ -62,6 +69,7 @@ from .pronote import (
     search_schools,
     test_connection as test_pronote_connection,
 )
+from .school_calendar import SchoolCalendar, normalize_zone
 from . import heating_curve
 from .schedule import MODE_LABELS, MODES, WEEKDAY_NAMES, find_slot, week_type
 from .stats import RANGES, annual_temperature, build_stats, parse_anchor
@@ -77,6 +85,19 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
 DATA_DIR = ROOT / "data"
+SCHOOL_CALENDAR_FILE = DATA_DIR / "school_calendar.json"
+
+_school_calendar: SchoolCalendar | None = None
+_school_calendar_lock = threading.Lock()
+
+
+def school_calendar_service() -> SchoolCalendar:
+    """Cache partagé des vacances scolaires (chargé à la première demande)."""
+    global _school_calendar
+    with _school_calendar_lock:
+        if _school_calendar is None:
+            _school_calendar = SchoolCalendar(SCHOOL_CALENDAR_FILE)
+        return _school_calendar
 
 # Sauvegarde/restauration complète : taille maximale de l'archive reçue et
 # de son contenu décompressé (protection contre les zip bombs).
@@ -416,6 +437,12 @@ def public_config(config: dict) -> dict:
             for room_id, values in (config.get("pronote_room_overrides") or {}).items()
             if isinstance(values, dict) and values
         },
+        "school_zone": normalize_zone(config.get("school_zone")),
+        "school_holidays_enabled": _truthy(
+            config.get("school_holidays_enabled"), False
+        ),
+        "school_holiday_plan": str(config.get("school_holiday_plan") or "comfort"),
+        "school_holiday_weeks": str(config.get("school_holiday_weeks") or "both"),
         "connectors": connector_registry.public_settings(config),
         "weather_enabled": bool(config.get("weather_enabled", True)),
         "weather_city": str(config.get("weather_city", "")),
@@ -829,6 +856,24 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
             body.get("pronote_room_overrides")
         )
 
+    # --- Calendrier scolaire (vacances + jours fériés) --------------------
+    if "school_zone" in body:
+        updated["school_zone"] = normalize_zone(body.get("school_zone"))
+    if "school_holidays_enabled" in body:
+        updated["school_holidays_enabled"] = _truthy(
+            body.get("school_holidays_enabled"), False
+        )
+    if "school_holiday_plan" in body:
+        plan = str(body.get("school_holiday_plan") or "comfort").strip().lower()
+        if plan not in ("comfort", "reduced", "absent", "skip"):
+            raise ValueError("Planning de vacances invalide")
+        updated["school_holiday_plan"] = plan
+    if "school_holiday_weeks" in body:
+        weeks = str(body.get("school_holiday_weeks") or "both").strip()
+        if weeks not in ("both", "A", "B", "none"):
+            raise ValueError("Semaines de vacances invalides")
+        updated["school_holiday_weeks"] = weeks
+
     if "connectors" in body:
         updated["connectors"] = connector_registry.merge_settings(
             body.get("connectors"), updated.get("connectors") or {}
@@ -1224,6 +1269,91 @@ def _sync_pronote_links(config: dict, room_id: int, weeks: list[str]) -> None:
             room_days[week] = [False] * 7
 
 
+def school_calendar_context(
+    store: MemoryStore, config: dict, week_start
+) -> tuple[dict[int, dict], list[dict]]:
+    """Jours de vacances / fériés à remplacer dans le planning Pronote.
+
+    Renvoie ``(holiday_days, holidays)`` :
+
+    * ``holiday_days`` : index du jour (0 = lundi) -> état à appliquer ;
+    * ``holidays`` : description lisible pour l'aperçu.
+
+    L'alternance est prise en compte : si l'enfant n'est pas dans la maison
+    pendant cette semaine A/B, le planning existant est conservé (aucune
+    modification). Cela évite de chauffer « comme à l'école » une semaine où
+    l'enfant est chez l'autre parent.
+    """
+    zone = normalize_zone(config.get("school_zone"))
+    if not zone or not _truthy(config.get("school_holidays_enabled"), False):
+        return {}, []
+
+    years = sorted({week_start.year, (week_start + timedelta(days=6)).year})
+    calendar = school_calendar_service()
+    try:
+        calendar.ensure(zone, years)
+    except Exception:  # noqa: BLE001 - calendrier facultatif
+        return {}, []
+
+    settings = store.settings()
+    overrides = store.week_overrides()
+    holiday_plan = str(config.get("school_holiday_plan") or "comfort").lower()
+    holiday_weeks = str(config.get("school_holiday_weeks") or "both")
+    if holiday_weeks not in ("both", "A", "B", "none"):
+        holiday_weeks = "both"
+
+    comfort_mode = str(config.get("pronote_comfort_mode") or "heat")
+    reduced_mode = str(config.get("pronote_reduced_mode") or "heat")
+
+    def _config_temp(key: str, default: float) -> float:
+        try:
+            return float(config.get(key))
+        except (TypeError, ValueError):
+            return default
+
+    comfort_temp = _config_temp("pronote_comfort_temp", 20.0)
+    reduced_temp = _config_temp("pronote_reduced_temp", 16.0)
+
+    holiday_days: dict[int, dict] = {}
+    holidays: list[dict] = []
+    for offset in range(7):
+        day = week_start + timedelta(days=offset)
+        info = calendar.day_info(day, zone)
+        if not info:
+            continue
+        week = week_type(
+            datetime(day.year, day.month, day.day, 12),
+            settings,
+            overrides,
+        )
+        present = holiday_weeks == "both" or week == holiday_weeks
+        holidays.append({
+            "date": day.isoformat(),
+            "name": info.get("name"),
+            "kind": info.get("kind"),
+            "week": week,
+            "present": present,
+        })
+        if not present:
+            # Semaine d'alternance sans l'enfant : on ne touche pas au planning.
+            continue
+        if holiday_plan == "skip":
+            holiday_days[offset] = {"skip": True}
+        elif holiday_plan == "absent":
+            holiday_days[offset] = {"mode": "off", "temp": reduced_temp}
+        elif holiday_plan == "reduced":
+            holiday_days[offset] = {
+                "mode": reduced_mode,
+                "temp": reduced_temp,
+            }
+        else:
+            holiday_days[offset] = {
+                "mode": comfort_mode,
+                "temp": comfort_temp,
+            }
+    return holiday_days, holidays
+
+
 def import_pronote_weeks(
     store: MemoryStore,
     config: dict,
@@ -1277,6 +1407,11 @@ def import_pronote_weeks(
                 # Réglages par pièce : une clim peut être en froid confort alors
                 # que les chambres Wiser restent en chaud.
                 options.update(pronote_room_options(config, target_id))
+            holiday_days, holidays = school_calendar_context(
+                store, config, source_start
+            )
+            options["holiday_days"] = holiday_days
+            options["holiday_names"] = holidays
             plan = build_pronote_plan(config, source_start, options)
             days = plan["days"]
             scopes = _clean_scopes(plan.get("scopes"))
@@ -4148,6 +4283,62 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, state_snapshot(app))
             return
 
+        # --------------------------------------------- calendrier scolaire
+
+        if method == "GET" and path == "/api/school-calendar":
+            config = load_config()
+            query = parse_qs(urlparse(self.path).query)
+            zone = normalize_zone(
+                (query.get("zone") or [""])[0] or config.get("school_zone")
+            )
+            if not zone:
+                self._json(200, {
+                    "zone": "",
+                    "enabled": False,
+                    "ranges": [],
+                    "next": None,
+                })
+                return
+            today = datetime.now().date()
+            years = [today.year, today.year + 1]
+            calendar = school_calendar_service()
+            try:
+                ranges = calendar.ensure(zone, years)
+            except Exception:  # noqa: BLE001
+                ranges = calendar.ranges(zone)
+            self._json(200, {
+                "zone": zone,
+                "enabled": _truthy(config.get("school_holidays_enabled"), False),
+                "ranges": ranges,
+                "next": calendar.next_holiday(today, zone),
+            })
+            return
+
+        if method == "POST" and path == "/api/school-calendar/refresh":
+            body = self._body()
+            config = load_config()
+            zone = normalize_zone(body.get("zone") or config.get("school_zone"))
+            if not zone:
+                self._json(400, {"error": "Zone scolaire invalide (A, B ou C)"})
+                return
+            today = datetime.now().date()
+            years = [today.year, today.year + 1]
+            calendar = school_calendar_service()
+            try:
+                ranges = calendar.refresh(zone, years)
+            except Exception as err:  # noqa: BLE001 - réseau
+                self._json(502, {
+                    "error": f"Calendrier scolaire indisponible : {err}"
+                })
+                return
+            self._json(200, {
+                "ok": True,
+                "zone": zone,
+                "ranges": ranges,
+                "next": calendar.next_holiday(today, zone),
+            })
+            return
+
         # ------------------------------------------- planning depuis Pronote
 
         if method == "POST" and path == "/api/pronote/search":
@@ -4254,6 +4445,11 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             try:
                 monday = parse_week_start(body.get("week"))
+                holiday_days, holidays = school_calendar_context(
+                    app.store, config, monday
+                )
+                options["holiday_days"] = holiday_days
+                options["holiday_names"] = holidays
                 plan = build_pronote_plan(config, monday, options)
             except PronoteError as err:
                 self._json(400, {"error": str(err)})
@@ -4675,6 +4871,51 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 self._json(400, {"error": "Mode de présence invalide"})
                 return
+
+            parsed_days: dict[str, date] = {}
+            for key in ("absence_start", "absence_until"):
+                if key not in body:
+                    continue
+                value = str(body.get(key) or "").strip()
+                if value:
+                    try:
+                        parsed_days[key] = datetime.fromisoformat(value).date()
+                    except ValueError:
+                        self._json(400, {"error": "Date de vacances invalide"})
+                        return
+                    body[key] = parsed_days[key].isoformat()
+                else:
+                    body[key] = ""
+            if (
+                "absence_start" in parsed_days
+                and "absence_until" in parsed_days
+                and parsed_days["absence_until"] < parsed_days["absence_start"]
+            ):
+                self._json(400, {"error": "La fin des vacances précède le début"})
+                return
+
+            if "preheat_max_minutes" in body:
+                try:
+                    preheat = int(body.get("preheat_max_minutes"))
+                except (TypeError, ValueError):
+                    self._json(400, {"error": "Avance de préchauffage invalide"})
+                    return
+                if not 0 <= preheat <= 360:
+                    self._json(400, {
+                        "error": "L'avance de préchauffage doit être entre 0 et 360 minutes"
+                    })
+                    return
+                body["preheat_max_minutes"] = str(preheat)
+
+            # « Présent » annule aussi une éventuelle fenêtre de vacances.
+            if (
+                str(body.get("presence_mode", "")).strip().lower() == "present"
+                and "absence_start" not in body
+                and "absence_until" not in body
+            ):
+                body["absence_start"] = ""
+                body["absence_until"] = ""
+
             settings = app.store.set_settings(body)
             if "week_switch_day" in body:
                 with _config_write_lock:
@@ -4687,7 +4928,15 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     _write_config_locked(config)
                 app.engine.tick(force=True)
-            if "presence_mode" in body:
+            if any(
+                key in body
+                for key in (
+                    "presence_mode",
+                    "absence_start",
+                    "absence_until",
+                    "preheat_max_minutes",
+                )
+            ):
                 app.engine.tick(force=True)
             app.store.flush(force=True)
             self._json(200, {"settings": settings})

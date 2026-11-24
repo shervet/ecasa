@@ -47,7 +47,7 @@ class _ApiHandler(main.Handler):
         self.responses.append((status, payload))
 
 
-class WebApiTests(unittest.TestCase):
+class _ApiTestBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -91,6 +91,8 @@ class WebApiTests(unittest.TestCase):
         handler._api(method, path.split("?", 1)[0])
         return handler.responses[-1]
 
+
+class WebApiTests(_ApiTestBase):
     def test_annual_temperature_endpoint(self):
         status, payload = self.call(
             "GET", "/api/stats/temperature?range=year"
@@ -194,6 +196,91 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("1", payload["links"])
         self.assertEqual(self.store.slots(room_id=1, week="A"), copied)
+
+
+class SchoolApiTests(_ApiTestBase):
+    """Endpoints du calendrier scolaire, des vacances et du préchauffage."""
+
+    def test_absence_window_is_saved_and_cleared(self):
+        status, payload = self.call(
+            "PUT",
+            "/api/settings",
+            {
+                "presence_mode": "present",
+                "absence_start": "2026-10-17",
+                "absence_until": "2026-11-01",
+            },
+        )
+        self.assertEqual(status, 200)
+        settings = payload["settings"]
+        self.assertEqual(settings["absence_start"], "2026-10-17")
+        self.assertEqual(settings["absence_until"], "2026-11-01")
+
+        status, payload = self.call(
+            "PUT", "/api/settings", {"presence_mode": "present"}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["settings"]["absence_start"], "")
+        self.assertEqual(payload["settings"]["absence_until"], "")
+
+    def test_absence_window_rejects_bad_dates(self):
+        status, payload = self.call(
+            "PUT", "/api/settings", {"absence_start": "17/10/2026"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("date", payload["error"].lower())
+
+        status, payload = self.call(
+            "PUT",
+            "/api/settings",
+            {"absence_start": "2026-11-02", "absence_until": "2026-11-01"},
+        )
+        self.assertEqual(status, 400)
+
+    def test_preheat_cap_is_validated(self):
+        status, payload = self.call(
+            "PUT", "/api/settings", {"preheat_max_minutes": "90"}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["settings"]["preheat_max_minutes"], "90")
+
+        status, _payload = self.call(
+            "PUT", "/api/settings", {"preheat_max_minutes": "999"}
+        )
+        self.assertEqual(status, 400)
+
+    def test_school_calendar_endpoint(self):
+        fake = mock.Mock()
+        fake.ensure.return_value = [
+            {"name": "Vacances de la Toussaint", "start": "2026-10-17",
+             "end": "2026-11-02"},
+        ]
+        fake.ranges.return_value = fake.ensure.return_value
+        fake.next_holiday.return_value = {
+            "date": "2026-10-17",
+            "name": "Vacances de la Toussaint",
+            "kind": "school",
+        }
+        with mock.patch.object(
+            main, "school_calendar_service", return_value=fake
+        ):
+            status, payload = self.call("GET", "/api/school-calendar?zone=A")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["zone"], "A")
+        self.assertEqual(len(payload["ranges"]), 1)
+        self.assertEqual(payload["next"]["name"], "Vacances de la Toussaint")
+
+    def test_school_calendar_requires_zone(self):
+        status, payload = self.call("GET", "/api/school-calendar")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["zone"], "")
+
+    def test_room_preheat_toggle_is_persisted(self):
+        room = self.store.add_room("Salon test")
+        updated = self.store.update_room(room["id"], {"preheat": True})
+        self.assertTrue(updated["preheat"])
+        updated = self.store.update_room(room["id"], {"preheat": False})
+        self.assertFalse(updated["preheat"])
 
 
 if __name__ == "__main__":

@@ -177,6 +177,7 @@ export default {
     const navItems = [
       ["appearance", "Apparence"],
       ["weeks", "Semaines A/B"],
+      ["school", "Calendrier scolaire"],
       ["rooms", "Pièces"],
       ["weather", "Météo"],
       ["devices", "Appareils"],
@@ -219,6 +220,7 @@ export default {
         <div class="settings-layout">
           ${appearanceSection()}
           ${weeksSection()}
+          ${schoolSection()}
           ${roomsSection()}
           ${weatherSection()}
           ${devicesSection()}
@@ -239,6 +241,7 @@ export default {
     renderStorage();
     renderSystem();
     await loadWeeks();
+    loadSchoolCalendar();
     await loadTailscale();
     await loadUpdate();
 
@@ -353,6 +356,17 @@ function engineSection() {
       ],
       { sub: "Plus la lecture est fréquente, plus le cloud Atlantic est sollicité." }
     )}
+    ${numberRow(
+      "Avance maximale du préchauffage",
+      "preheat_max_minutes",
+      String(settings.preheat_max_minutes ?? "120"),
+      {
+        sub: "Plafond d'anticipation des montées de consigne, en minutes (0 à 360). 0 désactive le préchauffage.",
+        min: "0",
+        max: "360",
+        step: "5",
+      }
+    )}
     <div class="row wrap" style="gap:8px">
       <span class="pill ${store.state?.status?.mock ? "pill-warn" : "pill-ok"}" id="engineMode">${store.state?.status?.mock ? "Simulation" : "Réel"}</span>
       <span class="pill pill-ghost" id="engineState">${enabled ? "Moteur actif" : "En pause"}</span>
@@ -445,6 +459,95 @@ function weeksSection() {
     </div>`,
     `<button class="btn btn-primary" type="button" data-save="weeks">${icon("save", 16)} Enregistrer</button>`
   );
+}
+
+function schoolSection() {
+  const c = cfg();
+  const zone = String(c.school_zone || "");
+  const enabled = c.school_holidays_enabled === true;
+  const plan = String(c.school_holiday_plan || "comfort");
+  const weeks = String(c.school_holiday_weeks || "both");
+  return section(
+    "school",
+    "Calendrier scolaire",
+    "calendar",
+    `${selectRow(
+      "Zone scolaire",
+      "school_zone",
+      zone,
+      [
+        ["", "Désactivé"],
+        ["A", "Zone A"],
+        ["B", "Zone B"],
+        ["C", "Zone C"],
+      ],
+      {
+        sub: "Les vacances officielles sont téléchargées depuis data.education.gouv.fr puis mises en cache.",
+      }
+    )}
+    ${row(
+      "Suivre les vacances et jours fériés",
+      "Remplace le planning Pronote par une journée à la maison pendant les fermetures.",
+      toggle("school_holidays_enabled", enabled)
+    )}
+    ${selectRow(
+      "Planning des vacances",
+      "school_holiday_plan",
+      plan,
+      [
+        ["comfort", "Confort (journée à la maison)"],
+        ["reduced", "Réduit"],
+        ["absent", "Hors gel"],
+        ["skip", "Ne pas modifier"],
+      ],
+      {
+        sub: "Appliqué aux jours de vacances et aux jours fériés à la place du planning de l'école.",
+      }
+    )}
+    ${selectRow(
+      "Semaines avec l'enfant",
+      "school_holiday_weeks",
+      weeks,
+      [
+        ["both", "Toutes les semaines"],
+        ["A", "Semaine A seulement"],
+        ["B", "Semaine B seulement"],
+        ["none", "Aucune"],
+      ],
+      {
+        sub: "En garde alternée, seules les semaines où l'enfant est présent sont ajustées. Les autres conservent leur planning Pronote.",
+      }
+    )}
+    <div class="row-between wrap" style="gap:10px">
+      <span class="hint" id="schoolNext">Prochaine fermeture : —</span>
+      <button class="btn" type="button" data-school-refresh>${icon("refresh", 16)} Actualiser le calendrier</button>
+    </div>`,
+    `<button class="btn btn-primary" type="button" data-save="school">${icon("save", 16)} Enregistrer</button>`
+  );
+}
+
+async function loadSchoolCalendar() {
+  if (!root) return;
+  const node = root.querySelector("#schoolNext");
+  if (!node) return;
+  const zone = String(
+    root.querySelector('[data-key="school_zone"]')?.value || cfg().school_zone || ""
+  );
+  if (!zone) {
+    node.textContent = "Choisis une zone pour importer les vacances.";
+    return;
+  }
+  try {
+    const payload = await get(
+      `/api/school-calendar?zone=${encodeURIComponent(zone)}`
+    );
+    const next = payload?.next;
+    node.textContent = next
+      ? `Prochaine fermeture : ${next.name} le ${fmtDate(next.date)}`
+      : "Aucune fermeture à venir dans le calendrier.";
+  } catch {
+    node.textContent = "Calendrier indisponible : le cache local reste utilisé.";
+  }
 }
 
 function roomsSection() {
@@ -1507,6 +1610,40 @@ function bind() {
     button.addEventListener("click", () => saveSection(button.dataset.save, button));
   });
 
+  root.querySelector('[data-key="school_zone"]')?.addEventListener("change", () => {
+    loadSchoolCalendar();
+  });
+
+  root.querySelector("[data-school-refresh]")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const zone = String(
+      root.querySelector('[data-key="school_zone"]')?.value || cfg().school_zone || ""
+    );
+    if (!zone) {
+      toastError(new Error("Choisis d'abord une zone scolaire."));
+      return;
+    }
+    button.disabled = true;
+    try {
+      const payload = await post("/api/school-calendar/refresh", { zone });
+      const next = payload?.next;
+      const label = next
+        ? `Calendrier actualisé : ${next.name} le ${fmtDate(next.date)}.`
+        : "Calendrier actualisé.";
+      toast(label);
+      const node = root.querySelector("#schoolNext");
+      if (node) {
+        node.textContent = next
+          ? `Prochaine fermeture : ${next.name} le ${fmtDate(next.date)}`
+          : "Aucune fermeture à venir dans le calendrier.";
+      }
+    } catch (err) {
+      toastError(err);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   root.querySelectorAll("[data-test]").forEach((button) => {
     button.addEventListener("click", () => testConnection(button.dataset.test, button));
   });
@@ -1674,6 +1811,9 @@ async function saveSection(name, button) {
       const settings = {
         engine_enabled: container.querySelector('[data-key="engine_enabled"]')?.checked ? "1" : "0",
         poll_interval: String(container.querySelector('[data-key="poll_interval"]')?.value || "60"),
+        preheat_max_minutes: String(
+          container.querySelector('[data-key="preheat_max_minutes"]')?.value ?? "120"
+        ),
       };
       const payload = await put("/api/settings", settings);
       if (store.state) store.state.settings = payload.settings;
@@ -2431,6 +2571,7 @@ async function openRoomEditor(room) {
     : null;
   const hc = room?.heating_curve;
   const hcEnabled = hc === true || hc?.enabled === true;
+  const preheatEnabled = room?.preheat === true;
   const hcInfo = hc && typeof hc === "object" ? hc : {};
   const hcTable = Array.isArray(hcInfo.table) ? hcInfo.table : [];
   const hcWeatherHint = hcInfo.t_out != null
@@ -2474,6 +2615,11 @@ async function openRoomEditor(room) {
       "Courbe de chauffe",
       "Avance à la consigne, calculée depuis l'historique",
       `<label class="switch" title="Courbe de chauffe"><input type="checkbox" data-heating-curve${hcEnabled ? " checked" : ""}><span class="track"></span></label>`
+    )}
+    ${row(
+      "Préchauffage intelligent",
+      "Anticipe la montée de consigne avec la météo. Utilise la courbe si elle est activée, sinon un modèle par défaut.",
+      `<label class="switch" title="Préchauffage intelligent"><input type="checkbox" data-preheat${preheatEnabled ? " checked" : ""}><span class="track"></span></label>`
     )}
     ${hcEnabled ? `
     <details class="stack">
@@ -2538,6 +2684,20 @@ async function openRoomEditor(room) {
       } catch (err) {
         hcToggle.checked = !hcToggle.checked;
         hcToggle.disabled = false;
+        toastError(err);
+      }
+    });
+
+    const preheatToggle = body.querySelector("[data-preheat]");
+    preheatToggle?.addEventListener("change", async () => {
+      preheatToggle.disabled = true;
+      try {
+        await put(`/api/rooms/${room.id}`, { preheat: preheatToggle.checked });
+        await refreshState({ silent: true });
+        await openRoomEditor(room);
+      } catch (err) {
+        preheatToggle.checked = !preheatToggle.checked;
+        preheatToggle.disabled = false;
         toastError(err);
       }
     });

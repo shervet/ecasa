@@ -794,6 +794,7 @@ def build_days(
     switch_day: str = "monday",
     scopes: list | None = None,
     direct_return: bool = False,
+    holiday_days: dict | None = None,
 ) -> list[list[dict]]:
     """Construit les 7 listes de creneaux a partir des cours normalises.
 
@@ -819,6 +820,11 @@ def build_days(
     ``switch_day == "friday"`` : le vendredi, l'enfant ne rentre pas le soir
     (garde alternee). La journee s'arrete donc sur le depart en reduit, car
     le week-end bascule sur la semaine suivante.
+
+    ``holiday_days`` permet de remplacer certains jours (vacances scolaires,
+    jours feries) par un planning de journee a la maison. La valeur associee
+    est un etat ``{"mode", "temp"}`` ou ``{"skip": True}`` pour conserver le
+    planning existant. Ces jours sont toujours importes en portee ``"full"``.
     """
     travel = max(0, min(180, int(travel_minutes)))
     wake = max(0, min(DAY_MINUTES, int(wake_minutes or 0)))
@@ -829,7 +835,67 @@ def build_days(
     reduced = {"mode": reduced_mode, "temp": reduced_temp}
     days: list[list[dict]] = []
 
+    holidays: dict[int, dict] = {}
+    for raw_weekday, raw_state in (holiday_days or {}).items():
+        try:
+            weekday = int(raw_weekday)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= weekday < 7 and isinstance(raw_state, dict):
+            holidays[weekday] = raw_state
+
     for weekday in range(7):
+        holiday = holidays.get(weekday)
+        if holiday is not None:
+            # Jour de vacances / ferie : le planning Pronote de l'ecole ne
+            # s'applique pas. « skip » conserve la journee existante.
+            if holiday.get("skip"):
+                days.append([])
+                if scopes is not None:
+                    scopes.append(("full", 0))
+                continue
+
+            mode = _clean_mode(holiday.get("mode", "off"), "off")
+            temp = _clamp_temp(holiday.get("temp", reduced_temp), reduced_temp)
+            state = {"mode": mode, "temp": temp}
+            slots: list[dict] = []
+
+            def add_holiday(minutes: int, value: dict) -> None:
+                if minutes < 0 or minutes >= DAY_MINUTES:
+                    return
+                if slots and slots[-1]["time"] == _time_label(minutes):
+                    slots[-1] = {
+                        "time": _time_label(minutes),
+                        "mode": value["mode"],
+                        "temp": value["temp"],
+                    }
+                    return
+                if (
+                    slots
+                    and slots[-1]["mode"] == value["mode"]
+                    and slots[-1]["temp"] == value["temp"]
+                ):
+                    return
+                slots.append({
+                    "time": _time_label(minutes),
+                    "mode": value["mode"],
+                    "temp": value["temp"],
+                })
+
+            if mode == "off":
+                add_holiday(0, state)
+            else:
+                add_holiday(0, reduced)
+                if 0 < wake < DAY_MINUTES:
+                    add_holiday(wake, state)
+                if wake < bedtime < DAY_MINUTES:
+                    add_holiday(bedtime, reduced)
+
+            days.append(slots)
+            if scopes is not None:
+                scopes.append(("full", 0))
+            continue
+
         day_lessons = [item for item in lessons if item["weekday"] == weekday]
         blocks = _merge_blocks(day_lessons, MERGE_GAP_MINUTES)
 
@@ -1041,6 +1107,7 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         switch_day,
         scopes,
         direct_return=direct_return,
+        holiday_days=options.get("holiday_days"),
     )
     friday_switch = friday_departure_minutes(days, wake_minutes, travel)
 
@@ -1061,6 +1128,9 @@ def build_plan(config: dict, week_start: date, options: dict | None = None) -> d
         "reduced": {"mode": reduced_mode, "temp": reduced_temp},
         "lessons": lessons,
         "days": days,
+        # Jours remplaces par le calendrier scolaire (vacances / feries).
+        "holiday_days": options.get("holiday_days") or {},
+        "holidays": options.get("holiday_names") or [],
         # Portee de chaque jour : "full" (remplace), "prefix"/"suffix" (partiel).
         "scopes": scopes,
         "stats": {

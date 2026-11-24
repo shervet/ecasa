@@ -1433,6 +1433,20 @@ function openPronoteSheet() {
 function renderPronotePreview(plan) {
   const days = plan?.days || [];
   const dates = weekDates(plan?.week_start || mondayOf(new Date()));
+  const holidays = Array.isArray(plan?.holidays) ? plan.holidays : [];
+  const holidayNote = holidays.length
+    ? `<div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
+        <div class="tiny muted">Calendrier scolaire</div>
+        <p class="hint mt-1">${holidays
+          .map(
+            (item) =>
+              `${escapeHtml(fmtDate(item.date))} · ${escapeHtml(item.name || "Fermeture")}${
+                item.present === false ? " (semaine sans l'enfant : planning conservé)" : ""
+              }`
+          )
+          .join("<br>")}</p>
+      </div>`
+    : "";
   return `
     <div class="card card-pad" style="background:var(--surface-2);box-shadow:none">
       <div class="row-between">
@@ -1443,6 +1457,7 @@ function renderPronotePreview(plan) {
         <span class="pill pill-ok">Aperçu</span>
       </div>
     </div>
+    ${holidayNote}
     <div class="stack">
       ${days
         .map(

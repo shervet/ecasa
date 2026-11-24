@@ -52,6 +52,9 @@ bonnes consignes.
 | **Autres systèmes** | Daikin (local), Bosch (contrôleur Smart Home), Netatmo et Mitsubishi (MELCloud) : lecture des appareils et envoi de consignes depuis Réglages → Appareils. |
 | **Planning** | Agenda 24 h par pièce, créneaux tactiles, modèles de semaine (enregistrés sur le serveur), copie A↔B, surcharges. |
 | **Pronote** | Import des semaines A et B, mise à jour quotidienne à l'heure choisie (ou désactivée), gestion de la garde alternée, option « Retour direct » pour les journées sans cours l'après-midi. |
+| **Calendrier scolaire** | Vacances officielles par zone A/B/C et jours fériés, appliqués à l'import Pronote uniquement les semaines où l'enfant est présent. |
+| **Vacances & absence** | Absence programmée avec retour automatique : la maison passe hors gel pendant la fenêtre, sans modifier `presence_mode`. |
+| **Préchauffage** | Anticipation météo des montées de consigne, pièce par pièce, avec plafond d'avance paramétrable. |
 | **Météo** | Température extérieure Open-Meteo, sans clé d'API. |
 | **Statistiques** | Ambiance / consigne / extérieur, consommation électrique Enedis multi-années (vues jour, semaine, mois, année, option « À date »). |
 | **Journal** | Événements filtrables, recherche, export JSON. |
@@ -170,6 +173,7 @@ Guide détaillé : [docs/installation.md](docs/installation.md).
 | [Installation](docs/installation.md) | Windows, Linux, Raspberry Pi, systemd, PWA, mise à jour, sauvegarde. |
 | [Configuration](docs/configuration.md) | `config.json`, réglages de l'interface, secrets, réseau, stockage. |
 | [Pronote](docs/pronote.md) | Compte, import, semaines A/B, garde alternée, retour direct, mise à jour automatique. |
+| [Calendrier scolaire](docs/calendrier-scolaire.md) | Vacances par zone, jours fériés, alternance, préchauffage et mode vacances. |
 | [Équipements](docs/equipements.md) | Atlantic/Cozytouch, climatisation, Wiser, pièces et appareils. |
 | [API HTTP](docs/api.md) | Toutes les routes JSON et les règles de sécurité. |
 | [Dépannage](docs/depannage.md) | Symptômes courants et solutions. |

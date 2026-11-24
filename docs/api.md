@@ -54,6 +54,17 @@ Toutes les routes renvoient du JSON. Le serveur écoute sur `http://<hôte>:<por
 d'écrire (`full`, `prefix`, `suffix`). Le renvoyer tel quel à `import` garantit un
 résultat identique à l'aperçu.
 
+## Calendrier scolaire
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| GET | `/api/school-calendar?zone=A` | Vacances de la zone, prochaine fermeture, état d'activation. |
+| POST | `/api/school-calendar/refresh` | Force le téléchargement (`{zone}`), erreur 502 si l'API est injoignable. |
+
+Le calendrier est mis en cache dans `data/school_calendar.json`. L'import
+Pronote remplace les jours de fermeture par le planning de vacances choisi,
+uniquement pour les semaines A/B déclarées « avec l'enfant ».
+
 ## Wiser
 
 | Méthode | Route | Rôle |

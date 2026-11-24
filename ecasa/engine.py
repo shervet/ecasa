@@ -6,10 +6,11 @@ a chaque changement de creneau, et on le reaffirme si besoin.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 import traceback
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from . import heating_curve
 
@@ -51,6 +52,68 @@ SWING_CAP = 100804
 FAN_VALUES = {"low": "1", "med": "2", "high": "3", "auto": "5"}
 FAN_LABELS = {"low": "Basse", "med": "Moyenne", "high": "Haute", "auto": "Automatique"}
 AIRFLOW_POSITIONS = {f"pos{index}": str(index) for index in range(1, 7)}
+
+
+def _iso_date(value) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def absence_window(settings: dict, now: datetime | None = None) -> dict | None:
+    """Fenetre de vacances active, ou ``None``.
+
+    Les dates sont incluses : ``absence_until`` est le dernier jour d'absence.
+    Une date de debut ou de fin absente laisse la fenetre ouverte de ce cote.
+    """
+    start = _iso_date(settings.get("absence_start"))
+    until = _iso_date(settings.get("absence_until"))
+    if start is None and until is None:
+        return None
+    today = (now or datetime.now()).date()
+    if start is not None and today < start:
+        return None
+    if until is not None and today > until:
+        return None
+    return {
+        "start": start.isoformat() if start else None,
+        "until": until.isoformat() if until else None,
+    }
+
+
+def presence_status(settings: dict, now: datetime | None = None) -> dict:
+    """Etat de presence effectif : manuel ou fenetre de vacances."""
+    window = absence_window(settings, now)
+    if window:
+        return {
+            "active": True,
+            "mode": "absent",
+            "reason": "vacation",
+            **window,
+        }
+    if str(settings.get("presence_mode", "present")).strip().lower() == "absent":
+        return {
+            "active": True,
+            "mode": "absent",
+            "reason": "manual",
+            "start": None,
+            "until": None,
+        }
+    return {
+        "active": False,
+        "mode": "present",
+        "reason": "present",
+        "start": None,
+        "until": None,
+    }
+
+
+def absence_active(settings: dict, now: datetime | None = None) -> bool:
+    return bool(presence_status(settings, now).get("active"))
 
 
 def _caps(device: dict) -> dict:
@@ -472,7 +535,7 @@ class Engine:
         now = now or datetime.now()
         settings = self.store.settings()
 
-        if str(settings.get("presence_mode", "present")).lower() == "absent":
+        if absence_active(settings, now):
             return self._absent_desired(device), "absence", None
 
         override = self.store.override(device["device_id"])
@@ -540,9 +603,12 @@ class Engine:
             "temp": self.effective_temp(device, mode, slot["temp"]),
         }
 
-        # Courbe de chauffe : avance sur la prochaine montée de consigne.
-        # Chemin mort total si toggle désactivé.
-        if control_room and control_room.get("heating_curve"):
+        # Préchauffage : avance sur la prochaine montée de consigne.
+        # La courbe de chauffe fournit le modèle appris ; le mode « préchauffage
+        # intelligent » utilise le même calcul avec un modèle par défaut.
+        if control_room and (
+            control_room.get("heating_curve") or control_room.get("preheat")
+        ):
             advanced = self._advance_desired(device, control_room, desired, slots, now)
             if advanced:
                 return advanced, f"planning {week} (avance)", None
@@ -715,6 +781,65 @@ class Engine:
             cursor = at + timedelta(minutes=1)
         return None
 
+    def _outside_temp_at(self, moment: datetime) -> float | None:
+        """Température extérieure prévue à ``moment`` (meilleur effort).
+
+        Pour aujourd'hui, la météo horaire est utilisée. Pour les jours
+        suivants, on interpole la prévision journalière (min vers 5 h, max
+        vers 15 h) afin d'anticiper un épisode froid. Sans donnée, repli sur
+        la température extérieure actuelle.
+        """
+        config = self._config()
+        if not config or not config.get("weather_enabled", True):
+            return None
+        try:
+            latitude = float(config.get("weather_latitude"))
+            longitude = float(config.get("weather_longitude"))
+        except (TypeError, ValueError):
+            return None
+        if self.weather is None:
+            return self._current_outside_temp()
+
+        today = datetime.now().date()
+        try:
+            if moment.date() <= today:
+                result = self.weather.hourly(latitude, longitude, today, today)
+                hours = (result.hours or {}).get(today.isoformat(), {})
+                temp = hours.get(moment.hour)
+                if temp is None:
+                    past = {h: v for h, v in hours.items() if h <= moment.hour}
+                    if past:
+                        temp = past[max(past)]
+                if temp is not None:
+                    return float(temp)
+        except Exception:  # noqa: BLE001 - météo facultative
+            pass
+
+        # Prévision journalière : interpolation simple entre le minimum
+        # nocturne et le maximum de l'après-midi.
+        try:
+            days, _source = self.weather.daily(latitude, longitude, 8)
+            forecast = next(
+                (item for item in days if item.get("date") == moment.date().isoformat()),
+                None,
+            )
+            if forecast:
+                tmin = float(forecast["tmin"])
+                tmax = float(forecast["tmax"])
+                hour = moment.hour + moment.minute / 60.0
+                if 5 <= hour <= 15:
+                    ratio = (hour - 5) / 10.0
+                elif hour < 5:
+                    ratio = 0.0
+                else:
+                    ratio = max(0.0, 1.0 - (hour - 15) / 14.0)
+                # Courbe douce plutôt qu'une rampe linéaire.
+                ratio = (1 - math.cos(ratio * math.pi)) / 2
+                return round(tmin + (tmax - tmin) * ratio, 1)
+        except Exception:  # noqa: BLE001 - météo facultative
+            pass
+        return self._current_outside_temp()
+
     def _advance_desired(self, device: dict, room: dict, current_desired: dict, slots, now: datetime):
         """Retourne l'état désiré avancé si une montée imminente le justifie."""
         rise = self._next_rise(device, current_desired, now)
@@ -724,11 +849,24 @@ class Engine:
         t_room = self._room_current_temp(room, device)
         if t_room is None:
             return None
-        t_out = self._current_outside_temp()
+
+        # Température extérieure au moment de la montée (et non maintenant) :
+        # un redoux ou un coup de froid prévu change l'avance nécessaire.
+        upcoming = rise.get("upcoming")
+        rise_at = upcoming.slot.get("at") if upcoming is not None else None
+        if rise_at is None:
+            rise_at = now + timedelta(minutes=float(rise["in_minutes"]))
+        t_out = self._outside_temp_at(rise_at)
+
+        try:
+            max_advance = int(self.store.settings().get("preheat_max_minutes", 120))
+        except (TypeError, ValueError):
+            max_advance = 120
+        max_advance = max(0, min(360, max_advance))
 
         tau0, tau1, _learning = self._curve_params(room)
         delta = heating_curve.advance_minutes(
-            tau0, tau1, t_out, t_room, rise["temp"]
+            tau0, tau1, t_out, t_room, rise["temp"], cap_minutes=max_advance
         )
         if rise["in_minutes"] <= delta and delta > 0:
             mode = rise["mode"]
@@ -1279,7 +1417,8 @@ class Engine:
         now = datetime.now()
         settings = self.store.settings()
         week = week_type(now, settings, self.store.week_overrides())
-        presence_absent = str(settings.get("presence_mode", "present")).lower() == "absent"
+        presence = presence_status(settings, now)
+        presence_absent = bool(presence.get("active"))
         devices = []
 
         for device in self.store.devices():
@@ -1324,6 +1463,7 @@ class Engine:
             "week": week,
             "iso_week": now.isocalendar().week,
             "settings": settings,
+            "presence": presence,
             "week_overrides": self.store.week_overrides(),
             "rooms": self.store.rooms(),
             "devices": devices,
