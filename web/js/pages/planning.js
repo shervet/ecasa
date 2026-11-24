@@ -84,6 +84,8 @@ let models = {};
 let week = "A";
 let day = todayIndex();
 let dirty = false;
+let saveInFlight = false;
+let saveQueued = false;
 let viewMode = "day"; // "day" | "week"
 let modelEdit = null; // { index, name, room, model, original }
 let pendingRoomId = null; // roomId (targetId) demandé via deep-link (device sheet → Modifier)
@@ -146,9 +148,7 @@ export default {
             <p class="page-sub" id="planSub">Semaines type par pièce, créneaux et imports.</p>
           </div>
           <div class="page-actions">
-            <button class="btn" type="button" id="planImport">${icon("upload", 17)} Importer</button>
             <button class="btn btn-primary" type="button" id="planPronote">${icon("school", 17)} Pronote</button>
-            <button class="btn btn-primary" type="button" id="planSave" disabled>${icon("save", 17)} Enregistrer</button>
           </div>
         </div>
 
@@ -157,7 +157,6 @@ export default {
         <div class="planning-toolbar">
           <div class="row wrap" style="gap:10px;align-items:center">
             <span class="pill pill-ghost" id="planDirty">À jour</span>
-            <button class="btn btn-sm" type="button" id="planCopy">${icon("copy", 15)} Copier vers l'autre semaine</button>
           </div>
         </div>
 
@@ -184,7 +183,6 @@ export default {
         <strong>Aucune zone à programmer</strong>
         <p>Ajoute d'abord un appareil dans Réglages → Pièces &amp; appareils.</p>
       </div>`;
-      view.querySelector("#planSave").disabled = true;
       return;
     }
 
@@ -219,9 +217,6 @@ export default {
     if (presetRoomSelect) presetRoomSelect.innerHTML = roomOptions;
 
 
-    view.querySelector("#planSave").addEventListener("click", save);
-    view.querySelector("#planCopy").addEventListener("click", copyToOtherWeek);
-    view.querySelector("#planImport").addEventListener("click", openImportSheet);
     view.querySelector("#planPronote")?.addEventListener("click", () => {
       try {
         openPronoteSheet();
@@ -790,7 +785,8 @@ function clearRoom(t) {
   dirty = true;
   paintRooms();
   paintDirty();
-  toast(`${t.label} vidée pour la semaine ${week}. Pense à enregistrer.`, { type: "info" });
+  void save();
+  toast(`${t.label} vidée pour la semaine ${week}.`, { type: "info" });
 }
 
 function slotEnd(slots, slot) {
@@ -802,12 +798,10 @@ function slotEnd(slots, slot) {
 
 function paintDirty() {
   const node = root?.querySelector("#planDirty");
-  const button = root?.querySelector("#planSave");
   if (node) {
     node.textContent = dirty ? "Non enregistré" : "À jour";
     node.className = `pill ${dirty ? "pill-warn" : "pill-ghost"}`;
   }
-  if (button) button.disabled = !dirty;
 }
 
 function paintLive() {
@@ -1010,6 +1004,7 @@ function openSlotEditor(target, dayIndex, slotIndex = null, minutes = 0) {
     }
     dirty = true;
     closeSheet();
+    void save();
     paintRooms();
     paintDirty();
     toast("Créneau supprimé.", { type: "info", timeout: 2200 });
@@ -1036,6 +1031,7 @@ function applyPreset(name) {
   }
   model[week][day] = preset.map((slot) => ({ ...slot }));
   dirty = true;
+  void save();
   paintRooms();
   paintDirty();
   toast(`Modèle « ${name} » appliqué.`, { type: "info", timeout: 2400 });
@@ -1098,9 +1094,16 @@ async function updateModelFromRoom(t, model) {
     // Enregistrement ciblé : les éditions en attente des autres pièces ne sont
     // ni perdues ni imposées au modèle.
     await saveTarget(t);
-    await post(`/api/model-links/${t.targetId}/update-model`);
-    await loadAllModels();
+    const payload = await post(`/api/model-links/${t.targetId}/update-model`);
     await refreshState({ silent: true });
+    if (Array.isArray(payload?.models)) {
+      allModels = payload.models;
+    }
+    if (payload?.links && typeof payload.links === "object") {
+      modelLinks = payload.links;
+    } else {
+      await loadAllModels();
+    }
     // Rafraîchit uniquement les pièces concernées : la pièce source et ses
     // pairs liées au même modèle (réappliquées par le serveur).
     buildTargets();
@@ -1127,30 +1130,34 @@ async function updateModelFromRoom(t, model) {
 }
 
 async function save() {
-  const button = root?.querySelector("#planSave");
-  if (button) button.disabled = true;
+  if (saveInFlight) {
+    saveQueued = true;
+    return;
+  }
+  saveInFlight = true;
   try {
-    for (const t of targets) {
-      const model = models[t.id];
-      if (!model) continue;
-      // Un modèle appliqué modifie les deux semaines : on enregistre A et B.
-      for (const w of ["A", "B"]) {
-        await put(`/api/programs/${t.targetId}/${w}`, { days: model[w] });
+    do {
+      saveQueued = false;
+      for (const t of targets) {
+        const model = models[t.id];
+        if (!model) continue;
+        // Un modèle appliqué modifie les deux semaines : on enregistre A et B.
+        for (const w of ["A", "B"]) {
+          await put(`/api/programs/${t.targetId}/${w}`, { days: model[w] });
+        }
       }
-    }
-    dirty = false;
-    toast(`Planning ${week} enregistré.`);
-    await refreshState({ silent: true });
-    if (store.state?.model_links) modelLinks = store.state.model_links;
-    reloadFromState();
-    // Le serveur borne parfois les consignes : on ne se fie pas au flag.
-    dirty = hasPendingEdits();
-    paintDirty();
+      dirty = false;
+      await refreshState({ silent: true });
+      reloadFromState();
+      // Le serveur borne parfois les consignes : on ne se fie pas au flag.
+      dirty = hasPendingEdits();
+      paintDirty();
+    } while (saveQueued);
   } catch (err) {
     toastError(err);
     paintDirty();
   } finally {
-    if (button) button.disabled = false;
+    saveInFlight = false;
   }
 }
 
@@ -1162,74 +1169,10 @@ async function clearWeek() {
     model[week] = Array.from({ length: 7 }, () => []);
   }
   dirty = true;
+  void save();
   paintRooms();
   paintDirty();
-  toast(`Semaine ${week} vidée. Pense à enregistrer.`, { type: "info" });
-}
-
-async function copyToOtherWeek() {
-  if (!target) return;
-  const model = models[target.id];
-  if (!model) return;
-  const other = week === "A" ? "B" : "A";
-  if (!confirm(`Copier les créneaux de la semaine ${week} vers la semaine ${other} ?`)) return;
-
-  try {
-    await put(`/api/programs/${target.targetId}/${week}`, { days: model[week] });
-    await put(`/api/programs/${target.targetId}/${other}`, { days: model[week] });
-    dirty = false;
-    toast(`Semaine ${week} copiée vers ${other}.`);
-    await refreshState({ silent: true });
-    reloadFromState();
-  } catch (err) {
-    toastError(err);
-  }
-}
-
-/* --------------------------------------------------------------- imports */
-
-function openImportSheet() {
-  if (!target) return;
-  const device = target.device;
-  const canWiser = device?.device_type === "wiser";
-
-  const body = document.createElement("div");
-  body.className = "stack";
-  body.innerHTML = `
-    <button class="btn btn-block" type="button" data-import="pronote" style="justify-content:flex-start;height:auto;padding:14px">
-      <span style="display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:var(--primary-soft);color:var(--primary)">${icon("school", 20)}</span>
-      <span style="text-align:left">
-        <span style="display:block;font-weight:700">Emploi du temps Pronote</span>
-        <span class="hint">Chauffe la pièce selon les cours de la semaine.</span>
-      </span>
-    </button>
-    <button class="btn btn-block" type="button" data-import="wiser" style="justify-content:flex-start;height:auto;padding:14px" ${canWiser ? "" : "disabled"}>
-      <span style="display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:var(--accent-soft);color:var(--accent)">${icon("hub", 20)}</span>
-      <span style="text-align:left">
-        <span style="display:block;font-weight:700">Planning natif Wiser</span>
-        <span class="hint">${canWiser ? "Récupère les créneaux du Hub pour cette zone." : "Disponible uniquement pour une zone Wiser."}</span>
-      </span>
-    </button>
-    <p class="hint">L'import remplace la semaine ${week} de ${escapeHtml(target.label)}. Tu pourras encore ajuster les créneaux.</p>
-  `;
-
-  const sheet = openSheet({
-    title: "Importer un planning",
-    sub: `${target.label} · semaine ${week}`,
-    body,
-  });
-
-  body.querySelector('[data-import="pronote"]')?.addEventListener("click", () => {
-    closeSheet();
-    openPronoteSheet();
-  });
-
-  body.querySelector('[data-import="wiser"]')?.addEventListener("click", () => {
-    closeSheet();
-    openWiserSheet();
-  });
-
-  return sheet;
+  toast(`Semaine ${week} vidée.`, { type: "info" });
 }
 
 function openPronoteSheet() {
