@@ -220,9 +220,15 @@ export function roomSummary(state, room) {
     .filter((value) => Number.isFinite(value));
 
   // Humidité relative : uniquement les appareils qui en exposent une (Wiser).
+  // Une valeur absente ne doit jamais être convertie en 0 par Number().
+  const humidityValue = (device) => {
+    const raw =
+      device.current?.humidity ?? device.current?.wiser_humidity;
+    return raw === null || raw === undefined || raw === "" ? null : Number(raw);
+  };
   const humidities = devices
-    .map((d) => Number(d.current?.humidity ?? d.current?.wiser_humidity))
-    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 100);
+    .map(humidityValue)
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 100);
 
   const ambient = ambients.length
     ? ambients.reduce((sum, value) => sum + value, 0) / ambients.length

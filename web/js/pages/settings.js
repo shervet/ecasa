@@ -2843,9 +2843,13 @@ function renderDevices() {
         const room = roomName(device.room_id) || "Sans pièce";
         const ambient = device.current?.ambient ?? device.current?.wiser_ambient;
         const humidity = device.current?.humidity ?? device.current?.wiser_humidity;
-        const humidityLabel = Number.isFinite(Number(humidity))
-          ? ` · ${Math.round(Number(humidity))} %`
-          : "";
+        const humidityLabel =
+          humidity !== null &&
+          humidity !== undefined &&
+          humidity !== "" &&
+          Number(humidity) > 0
+            ? ` · ${Math.round(Number(humidity))} %`
+            : "";
         const tempMin = device.temp_min ?? (isWiser ? 0 : 16);
         const tempMax = device.temp_max ?? 30;
         const frostTemp = device.frost_temp ?? (isWiser ? 10 : 16);

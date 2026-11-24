@@ -443,9 +443,10 @@ function paintRooms() {
     const mode = summary.mode || "off";
     const next = summary.next;
     const override = summary.override;
-    const humidity = Number.isFinite(summary.humidity)
-      ? Math.round(summary.humidity)
-      : null;
+    const humidity =
+      Number.isFinite(summary.humidity) && summary.humidity > 0
+        ? Math.round(summary.humidity)
+        : null;
     const label = modeLabel(mode, store.meta);
 
     // Indicateurs de liaison : modèle de planning et/ou Pronote.

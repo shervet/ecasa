@@ -45,6 +45,29 @@ class HumidityTests(unittest.TestCase):
             rooms = client.get_rooms()
         self.assertEqual(rooms[0]["humidity"], 48.0)
 
+    def test_humidity_from_roomstat_collection(self):
+        """Format réel du Hub : les mesures sont dans la collection RoomStat."""
+        client = self.make_client()
+        domain = {
+            "Room": [
+                {
+                    "id": 1,
+                    "Name": "Salon",
+                    "CalculatedTemperature": 171,
+                    "CurrentSetPoint": 200,
+                    "RoomStatId": 2,
+                }
+            ],
+            "Device": [{"id": 2, "ProductType": "RoomStat"}],
+            "RoomStat": [
+                {"id": 2, "MeasuredTemperature": 171, "MeasuredHumidity": 62}
+            ],
+        }
+        with mock.patch.object(client, "get_domain", return_value=domain):
+            rooms = client.get_rooms()
+        self.assertEqual(rooms[0]["humidity"], 62.0)
+        self.assertTrue(rooms[0]["has_room_stat"])
+
     def test_humidity_falls_back_to_room_field(self):
         client = self.make_client()
         domain = {
@@ -80,6 +103,7 @@ class HumidityTests(unittest.TestCase):
         self.assertEqual(_humidity_percent(48), 48.0)
         self.assertEqual(_humidity_percent(480), 48.0)
         self.assertEqual(_humidity_percent(4800), 48.0)
+        self.assertIsNone(_humidity_percent(0))
         self.assertIsNone(_humidity_percent(None))
         self.assertIsNone(_humidity_percent("n/a"))
         self.assertIsNone(_humidity_percent(-5))

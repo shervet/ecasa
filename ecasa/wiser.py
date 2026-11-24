@@ -122,6 +122,9 @@ def _humidity_percent(value):
         return None
     if number < 0:
         return None
+    if number == 0:
+        # Un thermostat muet renvoie 0 : aucune humidité réelle n'est nulle.
+        return None
     if number > 100:
         # Certains firmwares renvoient des dixiemes (455 -> 45,5 %) ou des
         # centiemes (4800 -> 48 %). Une valeur brute > 100 % n'a pas de sens.
@@ -347,7 +350,27 @@ class WiserClient:
             raw_rooms = list(raw_rooms.values())
         if isinstance(devices, dict):
             devices = list(devices.values())
-        room_stats = {d["id"]: d for d in devices if d.get("ProductType") == "RoomStat"}
+
+        # Les thermostats d'ambiance vivent dans une collection dédiée
+        # (« RoomStat »). C'est là que se trouvent MeasuredTemperature et
+        # MeasuredHumidity ; les entrées « Device » n'en portent pas.
+        raw_stats = domain.get("RoomStat") or []
+        if isinstance(raw_stats, dict):
+            raw_stats = list(raw_stats.values())
+        room_stats = {
+            int(stat["id"]): stat
+            for stat in raw_stats
+            if isinstance(stat, dict) and stat.get("id") is not None
+        }
+        # Repli pour les firmwares qui exposent la mesure sur le Device.
+        for device in devices:
+            if device.get("ProductType") != "RoomStat":
+                continue
+            try:
+                stat_id = int(device["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            room_stats.setdefault(stat_id, device)
 
         rooms = []
         for r in raw_rooms:
@@ -355,7 +378,8 @@ class WiserClient:
             calc_temp = r.get("CalculatedTemperature")
             setpoint = r.get("CurrentSetPoint")
             stat_id = r.get("RoomStatId")
-            stat = room_stats.get(stat_id) or {}
+            stat = room_stats.get(int(stat_id)) if stat_id is not None else None
+            stat = stat or {}
 
             # L'humidite vient du thermostat d'ambiance quand il en expose une ;
             # sinon certains firmwares la placent directement sur la piece.
