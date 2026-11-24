@@ -1,7 +1,7 @@
 // Santé : état du serveur eCasa, matériel, alimentation, services et stockage.
 
 import { get } from "../api.js";
-import { lineChart } from "../charts.js";
+import { chartLegend, lineChart } from "../charts.js";
 import { icon } from "../icons.js";
 import {
   bytes,
@@ -148,8 +148,8 @@ function cardSystem(system, cpu) {
   const load = Array.isArray(cpu?.load) ? cpu.load : [];
   const temp = Array.isArray(cpu?.temp) ? cpu.temp : [];
   const series = [
-    { key: "load", label: "Charge CPU", color: "var(--primary)", values: load, area: true },
-    { key: "temp", label: "Température", color: "var(--warm)", values: temp, y2: true },
+    { key: "load", label: "Charge CPU (%)", color: "var(--primary)", values: load, area: true },
+    { key: "temp", label: "Température (°C)", color: "var(--warm)", values: temp, y2: true },
   ];
   return cardShell(
     "gauge",
@@ -158,6 +158,7 @@ function cardSystem(system, cpu) {
     "",
     `<div style="margin-bottom:12px">
       ${lineChart({ series, labels: ts.map((t) => fmtTime(t)), height: 220, unit: "%" })}
+      ${chartLegend(series)}
     </div>
     <div class="kpi-grid">
       ${kpi("history", "Uptime hôte", system.uptime != null ? uptime(system.uptime) : "—")}

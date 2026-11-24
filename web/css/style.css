@@ -3316,6 +3316,7 @@ details.brand-panel.is-locked > :not(summary) {
   :root {
     --pad: 15px;
     --gap: 12px;
+    --tabbar-h: 76px;
   }
 
   body {
@@ -3429,6 +3430,27 @@ details.brand-panel.is-locked > :not(summary) {
   .stats-table th,
   .stats-table td {
     padding: 8px 6px;
+  }
+
+  .kpi .k-label {
+    font-size: 12.5px;
+  }
+
+  .kpi .k-value {
+    font-size: 22px;
+  }
+
+  .kpi .k-sub {
+    font-size: 13px;
+  }
+
+  .tabbar a {
+    font-size: 11.5px;
+  }
+
+  .tabbar a svg {
+    width: 24px;
+    height: 24px;
   }
 }
 
