@@ -151,6 +151,7 @@ DEFAULT_CONFIG = {
     "pronote_bedtime_minutes": 22 * 60,
     # Mise à jour automatique du planning Pronote : heure (minutes après
     # minuit) et activation. Désactivée = import manuel uniquement.
+    "pronote_enabled": True,
     "pronote_auto_enabled": True,
     "pronote_direct_return": False,
     "pronote_sync_minutes": 3 * 60,
@@ -427,6 +428,7 @@ def public_config(config: dict) -> dict:
             if str(config.get("pronote_switch_day")).strip().lower() == "friday"
             else "monday"
         ),
+        "pronote_enabled": _truthy(config.get("pronote_enabled"), True),
         "pronote_auto_enabled": _truthy(config.get("pronote_auto_enabled"), True),
         "pronote_direct_return": _truthy(config.get("pronote_direct_return"), False),
         "pronote_sync_minutes": _minutes_of_day(
@@ -882,6 +884,11 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
     if "pronote_auto_enabled" in body:
         updated["pronote_auto_enabled"] = _truthy(
             body.get("pronote_auto_enabled"), True
+        )
+
+    if "pronote_enabled" in body:
+        updated["pronote_enabled"] = _truthy(
+            body.get("pronote_enabled"), True
         )
 
     if "pronote_direct_return" in body:
@@ -1488,6 +1495,11 @@ def pronote_auto_enabled(config: dict) -> bool:
     return _truthy(config.get("pronote_auto_enabled"), True)
 
 
+def pronote_enabled(config: dict) -> bool:
+    """Vrai si l'intégration Pronote est active."""
+    return _truthy(config.get("pronote_enabled"), True)
+
+
 def pronote_sync_minutes(config: dict) -> int:
     """Heure (minutes après minuit) de la mise à jour Pronote automatique."""
     return _minutes_of_day(
@@ -1560,6 +1572,8 @@ def run_pronote_auto_import(app, now: datetime | None = None) -> dict:
     Ne lève pas d'exception : renvoie un état ``skipped`` ou ``ok``.
     """
     config = load_config()
+    if not pronote_enabled(config):
+        return {"ok": False, "skipped": "disabled"}
     if not pronote_auto_enabled(config):
         return {"ok": False, "skipped": "disabled"}
     room_ids = config.get("pronote_room_ids")
@@ -2821,6 +2835,8 @@ def _pronote_locked_days(config: dict, room_id) -> dict:
     try:
         room_id = int(room_id)
     except (TypeError, ValueError):
+        return {}
+    if not pronote_enabled(config):
         return {}
     raw_ids = config.get("pronote_room_ids")
     if isinstance(raw_ids, list):

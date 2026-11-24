@@ -411,6 +411,7 @@ function alternanceDayIndex() {
 /** Jours verrouillés (cours Pronote) d'une semaine d'une pièce : aucun si la semaine n'est pas liée. */
 function lockedDaysFor(t, weekKey) {
   const locked = [false, false, false, false, false, false, false];
+  if (store.config?.pronote_enabled === false) return locked;
   if (!t?.pronoteLinked || !pronoteLinkedWeeks().includes(weekKey)) return locked;
   const schoolDays = store.config?.pronote_school_days?.[String(t.targetId)]?.[weekKey] || [];
   for (let index = 0; index < locked.length; index += 1) locked[index] = !!schoolDays[index];

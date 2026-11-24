@@ -176,13 +176,11 @@ export default {
 
     const navItems = [
       ["appearance", "Apparence"],
-      ["weeks", "Semaines A/B"],
-      ["school", "Calendrier scolaire"],
+      ["planning", "Planning"],
       ["rooms", "Pièces"],
       ["weather", "Météo"],
       ["devices", "Appareils"],
       /* Clim fusionné dans Appareils : plus de section séparée. */
-      ["pronote", "Pronote"],
       ["server", "Serveur"],
       ["energy", "Électricité"],
       ["support", "Soutenir"],
@@ -219,12 +217,10 @@ export default {
 
         <div class="settings-layout">
           ${appearanceSection()}
-          ${weeksSection()}
-          ${schoolSection()}
+          ${planningSection()}
           ${roomsSection()}
           ${weatherSection()}
           ${devicesSection()}
-          ${pronoteSection()}
           ${serverSection()}
           ${energySection()}
           ${supportSection()}
@@ -414,10 +410,34 @@ function weeksSection() {
   );
 }
 
+function planningSection() {
+  const settings = store.state?.settings || {};
+  const c = cfg();
+  const weeksEnabled = (settings.week_mode || "parity") === "parity";
+  const schoolEnabled = c.school_holidays_enabled === true;
+  const pronoteEnabled = c.pronote_enabled !== false;
+  return section(
+    "planning",
+    "Planning",
+    "calendar",
+    `<details class="stack sub-section" id="det-planning-weeks" style="margin-top:0">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("calendar", 16)} Semaines A/B<span class="summary-switch">${deviceSwitch('data-week-mode-toggle', weeksEnabled, weeksEnabled ? "Désactiver l'alternance A/B" : "Activer l'alternance A/B")}</span></summary>
+      <div style="margin-top:8px">${weeksSection()}</div>
+    </details>
+    <details class="stack sub-section" id="det-planning-school">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("calendar", 16)} Calendrier scolaire<span class="summary-switch">${deviceSwitch('data-school-holidays-toggle', schoolEnabled, schoolEnabled ? "Désactiver le calendrier scolaire" : "Activer le calendrier scolaire")}</span></summary>
+      <div style="margin-top:8px">${schoolSection()}</div>
+    </details>
+    <details class="stack sub-section" id="det-planning-pronote">
+      <summary class="card-title summary-row" style="cursor:pointer">${icon("school", 16)} Pronote<span class="summary-switch">${deviceSwitch('data-pronote-enabled-toggle', pronoteEnabled, pronoteEnabled ? "Désactiver Pronote" : "Activer Pronote")}</span></summary>
+      <div style="margin-top:8px">${pronoteSection()}</div>
+    </details>`
+  );
+}
+
 function schoolSection() {
   const c = cfg();
   const zone = String(c.school_zone || "");
-  const enabled = c.school_holidays_enabled === true;
   const plan = String(c.school_holiday_plan || "comfort");
   const weeks = String(c.school_holiday_weeks || "both");
   return section(
@@ -437,11 +457,6 @@ function schoolSection() {
       {
         sub: "Les vacances officielles sont téléchargées depuis data.education.gouv.fr puis mises en cache.",
       }
-    )}
-    ${row(
-      "Suivre les vacances et jours fériés",
-      "Remplace le planning Pronote par une journée à la maison pendant les fermetures.",
-      toggle("school_holidays_enabled", enabled)
     )}
     ${selectRow(
       "Planning des vacances",
@@ -1377,7 +1392,17 @@ function supportSection() {
 /* --------------------------------------------------------------- liaisons */
 
 function jumpToSection(id, instant = false) {
-  const target = root?.querySelector(`#sec-${id}`);
+  const legacy = {
+    weeks: "#det-planning-weeks",
+    school: "#det-planning-school",
+    pronote: "#det-planning-pronote",
+  };
+  let targetId = id;
+  if (legacy[id]) {
+    targetId = "planning";
+    root?.querySelector(legacy[id])?.setAttribute("open", "");
+  }
+  const target = root?.querySelector(`#sec-${targetId}`);
   if (!target) return;
   // Certaines sections sont repliées dans un <details> (ex. Mise à jour dans
   // Serveur) : on déplie les ancêtres avant de mesurer la position.
@@ -1398,7 +1423,7 @@ function jumpToSection(id, instant = false) {
     behavior: instant ? "auto" : "smooth",
   });
   root.querySelectorAll("[data-jump]").forEach((item) => {
-    item.classList.toggle("is-active", item.dataset.jump === id);
+    item.classList.toggle("is-active", item.dataset.jump === targetId);
   });
 }
 
@@ -1408,6 +1433,72 @@ function onWindowJump(event) {
 }
 
 function bind() {
+  const weekModeToggle = root.querySelector("[data-week-mode-toggle]");
+  const weekModeSelect = root.querySelector('#sec-weeks [data-key="week_mode"]');
+  if (weekModeToggle) {
+    bindSummarySwitch(weekModeToggle);
+    weekModeToggle.addEventListener("change", async () => {
+      const mode = weekModeToggle.checked ? "parity" : "none";
+      if (weekModeSelect) weekModeSelect.value = mode;
+      weekModeToggle.disabled = true;
+      try {
+        const payload = await put("/api/settings", { week_mode: mode });
+        if (store.state) store.state.settings = payload.settings;
+        await refreshState({ silent: true });
+      } catch (err) {
+        weekModeToggle.checked = !weekModeToggle.checked;
+        if (weekModeSelect) weekModeSelect.value = weekModeToggle.checked ? "parity" : "none";
+        toastError(err);
+      } finally {
+        weekModeToggle.disabled = false;
+      }
+    });
+    if (weekModeSelect) {
+      weekModeSelect.addEventListener("change", () => {
+        weekModeToggle.checked = weekModeSelect.value !== "none";
+      });
+    }
+  }
+
+  const schoolToggle = root.querySelector("[data-school-holidays-toggle]");
+  if (schoolToggle) {
+    bindSummarySwitch(schoolToggle);
+    schoolToggle.addEventListener("change", async () => {
+      schoolToggle.disabled = true;
+      try {
+        const payload = await put("/api/config", { school_holidays_enabled: schoolToggle.checked });
+        store.config = payload.config;
+        await refreshConfig({ silent: true });
+        await refreshState({ silent: true });
+        loadSchoolCalendar();
+      } catch (err) {
+        schoolToggle.checked = !schoolToggle.checked;
+        toastError(err);
+      } finally {
+        schoolToggle.disabled = false;
+      }
+    });
+  }
+
+  const pronoteEnabledToggle = root.querySelector("[data-pronote-enabled-toggle]");
+  if (pronoteEnabledToggle) {
+    bindSummarySwitch(pronoteEnabledToggle);
+    pronoteEnabledToggle.addEventListener("change", async () => {
+      pronoteEnabledToggle.disabled = true;
+      try {
+        const payload = await put("/api/config", { pronote_enabled: pronoteEnabledToggle.checked });
+        store.config = payload.config;
+        await refreshConfig({ silent: true });
+        await refreshState({ silent: true });
+      } catch (err) {
+        pronoteEnabledToggle.checked = !pronoteEnabledToggle.checked;
+        toastError(err);
+      } finally {
+        pronoteEnabledToggle.disabled = false;
+      }
+    });
+  }
+
   const pronoteAuto = root.querySelector('[data-key="pronote_auto_enabled"]');
   const pronoteHour = root.querySelector('[data-key="pronote_sync_minutes"]');
   if (pronoteAuto && pronoteHour) {

@@ -538,6 +538,13 @@ class PronoteAutoImportWeeksTests(unittest.TestCase):
         self.assertEqual(room_days["A"], [True] * 7)
         self.assertEqual(room_days["B"], [True] * 7)
 
+    def test_pronote_disabled_skips_and_removes_locks(self):
+        self.config["pronote_enabled"] = False
+        result, imported, _ = self.run_auto_import()
+        self.assertEqual(result, {"ok": False, "skipped": "disabled"})
+        imported.assert_not_called()
+        self.assertEqual(main._pronote_locked_days(self.config, self.room_id), {})
+
 
 class _ConfigHandler(main.Handler):
     """Handler HTTP minimal : pas de socket, réponse capturée."""
