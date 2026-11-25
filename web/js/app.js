@@ -189,10 +189,21 @@ function updateChrome() {
 
   const dot = $("#statusDot");
   const label = $("#statusLabel");
+  if (dot) {
     dot.addEventListener("click", () => {
       location.hash = "#/health";
     });
+    dot.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        location.hash = "#/health";
+      }
+    });
     dot.style.cursor = "pointer";
+    dot.setAttribute("role", "button");
+    dot.setAttribute("tabindex", "0");
+    dot.setAttribute("aria-label", "Santé du serveur");
+  }
   if (dot && label) {
     dot.classList.remove("is-ok", "is-warn", "is-bad");
     if (!store.connected) {
@@ -288,7 +299,7 @@ function setupInstall() {
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("/sw.js?v=107", { updateViaCache: "none" })
+        .register("/sw.js?v=120", { updateViaCache: "none" })
         .catch((err) => {
           console.warn("[ecasa] service worker", err);
         });
