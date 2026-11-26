@@ -95,6 +95,7 @@ class MemoryStore:
         self.structural_delay = max(0.5, float(structural_delay))
 
         self._lock = threading.RLock()
+        self._write_lock = threading.Lock()
         self._closed = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -361,43 +362,44 @@ class MemoryStore:
     def flush_state(self) -> None:
         if not self.state_path:
             return
-        with self._lock:
-            if not self._structural_dirty:
-                return
-            payload = {
-                "version": SCHEMA_VERSION,
-                "saved_at": datetime.now().isoformat(timespec="seconds"),
-                "settings": dict(self._settings),
-                "rooms": copy.deepcopy(self._rooms),
-                "devices": [copy.deepcopy(item) for item in self._devices.values()],
-                "slots": copy.deepcopy(self._slots),
-                "week_overrides": dict(self._week_overrides),
-                "overrides": copy.deepcopy(self._overrides),
-                "events": copy.deepcopy(self._events[-MAX_EVENTS:]),
-                "week_models": copy.deepcopy(self._week_models),
-                "model_links": copy.deepcopy(self._model_links),
-            }
-            self._structural_dirty = False
-            self._last_state_save = time.monotonic()
-
-        directory = os.path.dirname(self.state_path) or "."
-        os.makedirs(directory, exist_ok=True)
-        tmp_path = f"{self.state_path}.tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
-            os.replace(tmp_path, self.state_path)
-            self.state_writes += 1
-        except OSError:
-            # On remet le drapeau : une prochaine tentative aura lieu.
+        with self._write_lock:
             with self._lock:
-                self._structural_dirty = True
-                self._structural_since = time.monotonic()
+                if not self._structural_dirty:
+                    return
+                payload = {
+                    "version": SCHEMA_VERSION,
+                    "saved_at": datetime.now().isoformat(timespec="seconds"),
+                    "settings": dict(self._settings),
+                    "rooms": copy.deepcopy(self._rooms),
+                    "devices": [copy.deepcopy(item) for item in self._devices.values()],
+                    "slots": copy.deepcopy(self._slots),
+                    "week_overrides": dict(self._week_overrides),
+                    "overrides": copy.deepcopy(self._overrides),
+                    "events": copy.deepcopy(self._events[-MAX_EVENTS:]),
+                    "week_models": copy.deepcopy(self._week_models),
+                    "model_links": copy.deepcopy(self._model_links),
+                }
+                self._structural_dirty = False
+                self._last_state_save = time.monotonic()
+
+            directory = os.path.dirname(self.state_path) or "."
+            os.makedirs(directory, exist_ok=True)
+            tmp_path = f"{self.state_path}.tmp"
             try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                with open(tmp_path, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+                os.replace(tmp_path, self.state_path)
+                self.state_writes += 1
             except OSError:
-                pass
+                # On remet le drapeau : une prochaine tentative aura lieu.
+                with self._lock:
+                    self._structural_dirty = True
+                    self._structural_since = time.monotonic()
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def flush_history(self) -> None:
         if not self.history_dir:
@@ -406,6 +408,8 @@ class MemoryStore:
             pending = list(self._pending_history)
             if not pending:
                 return
+            # Tri déterministe : (day, slot, device_id) pour ordre chronologique.
+            pending.sort(key=lambda x: (x[1], x[2], x[0]))
             lines: dict[str, list[str]] = {}
             for device_id, day, slot in pending:
                 bucket = (
@@ -566,17 +570,23 @@ class MemoryStore:
             return copy.deepcopy(room)
 
     def delete_room(self, room_id: int) -> bool:
+        room_id_int = int(room_id)
         with self._lock:
             before = len(self._rooms)
             self._rooms = [
-                item for item in self._rooms if int(item["id"]) != int(room_id)
+                item for item in self._rooms if int(item["id"]) != room_id_int
             ]
             if len(self._rooms) == before:
                 return False
             for device in self._devices.values():
-                if device.get("room_id") == int(room_id):
+                if device.get("room_id") == room_id_int:
                     device["room_id"] = None
-            self._model_links.pop(str(int(room_id)), None)
+            # Supprime les créneaux orphelins rattachés à cette pièce.
+            self._slots = [
+                item for item in self._slots
+                if int(item.get("room_id") or 0) != room_id_int
+            ]
+            self._model_links.pop(str(room_id_int), None)
             self.mark_structure()
             return True
 
@@ -1083,12 +1093,19 @@ class MemoryStore:
                         number = float(value)
                     except (TypeError, ValueError) as err:
                         raise ValueError("Plage de température invalide") from err
+                    # Validation AVANT affectation : sinon une plage rejetée
+                    # laisse quand même la borne appliquée sur l'appareil.
                     if key == "temp_min":
-                        device[key] = round(max(-10.0, min(30.0, number)), 1)
+                        candidate = round(max(-10.0, min(30.0, number)), 1)
+                        other = device.get("temp_max", 30.0)
                     else:
-                        device[key] = round(max(0.0, min(40.0, number)), 1)
-                    if device.get("temp_min", 0) > device.get("temp_max", 30):
-                        device["temp_min"], device["temp_max"] = device["temp_max"], device["temp_min"]
+                        candidate = round(max(0.0, min(40.0, number)), 1)
+                        other = device.get("temp_min", 0.0)
+                    if key == "temp_min" and candidate > other:
+                        raise ValueError("La borne basse dépasse la borne haute")
+                    if key == "temp_max" and other > candidate:
+                        raise ValueError("La borne haute passe sous la borne basse")
+                    device[key] = candidate
                 elif key == "frost_temp":
                     try:
                         device[key] = float(value)
@@ -1143,6 +1160,20 @@ class MemoryStore:
             raise ValueError("Il faut exactement 7 jours")
         if room_id is None and device_id is None:
             raise ValueError("room_id ou device_id requis")
+
+        # Vérifie l'existence de la cible (pièce ou appareil).
+        with self._lock:
+            if room_id is not None:
+                room = next(
+                    (item for item in self._rooms if int(item["id"]) == int(room_id)),
+                    None,
+                )
+                if room is None:
+                    raise ValueError("Pièce inconnue")
+            else:
+                device = self._devices.get(int(device_id))
+                if device is None:
+                    raise ValueError("Appareil inconnu")
 
         with self._lock:
             if room_id is not None:
@@ -1213,12 +1244,22 @@ class MemoryStore:
                 _tmin, _tmax = _tmax, _tmin
 
             for weekday, day in enumerate(days):
-                for slot in day or []:
+                if not isinstance(day, list):
+                    raise ValueError("Créneau invalide")
+                for slot in day:
+                    if not isinstance(slot, dict):
+                        raise ValueError("Créneau invalide")
                     mode = str(slot.get("mode", "off"))
                     if mode not in VALID_MODES:
                         raise ValueError(f"Mode inconnu : {mode}")
                     minutes = _to_minutes(slot.get("time", "00:00"))
-                    temp = max(_tmin, min(_tmax, float(slot.get("temp", 20))))
+                    # Conversion sûre de la température : None/manquant → 20.0
+                    try:
+                        temp_raw = slot.get("temp")
+                        temp_val = 20.0 if temp_raw is None else float(temp_raw)
+                    except (TypeError, ValueError):
+                        temp_val = 20.0
+                    temp = max(_tmin, min(_tmax, temp_val))
                     self._slots.append(
                         {
                             "id": self._next_slot_id,
@@ -1494,16 +1535,29 @@ class MemoryStore:
         if not isinstance(payload, dict):
             raise ValueError("Sauvegarde invalide")
         with self._lock:
+            # Remplacement complet : on vide l'état structurel avant d'importer.
+            self._devices.clear()
+            self._overrides.clear()
+            self._slots.clear()
+            self._week_overrides.clear()
+            self._model_links.clear()
+
             if payload.get("settings"):
                 self.set_settings(payload["settings"])
 
             if "rooms" in payload:
                 self._rooms = []
                 for room in payload.get("rooms") or []:
+                    if not isinstance(room, dict):
+                        continue
+                    try:
+                        room_id = int(room["id"])
+                    except (KeyError, TypeError, ValueError) as err:
+                        raise ValueError("Pièce invalide : identifiant manquant") from err
                     name = _clean_room_name(room.get("name"))
                     self._rooms.append(
                         {
-                            "id": int(room["id"]),
+                            "id": room_id,
                             "name": name,
                             "position": int(room.get("position", 0) or 0),
                             "thermostat_device_id": room.get("thermostat_device_id"),
@@ -1549,6 +1603,12 @@ class MemoryStore:
                     minutes = int(slot["minutes"])
                 except (KeyError, TypeError, ValueError):
                     continue
+                # Accès validé à temp : lève ValueError si manquant/invalide.
+                try:
+                    temp_raw = slot["temp"]
+                    temp_val = float(temp_raw)
+                except (KeyError, TypeError, ValueError) as err:
+                    raise ValueError("Créneau invalide : température manquante") from err
                 room_id = slot.get("room_id")
                 device_id = slot.get("device_id")
                 if room_id not in (None, "", 0, "0"):
@@ -1568,7 +1628,7 @@ class MemoryStore:
                     {
                         "time": _from_minutes(minutes),
                         "mode": slot["mode"],
-                        "temp": slot["temp"],
+                        "temp": temp_val,
                         "fan": slot.get("fan"),
                     }
                 )

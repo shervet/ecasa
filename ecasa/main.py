@@ -225,7 +225,12 @@ _config_write_lock = threading.Lock()  # sérialise les écritures de config.jso
 
 
 def load_config(force: bool = False) -> dict:
-    """Lit config.json une seule fois puis garde le résultat en mémoire."""
+    """Lit config.json une seule fois puis garde le résultat en mémoire.
+
+    Si le fichier est illisible, le renomme (config.json.broken-<timestamp>)
+    et repart sur la configuration par défaut pour permettre au serveur de
+    démarrer. L'erreur est journalisée.
+    """
     global _config_cache
     with _config_lock:
         if _config_cache is not None and not force:
@@ -243,7 +248,16 @@ def load_config(force: bool = False) -> dict:
         try:
             config = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError) as err:
-            raise SystemExit(f"config.json illisible : {err}")
+            # Renomme le fichier corrompu pour ne pas bloquer le démarrage.
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            broken = CONFIG_PATH.with_name(f"config.json.broken-{stamp}")
+            try:
+                CONFIG_PATH.replace(broken)
+                print(f"[config] {CONFIG_PATH.name} illisible ({err}) : renommé en {broken.name}")
+            except OSError:
+                print(f"[config] {CONFIG_PATH.name} illisible ({err}) : impossible de renommer")
+            _config_cache = dict(DEFAULT_CONFIG)
+            return dict(_config_cache)
 
         merged = dict(DEFAULT_CONFIG)
         merged.update(config if isinstance(config, dict) else {})
@@ -557,9 +571,28 @@ def validate_consoapi_values(body: dict) -> dict:
 
 
 def _write_config_locked(config: dict) -> dict:
-    CONFIG_PATH.write_text(
-        json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    # Écriture atomique : fichier temporaire + os.replace (atomique sur Windows aussi).
+    tmp_path = CONFIG_PATH.with_name(
+        f"{CONFIG_PATH.name}.tmp-{os.getpid()}-{int(time.time() * 1000) % 1000000}"
     )
+    try:
+        tmp_path.write_text(
+            json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        # fsync pour durabilité avant le replace
+        try:
+            with tmp_path.open("r") as f:
+                os.fsync(f.fileno())
+        except OSError:
+            pass
+        os.replace(tmp_path, CONFIG_PATH)
+    except OSError:
+        # Nettoyage du temporaire en cas d'échec
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     global _config_cache
     with _config_lock:
         _config_cache = dict(config)
@@ -763,8 +796,8 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
             minutes = int(value)
         except (TypeError, ValueError) as err:
             raise ValueError("Heure de lever invalide") from err
-        if not (0 <= minutes <= 24 * 60):
-            raise ValueError("Heure de lever invalide")
+        if not (0 <= minutes <= 24 * 60 - 1):
+            raise ValueError("Heure de lever invalide (0 à 23:59)")
         updated["pronote_wake_minutes"] = minutes
 
     if "pronote_student_status" in body:
@@ -855,8 +888,8 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
             minutes = int(value)
         except (TypeError, ValueError) as err:
             raise ValueError("Heure de coucher invalide") from err
-        if not (0 <= minutes <= 24 * 60):
-            raise ValueError("Heure de coucher invalide")
+        if not (0 <= minutes <= 24 * 60 - 1):
+            raise ValueError("Heure de coucher invalide (0 à 23:59)")
         updated["pronote_bedtime_minutes"] = minutes
 
     if "pronote_room_overrides" in body:
@@ -953,15 +986,7 @@ def _save_config_locked(body: dict) -> tuple[dict, bool]:
     # --- Consommation électrique (ConsoAPI par bokup) ---------------------
     if "consoapi_enabled" in body:
         updated["consoapi_enabled"] = bool(body.get("consoapi_enabled"))
-    if "consoapi_url" in body:
-        url = str(body.get("consoapi_url") or "").strip().rstrip("/")
-        updated["consoapi_url"] = url or "https://conso.boris.sh/api"
-    if "consoapi_pdl" in body:
-        pdl = re.sub(r"\s+", "", str(body.get("consoapi_pdl") or ""))
-        updated["consoapi_pdl"] = pdl
-    if "consoapi_start" in body:
-        value = str(body.get("consoapi_start") or "").strip()
-        updated["consoapi_start"] = value
+    updated.update(validate_consoapi_values(body))
     if body.get("consoapi_token"):
         updated["consoapi_token"] = str(body["consoapi_token"]).strip()
     elif body.get("consoapi_token_clear"):
@@ -3713,10 +3738,10 @@ class Handler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------------- API
 
     def _loopback(self) -> bool:
-        """Vrai si le client est la machine locale, le réseau local ou Tailscale.
+        """Vrai si le client est la machine locale (loopback) ou Tailscale.
 
-        Autorise ainsi l'administration depuis le LAN / Tailscale sans avoir à
-        activer explicitement « Autoriser les réglages depuis le réseau ».
+        Le LAN privé (RFC 1918) n'est considéré comme local que si
+        ``allow_remote_admin`` est activé (vérifié dans ``_api``).
         """
         addr = str(self.client_address[0] or "").strip()
         try:
@@ -3727,15 +3752,13 @@ class Handler(BaseHTTPRequestHandler):
         mapped = getattr(ip, "ipv4_mapped", None)
         if mapped is not None:
             ip = mapped
+        # Vrai loopback uniquement (127.0.0.0/8, ::1).
         if ip.is_loopback:
             return True
         # Tailscale utilise la plage CGNAT 100.64.0.0/10.
         if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network(
             "100.64.0.0/10"
         ):
-            return True
-        # Réseau local privé (RFC 1918 et assimilés).
-        if ip.is_private:
             return True
         return False
 
@@ -5204,10 +5227,17 @@ class Handler(BaseHTTPRequestHandler):
             except (KeyError, TypeError, ValueError):
                 self._json(400, {"error": "Paramètres de forçage invalides"})
                 return
+            if not 1 <= minutes <= 1440:
+                self._json(400, {"error": "Durée de forçage invalide (1 à 1440 minutes)"})
+                return
             if not app.store.device(device_id):
                 self._json(404, {"error": "Appareil inconnu"})
                 return
-            until = datetime.now() + timedelta(minutes=max(1, minutes))
+            try:
+                until = datetime.now() + timedelta(minutes=minutes)
+            except OverflowError:
+                self._json(400, {"error": "Durée de forçage trop grande"})
+                return
             try:
                 app.store.set_override(device_id, mode, temp, until)
             except ValueError as err:
