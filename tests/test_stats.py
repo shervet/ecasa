@@ -206,18 +206,20 @@ class BuildStatsTests(unittest.TestCase):
         self.assertEqual(stats["room_name"], "Salon")
         self.assertEqual(stats["start"], "2026-10-20")
         self.assertEqual(stats["end"], "2026-10-20")
-        self.assertEqual(len(stats["buckets"]), 24)
+        # 96 buckets: 15-min intervals
+        self.assertEqual(len(stats["buckets"]), 96)
 
         buckets = stats["buckets"]
-        self.assertEqual(buckets[8]["ambient"], 20.0)
-        self.assertEqual(buckets[8]["setpoint"], 19.0)
-        self.assertEqual(buckets[8]["outside"], 12.0)
-        self.assertEqual(buckets[8]["count"], 1)
-        self.assertEqual(buckets[9]["ambient"], 22.0)
-        self.assertEqual(buckets[9]["outside"], 12.6)
-        self.assertIsNone(buckets[10]["ambient"])
-        self.assertIsNone(buckets[10]["outside"])
-        self.assertEqual(buckets[10]["count"], 0)
+        # 08:10 -> bucket 32 (08:00), 09:40 -> bucket 38 (09:30)
+        self.assertEqual(buckets[32]["ambient"], 20.0)
+        self.assertEqual(buckets[32]["setpoint"], 19.0)
+        self.assertEqual(buckets[32]["outside"], 12.0)
+        self.assertEqual(buckets[32]["count"], 1)
+        self.assertEqual(buckets[38]["ambient"], 22.0)
+        self.assertEqual(buckets[38]["outside"], 12.6)
+        self.assertIsNone(buckets[40]["ambient"])
+        self.assertIsNone(buckets[40]["outside"])
+        self.assertEqual(buckets[40]["count"], 0)
 
         summary = stats["summary"]
         self.assertEqual(summary["ambient_avg"], 21.0)
@@ -243,17 +245,27 @@ class BuildStatsTests(unittest.TestCase):
         )
         self.assertEqual(stats["start"], "2026-10-19")
         self.assertEqual(stats["end"], "2026-10-25")
-        self.assertEqual(len(stats["buckets"]), 7)
+        # 168 buckets: hourly for 7 days
+        self.assertEqual(len(stats["buckets"]), 168)
 
-        by_date = {bucket["date"]: bucket for bucket in stats["buckets"]}
-        # Lundi 20 : deux mesures intérieures, moyenne des deux heures de météo.
-        self.assertEqual(by_date["2026-10-20"]["outside"], 12.3)
-        self.assertEqual(by_date["2026-10-20"]["ambient"], 21.0)
-        self.assertEqual(by_date["2026-10-20"]["count"], 2)
-        # Mercredi 21 : la mesure du jour est là.
-        self.assertEqual(by_date["2026-10-21"]["ambient"], 25.0)
-        self.assertEqual(by_date["2026-10-21"]["outside"], 15.0)
-        self.assertEqual(by_date["2026-10-21"]["count"], 1)
+        # Monday 20th is day_index=1 (start=19th), hour 8 -> index 1*24+8=32
+        # Monday 20th hour 9 -> index 1*24+9=33
+        # Wednesday 21st is day_index=2, hour 8 -> index 2*24+8=56
+        monday_8h = stats["buckets"][32]
+        monday_9h = stats["buckets"][33]
+        wed_8h = stats["buckets"][56]
+
+        # Lundi 20 : deux mesures intérieures (08:10, 09:40), moyenne des deux heures de météo (8h, 9h).
+        self.assertEqual(monday_8h["outside"], 12.0)
+        self.assertEqual(monday_8h["ambient"], 20.0)
+        self.assertEqual(monday_8h["count"], 1)
+        self.assertEqual(monday_9h["outside"], 12.6)
+        self.assertEqual(monday_9h["ambient"], 22.0)
+        self.assertEqual(monday_9h["count"], 1)
+        # Mercredi 21 : la mesure du jour est là (08:00).
+        self.assertEqual(wed_8h["ambient"], 25.0)
+        self.assertEqual(wed_8h["outside"], 15.0)
+        self.assertEqual(wed_8h["count"], 1)
 
     def test_month_range_bucket_count(self):
         stats = build_stats(
@@ -266,7 +278,8 @@ class BuildStatsTests(unittest.TestCase):
         )
         self.assertEqual(stats["start"], "2026-10-01")
         self.assertEqual(stats["end"], "2026-10-31")
-        self.assertEqual(len(stats["buckets"]), 31)
+        # 31 days * 24 hours = 744 buckets
+        self.assertEqual(len(stats["buckets"]), 744)
         self.assertEqual(stats["summary"]["samples"], 3)
 
     def test_weather_disabled(self):
@@ -348,15 +361,16 @@ class SetpointSourceTests(unittest.TestCase):
     def test_actuator_alone_defines_setpoint(self):
         stats = self.build(DEVICE_ROWS, make_room_with_actuator())
         buckets = stats["buckets"]
+        # 08:05/08:10 -> bucket 32 (08:00), 09:05/09:10 -> bucket 36 (09:00)
         # Sans le correctif, la moyenne 11.5/19.5 donnerait 15.5.
-        self.assertEqual(buckets[8]["setpoint"], 19.5)
-        self.assertEqual(buckets[9]["setpoint"], 19.5)
+        self.assertEqual(buckets[32]["setpoint"], 19.5)
+        self.assertEqual(buckets[36]["setpoint"], 19.5)
         self.assertEqual(stats["summary"]["setpoint_avg"], 19.5)
         self.assertEqual(stats["setpoint_device_id"], 28129468)
 
     def test_ambient_still_aggregates_all_devices(self):
         stats = self.build(DEVICE_ROWS, make_room_with_actuator())
-        bucket = stats["buckets"][8]
+        bucket = stats["buckets"][32]  # 08:00 bucket
         # (18.0 + 18.4) / 2 : la sonde Wiser et la clim remontent la pièce.
         self.assertEqual(bucket["ambient"], 18.2)
         self.assertEqual(bucket["count"], 2)
@@ -367,7 +381,7 @@ class SetpointSourceTests(unittest.TestCase):
         room["actuator_device_id"] = None
         stats = self.build(DEVICE_ROWS, room)
         buckets = stats["buckets"]
-        self.assertEqual(buckets[8]["setpoint"], 15.5)
+        self.assertEqual(buckets[32]["setpoint"], 15.5)
         self.assertEqual(stats["summary"]["setpoint_avg"], 15.5)
         self.assertIsNone(stats["setpoint_device_id"])
 
@@ -383,12 +397,12 @@ class SetpointSourceTests(unittest.TestCase):
         stats = self.build(rows, make_room_with_actuator())
         buckets = stats["buckets"]
         # Pas de repli sur le thermostat : la consigne est inconnue.
-        self.assertIsNone(buckets[8]["setpoint"])
+        self.assertIsNone(buckets[32]["setpoint"])
         self.assertIsNone(stats["summary"]["setpoint_avg"])
         self.assertIsNone(stats["summary"]["gap_avg"])
         # L'ambiance continue d'agréger tous les appareils.
-        self.assertEqual(buckets[8]["ambient"], 18.2)
-        self.assertEqual(buckets[8]["count"], 2)
+        self.assertEqual(buckets[32]["ambient"], 18.2)
+        self.assertEqual(buckets[32]["count"], 2)
         self.assertEqual(stats["setpoint_device_id"], 28129468)
 
 

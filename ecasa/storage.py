@@ -10,7 +10,7 @@ journal, réglages). eCasa renverse le modèle :
 * les **réglages, pièces, appareils, plannings et événements** sont écrits dans
   ``data/state.json``, de façon *débouncée* (un changement = au plus une
   écriture quelques secondes plus tard) ;
-* les **mesures** sont agrégées par heure puis ajoutées à un journal
+* les **mesures** sont agrégées par tranche de 15 minutes puis ajoutées à un journal
   append-only ``data/history/AAAA-MM.jsonl``, au maximum toutes les
   ``history_interval`` secondes (15 min par défaut).
 
@@ -71,7 +71,7 @@ class MemoryStore:
         Fichier JSON de l'état structurel. ``None`` = pas de persistance
         (utile pour les tests).
     history_dir:
-        Dossier du journal horaire. ``None`` = pas d'historique.
+        Dossier du journal 15 minutes. ``None`` = pas d'historique.
     history_days:
         Durée de conservation de l'historique (180 jours par défaut).
     history_interval:
@@ -313,14 +313,14 @@ class MemoryStore:
             return
         try:
             device_id = int(item["d"])
-            day, hour = str(item["t"]).split("T", 1)
-            moment = datetime.fromisoformat(f"{day}T{hour}:00:00")
+            day, slot = str(item["t"]).split("T", 1)
+            moment = datetime.fromisoformat(f"{day}T{slot}:00")
         except (KeyError, TypeError, ValueError):
             return
         if moment.date() < cutoff:
             return
         bucket = self._samples.setdefault(device_id, {}).setdefault(day, {}).setdefault(
-            hour, {"a_sum": 0.0, "a_n": 0, "s_sum": 0.0, "s_n": 0, "mode": None}
+            slot, {"a_sum": 0.0, "a_n": 0, "s_sum": 0.0, "s_n": 0, "mode": None}
         )
         ambient = item.get("a")
         if isinstance(ambient, list) and len(ambient) == 2:
@@ -407,15 +407,15 @@ class MemoryStore:
             if not pending:
                 return
             lines: dict[str, list[str]] = {}
-            for device_id, day, hour in pending:
+            for device_id, day, slot in pending:
                 bucket = (
-                    self._samples.get(device_id, {}).get(day, {}).get(hour)
+                    self._samples.get(device_id, {}).get(day, {}).get(slot)
                 )
                 if not bucket:
                     continue
                 item = {
                     "d": device_id,
-                    "t": f"{day}T{hour}",
+                    "t": f"{day}T{slot}",
                     "a": [round(bucket.get("a_sum", 0.0), 3), int(bucket.get("a_n", 0))],
                     "s": [round(bucket.get("s_sum", 0.0), 3), int(bucket.get("s_n", 0))],
                     "m": bucket.get("mode"),
@@ -1350,9 +1350,11 @@ class MemoryStore:
         mode,
     ) -> None:
         day = moment.strftime("%Y-%m-%d")
-        hour = f"{moment.hour:02d}"
+        # 15-minute buckets: "00:00", "00:15", "00:30", "00:45"
+        quarter = (moment.minute // 15) * 15
+        slot = f"{moment.hour:02d}:{quarter:02d}"
         bucket = self._samples.setdefault(device_id, {}).setdefault(day, {}).setdefault(
-            hour, {"a_sum": 0.0, "a_n": 0, "s_sum": 0.0, "s_n": 0, "mode": None}
+            slot, {"a_sum": 0.0, "a_n": 0, "s_sum": 0.0, "s_n": 0, "mode": None}
         )
         ambient_value = _float_or_none(ambient)
         if ambient_value is not None:
@@ -1364,7 +1366,7 @@ class MemoryStore:
             bucket["s_n"] = int(bucket["s_n"]) + 1
         if mode:
             bucket["mode"] = mode
-        self._pending_history.add((device_id, day, hour))
+        self._pending_history.add((device_id, day, slot))
 
     def samples(
         self, device_id: int, start: datetime, end: datetime
@@ -1373,16 +1375,16 @@ class MemoryStore:
         with self._lock:
             days = self._samples.get(device_id, {})
             rows = []
-            for day, hours in days.items():
+            for day, slots in days.items():
                 try:
                     day_date = datetime.fromisoformat(f"{day}T00:00:00")
                 except ValueError:
                     continue
                 if day_date.date() < start.date() or day_date.date() > end.date():
                     continue
-                for hour, bucket in hours.items():
+                for slot, bucket in slots.items():
                     try:
-                        moment = datetime.fromisoformat(f"{day}T{hour}:00:00")
+                        moment = datetime.fromisoformat(f"{day}T{slot}:00")
                     except ValueError:
                         continue
                     if moment < start or moment > end:
@@ -1413,13 +1415,13 @@ class MemoryStore:
             valid_days = sorted(days)
             first_day = valid_days[0]
             last_day = valid_days[-1]
-            first_hours = sorted(days[first_day])
-            last_hours = sorted(days[last_day])
+            first_slots = sorted(days[first_day])
+            last_slots = sorted(days[last_day])
             first = (
-                f"{first_day}T{first_hours[0]}:00:00" if first_hours else None
+                f"{first_day}T{first_slots[0]}:00" if first_slots else None
             )
             last = (
-                f"{last_day}T{last_hours[-1]}:00:00" if last_hours else None
+                f"{last_day}T{last_slots[-1]}:00" if last_slots else None
             )
             return first, last
 
