@@ -144,7 +144,12 @@ export function lineChart({
 
     for (const segment of segments) {
       if (segment.length === 1) {
-        paths += `<circle cx="${segment[0].x.toFixed(1)}" cy="${segment[0].y.toFixed(1)}" r="2.6" fill="${color}" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
+        // Render single points as short horizontal line segments (3px wide)
+        // instead of circles, so sparse data appears as a continuous curve
+        const x = segment[0].x.toFixed(1);
+        const y = segment[0].y.toFixed(1);
+        const halfW = 1.5;
+        paths += `<line x1="${Number(x) - halfW}" y1="${y}" x2="${Number(x) + halfW}" y2="${y}" stroke="${color}" stroke-width="2.2" stroke-linecap="round" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
         continue;
       }
 
