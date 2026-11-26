@@ -153,24 +153,33 @@ class WebApiTests(_ApiTestBase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["start"], "2026-11-16")
         self.assertEqual(payload["end"], "2026-11-22")
-        buckets = {item["date"]: item for item in payload["buckets"]}
-        self.assertEqual(len(payload["buckets"]), 7)
+        # Vue semaine : granularité horaire (24 h × 7 jours = 168 buckets).
+        self.assertEqual(len(payload["buckets"]), 168)
+        buckets = {
+            (item["date"], item["hour"]): item for item in payload["buckets"]
+        }
 
-        monday = buckets["2026-11-16"]
-        self.assertEqual(monday["ambient"], 19.0)
-        self.assertEqual(monday["setpoint"], 19.0)
-        self.assertEqual(monday["outside"], 27.0)
-        self.assertEqual(monday["count"], 2)
+        monday_08 = buckets[("2026-11-16", 8)]
+        self.assertEqual(monday_08["ambient"], 18.0)
+        self.assertEqual(monday_08["setpoint"], 19.0)
+        self.assertEqual(monday_08["outside"], 26.0)
+        self.assertEqual(monday_08["count"], 1)
 
-        tuesday = buckets["2026-11-17"]
-        self.assertEqual(tuesday["ambient"], 20.0)
-        self.assertEqual(tuesday["outside"], 28.0)
+        monday_09 = buckets[("2026-11-16", 9)]
+        self.assertEqual(monday_09["ambient"], 20.0)
+        self.assertEqual(monday_09["outside"], 28.0)
 
-        empty = buckets["2026-11-20"]
-        self.assertIsNone(empty["ambient"])
-        self.assertIsNone(empty["setpoint"])
-        self.assertIsNone(empty["outside"])
-        self.assertEqual(empty["count"], 0)
+        tuesday_08 = buckets[("2026-11-17", 8)]
+        self.assertEqual(tuesday_08["ambient"], 19.0)
+        self.assertEqual(tuesday_08["outside"], 27.0)
+
+        # Le jeudi 20 n'a aucune mesure : toutes ses heures restent vides.
+        for hour in (0, 8, 9, 23):
+            empty = buckets[("2026-11-20", hour)]
+            self.assertIsNone(empty["ambient"])
+            self.assertIsNone(empty["setpoint"])
+            self.assertIsNone(empty["outside"])
+            self.assertEqual(empty["count"], 0)
 
     def test_energy_rejects_invalid_period_count(self):
         for value in ("6", "0", "13", "abc"):

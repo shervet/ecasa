@@ -36,6 +36,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 import urllib.request
 
+# config_backup.py vit a la racine du projet : on garantit sa presence dans
+# sys.path meme quand le paquet est importe depuis un autre repertoire.
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import config_backup
 
 from . import __version__
