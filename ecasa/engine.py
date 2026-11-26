@@ -29,7 +29,7 @@ from .schedule import (
 
 TICK_SECONDS = 10
 ANTI_FLAP_SECONDS = 45
-MIN_POLL_SECONDS = 30
+MIN_POLL_SECONDS = 300
 
 # Fenêtre d'apprentissage de la courbe de chauffe et préchauffage météo.
 CURVE_FIT_DAYS = 120
@@ -245,7 +245,7 @@ class Engine:
                     self.poll()
                     interval = max(
                         MIN_POLL_SECONDS,
-                        int(_as_float(self.store.settings().get("poll_interval"), 60)),
+                        int(_as_float(self.store.settings().get("poll_interval"), 300)),
                     )
                     self._next_poll = time.time() + interval
 

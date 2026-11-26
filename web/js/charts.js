@@ -71,14 +71,9 @@ export function lineChart({
   }
 
   const H = height;
-  // Droit margin augmenté pour laisser de la place à l'axe secondaire °C
-  const M_right = 50; // margin droite pour l'axe T°
+  const M_right = 14;
   const innerW = W - M.left - M_right;
   const innerH = H - M.top - M.bottom;
-
-  // Sériés principales (gauche) et température (droite y2)
-  const mainSeries = visible.filter((item) => item.y2 !== true);
-  const tempSeries = visible.filter((item) => item.y2 === true);
 
   let min = yMin === null ? Math.min(...all) : yMin;
   let max = yMax === null ? Math.max(...all) : yMax;
@@ -91,65 +86,20 @@ export function lineChart({
   min -= padding;
   max += padding;
 
-  // --- échelle gauche (consommation / ambiance) ---
-  const leftMin = min;
-  const leftMax = max;
-
-  // --- échelle droite (°C) ---
-  let tempMin = null;
-  let tempMax = null;
-  if (tempSeries.length) {
-    const tempVals = tempSeries.flatMap((item) => item.values).filter(
-      (v) => Number.isFinite(v)
-    );
-    if (tempVals.length) {
-      tempMin = Math.min(...tempVals);
-      tempMax = Math.max(...tempVals);
-      if (tempMax - tempMin < 2) {
-        const center = (tempMax + tempMin) / 2;
-        tempMin = center - 1;
-        tempMax = center + 1;
-      }
-      const tPadding = (tempMax - tempMin) * 0.12;
-      tempMin -= tPadding;
-      tempMax += tPadding;
-    }
-  }
-
   const count = Math.max(labels.length, ...visible.map((item) => item.values.length), 2);
   const x = (index) => M.left + (innerW * index) / Math.max(1, count - 1);
-  // y_gauche: consommation / ambiance
-  const yLeft = (value) => M.top + innerH - ((value - leftMin) / (leftMax - leftMin)) * innerH;
-  // y_droite: température en °C
-  const yRight = (value) =>
-    M.top + innerH - ((value - (tempMin ?? leftMin)) / ((tempMax ?? leftMax) - (tempMin ?? leftMin))) * innerH;
+  const y = (value) => M.top + innerH - ((value - min) / (max - min)) * innerH;
 
   const gridCount = 4;
   let grid = "";
-  // Axe gauche graduations
   for (let i = 0; i <= gridCount; i += 1) {
-    const value = leftMin + ((leftMax - leftMin) * i) / gridCount;
-    const py = yLeft(value);
+    const value = min + ((max - min) * i) / gridCount;
+    const py = y(value);
     grid += `<line x1="${M.left}" y1="${py.toFixed(1)}" x2="${W - M_right}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
-    const gridFont = primaryFont;
     grid += `<text x="${M.left - 8}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${fmtNumber(value, Number.isInteger(value) ? 0 : 1)}</text>`;
   }
-  // Axe droit graduations °C
-  if (tempSeries.length && tempMin !== null && tempMax !== null) {
-    const stepC = (tempMax - tempMin) / gridCount;
-    for (let i = 0; i <= gridCount; i += 1) {
-      const value = tempMin + stepC * i;
-      const py = yRight(value);
-      grid += `<line x1="${W - M_right}" y1="${py.toFixed(1)}" x2="${W - 6}" y2="${py.toFixed(1)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="${i === 0 ? "0" : "3 5"}" opacity="0.8"/>`;
-      const gridFont = primaryFont;
-      grid += `<text x="${W - 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="start" font-size="${primaryFont}" fill="var(--faint)">${fmtNumber(value, 1)}°C</text>`;
-    }
-    // Étiquette d'unité droite
-    grid += `<text x="${W - 6}" y="${Math.round(primaryFont * 0.8) + 2}" text-anchor="start" font-size="${primaryFont}" fill="var(--faint)">${unit}</text>`;
-  } else {
-    // Étiquette d'unité autonome au-dessus de la graduation du haut
-    grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${unit}</text>`;
-  }
+  // Étiquette d'unité au-dessus de la graduation du haut
+  grid += `<text x="${M.left - 8}" y="${Math.round(primaryFont * 0.8) + 2}" text-anchor="end" font-size="${primaryFont}" fill="var(--faint)">${unit}</text>`;
 
   const step = computeLabelStep({
     count,
@@ -177,15 +127,14 @@ export function lineChart({
   let paths = "";
   let points = "";
 
-  // --- Série principale (gauche) ---
-  for (const item of mainSeries) {
+  for (const item of visible) {
     const color = item.color || "var(--primary)";
     const segments = [];
     let current = [];
 
     item.values.forEach((value, index) => {
       if (Number.isFinite(value)) {
-        current.push({ x: x(index), y: yLeft(value) });
+        current.push({ x: x(index), y: y(value) });
       } else if (current.length) {
         segments.push(current);
         current = [];
@@ -199,10 +148,10 @@ export function lineChart({
         continue;
       }
 
-      if (item.area !== false && item.key === mainSeries[0]?.key) {
+      if (item.area !== false && item.key === visible[0]?.key) {
         const first = segment[0].x.toFixed(1);
         const last = segment[segment.length - 1].x.toFixed(1);
-        const base = yLeft(Math.max(leftMin, Math.min(leftMax, leftMin)));
+        const base = y(Math.max(min, Math.min(max, min)));
         paths += `<path d="M ${first} ${base} L ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} L ${last} ${base} Z" fill="${color}" opacity="0.09" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
       }
 
@@ -218,40 +167,6 @@ export function lineChart({
       paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" ${item.dashed ? 'stroke-dasharray="5 5"' : ""} data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
     }
   }
-
-  // --- Série température (droite y2) ---
-  for (const item of tempSeries) {
-    const color = item.color || "var(--cool)";
-    const segments = [];
-    let current = [];
-
-    item.values.forEach((value, index) => {
-      if (Number.isFinite(value)) {
-        current.push({ x: x(index), y: yRight(value) });
-      } else if (current.length) {
-        segments.push(current);
-        current = [];
-      }
-    });
-    if (current.length) segments.push(current);
-
-    for (const segment of segments) {
-      if (segment.length === 1) {
-        // Points non remplis : on ne dessine pas de cercle rempli pour le y2
-        // On peut quand même laisser la hitbox via le title si besoin
-        continue;
-      }
-
-      // Ligne fine en bleu/cyan, non remplie
-      const first = segment[0].x.toFixed(1);
-      const last = segment[segment.length - 1].x.toFixed(1);
-      const base = yRight(Math.max((tempMin ?? leftMin), Math.min((tempMax ?? leftMax), tempMin ?? leftMin)));
-      paths += `<path d="M ${first} ${base} L ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} L ${last} ${base} Z" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
-    }
-  }
-
-  // Légende : on intègre "Temperature (°C)" depuis la série y2
-  // (le chartLegend sera appelé avec les bons labels depuis stats.js)
 
   return `<div class="chart-wrap">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Graphique des températures">
