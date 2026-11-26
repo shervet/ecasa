@@ -97,7 +97,7 @@ export default {
         <div class="page-head">
           <div>
             <h1 class="page-title">Statistiques</h1>
-            <p class="page-sub" id="statsSub">Historique agrégé heure par heure.</p>
+            <p class="page-sub" id="statsSub">Historique agrégé par tranche de 15 min (jour), par heure (semaine/mois).</p>
           </div>
           <div class="page-actions">
             <label class="field" style="min-width:200px">
@@ -311,7 +311,7 @@ function paint() {
     </details>
 
     <p class="hint mt-2">
-      Les mesures sont agrégées par heure en mémoire puis écrites par lots sur le disque.
+      Les mesures sont agrégées par tranche de 15 min (jour) / heure (semaine/mois) en mémoire puis écrites par lots sur le disque.
       ${summary.first_sample ? `Historique du ${fmtDate(summary.first_sample)} au ${fmtDate(summary.last_sample)}.` : ""}
     </p>
   `;
@@ -535,29 +535,40 @@ function periodLabel(payload) {
 function fmtBucketLabel(bucket, range) {
   if (!bucket) return "—";
   if (range === "day") {
+    // Format: "HH:MM" (e.g., "14:30") -> "HH || MM"
     const label = bucket.label || bucket.short || "";
-    if (label.includes("/")) {
-      const parts = label.split("/");
+    if (label.includes(":")) {
+      const parts = label.split(":");
       if (parts.length === 2) {
-        return `${parts[0]} || ${parts[1]}`;
+        return `${parts[0]}h || ${parts[1]}`;
       }
     }
     return label;
   }
   if (range === "week") {
-    const label = bucket.label || bucket.short || "";
+    // Format: "Weekday DD/MM HHh" (e.g., "lundi 06/11 14h") -> "Weekday DD/MM || HHh"
+    // short: "Day.HHh" (e.g., "lun.14h") -> "Day. || HHh"
+    const label = bucket.short || bucket.label || "";
+    if (label.includes(".")) {
+      const parts = label.split(".");
+      if (parts.length === 2) {
+        return `${parts[0]}. || ${parts[1]}`;
+      }
+    }
     if (label.includes(" ")) {
       const parts = label.split(" ");
-      if (parts.length >= 2) {
-        return `${parts[0]} || ${parts[1]}`;
+      if (parts.length >= 3) {
+        return `${parts[0]} ${parts[1]} || ${parts[2]}`;
       }
     }
     return label;
   }
   if (range === "month") {
-    const label = bucket.label || bucket.short || "";
-    if (label.includes("/")) {
-      const parts = label.split("/");
+    // Format: "DD/MM HHh" (e.g., "06/11 14h") -> "DD/MM || HHh"
+    // short: "DD HHh" (e.g., "06 14h") -> "DD || HHh"
+    const label = bucket.short || bucket.label || "";
+    if (label.includes(" ")) {
+      const parts = label.split(" ");
       if (parts.length === 2) {
         return `${parts[0]} || ${parts[1]}`;
       }
