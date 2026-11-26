@@ -10,7 +10,9 @@ Authentification :
 
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 import urllib.error
 import urllib.request
 
@@ -61,6 +63,16 @@ def _as_int(value):
         return int(round(float(value)))
     except (TypeError, ValueError):
         return None
+
+
+def _require_int(value, label: str) -> int:
+    """Convertit un identifiant Wiser en entier, sinon leve WiserError."""
+    try:
+        return int(value)
+    except (TypeError, ValueError) as err:
+        raise WiserError(
+            f"Identifiant {label} Wiser invalide : {value!r}"
+        ) from err
 
 
 def _time_to_minutes(value):
@@ -336,6 +348,11 @@ class WiserClient:
             raise WiserError(f"Erreur Hub Wiser HTTP {err.code}") from err
         except urllib.error.URLError as err:
             raise WiserError(f"Hub Wiser injoignable ({self.host}) : {err.reason}") from err
+        except (OSError, http.client.HTTPException, socket.timeout) as err:
+            # Timeout de lecture du corps ou connexion coupee en cours de
+            # reponse : on les ramene dans WiserError pour que l'engine garde
+            # son message « Hub Wiser injoignable » et son backoff.
+            raise WiserError(f"Hub Wiser injoignable ({self.host}) : {err}") from err
 
     def get_domain(self) -> dict:
         """Lit l'état complet du système Wiser."""
@@ -358,7 +375,7 @@ class WiserClient:
         if isinstance(raw_stats, dict):
             raw_stats = list(raw_stats.values())
         room_stats = {
-            int(stat["id"]): stat
+            _require_int(stat["id"], "RoomStat"): stat
             for stat in raw_stats
             if isinstance(stat, dict) and stat.get("id") is not None
         }
@@ -367,18 +384,21 @@ class WiserClient:
             if device.get("ProductType") != "RoomStat":
                 continue
             try:
-                stat_id = int(device["id"])
-            except (KeyError, TypeError, ValueError):
+                stat_id = _require_int(device.get("id"), "RoomStat")
+            except WiserError:
                 continue
             room_stats.setdefault(stat_id, device)
 
         rooms = []
         for r in raw_rooms:
-            room_id = int(r["id"])
+            room_id = _require_int(r.get("id"), "Room")
             calc_temp = r.get("CalculatedTemperature")
             setpoint = r.get("CurrentSetPoint")
             stat_id = r.get("RoomStatId")
-            stat = room_stats.get(int(stat_id)) if stat_id is not None else None
+            stat_key = (
+                _require_int(stat_id, "RoomStat") if stat_id is not None else None
+            )
+            stat = room_stats.get(stat_key) if stat_key is not None else None
             stat = stat or {}
 
             # L'humidite vient du thermostat d'ambiance quand il en expose une ;
@@ -398,7 +418,7 @@ class WiserClient:
                 "setpoint": round(setpoint / 10.0, 1) if setpoint and setpoint != -32768 else None,
                 "humidity": humidity,
                 "mode": r.get("Mode", "Auto"),
-                "has_room_stat": bool(stat_id and stat_id in room_stats),
+                "has_room_stat": stat_key is not None and stat_key in room_stats,
                 "heating_rate": r.get("HeatingRate", 0),
             })
         return rooms

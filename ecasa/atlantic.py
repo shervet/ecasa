@@ -15,7 +15,9 @@ cloud, tout passe par les serveurs Atlantic.
 
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -74,9 +76,19 @@ def _http(method, path, *, data=None, headers=None, timeout=20):
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as err:
-        return err.code, err.read()
+        try:
+            return err.code, err.read()
+        except (OSError, http.client.HTTPException, socket.timeout) as read_err:
+            raise AtlanticError(
+                f"Reseau injoignable : {read_err}"
+            ) from read_err
     except urllib.error.URLError as err:
         raise AtlanticError(f"Reseau injoignable : {err.reason}") from err
+    except (OSError, http.client.HTTPException, socket.timeout) as err:
+        # Timeout pendant la lecture du corps ou connexion fermee en cours de
+        # reponse : ce ne sont pas des URLError, mais l'appelant doit tout de
+        # meme voir une AtlanticError (et non une exception brute).
+        raise AtlanticError(f"Reseau injoignable : {err}") from err
 
 
 class AtlanticClient:
@@ -294,8 +306,10 @@ class MockAtlanticClient:
     """Compte simule : permet de tester l'interface sans identifiants.
 
     Les identifiants de capacites sont ceux d'une clim Atlantic (passerelle
-    Navizone) : 7 = mode, 17 = consigne, 40 = temperature ambiante,
+    Navizone) : 7 = mode, 40 = consigne, 117 = temperature ambiante,
     100801 = soufflerie, 100803 = orientation des volets, 100804 = balayage.
+    L'ancien identifiant 17 (consigne sur certains firmwares) reste accepte
+    lorsqu'il est fourni par un appareil deja enregistre.
 
     Quand des appareils existent deja (par exemple apres une migration), le
     compte simule les reprend tels quels : la simulation pilote alors la vraie
@@ -316,8 +330,8 @@ class MockAtlanticClient:
             for device in known:
                 device_id = int(device["device_id"])
                 mode_cap = int(device.get("cap_mode") or 7)
-                setpoint_cap = int(device.get("cap_setpoint") or 17)
-                ambient_cap = int(device.get("cap_ambient") or 40)
+                setpoint_cap = int(device.get("cap_setpoint") or 40)
+                ambient_cap = int(device.get("cap_ambient") or 117)
                 fan_cap = int(device.get("cap_fan") or 0) or 100801
                 louver_cap = int(device.get("cap_louver") or 0) or 100803
                 swing_cap = int(device.get("cap_swing") or 0) or 100804
@@ -353,8 +367,8 @@ class MockAtlanticClient:
                         "isAvailable": True,
                         "capabilities": {
                             7: mode,
-                            17: setpoint,
-                            40: ambient,
+                            40: setpoint,
+                            117: ambient,
                             154: name,
                             100801: "5",
                             100803: "4",
@@ -362,8 +376,8 @@ class MockAtlanticClient:
                         },
                     }
                 )
-                self._ambient_caps[device_id] = 40
-                self._setpoint_caps[device_id] = 17
+                self._ambient_caps[device_id] = 117
+                self._setpoint_caps[device_id] = 40
 
     def get_setup(self) -> dict:
         return {
@@ -378,11 +392,18 @@ class MockAtlanticClient:
             if device["deviceId"] == int(device_id):
                 device["capabilities"][int(capability_id)] = str(value)
                 # Petit effet "la clim repond" : la temperature ambiante derive
-                # vers la consigne quand l'appareil tourne.
+                # vers la consigne quand l'appareil tourne. On ne l'aligne pas
+                # instantanement sur la consigne : l'ambiance reste une mesure
+                # distincte de la consigne.
                 if int(capability_id) == self._setpoint_caps.get(int(device_id)):
                     ambient_cap = self._ambient_caps.get(int(device_id))
                     if ambient_cap:
-                        device["capabilities"][ambient_cap] = f"{float(value):.1f}"
+                        target = float(value)
+                        current = float(
+                            device["capabilities"].get(ambient_cap, target)
+                        )
+                        drift = current + (target - current) / 2.0
+                        device["capabilities"][ambient_cap] = f"{drift:.1f}"
                 return True
         return False
 

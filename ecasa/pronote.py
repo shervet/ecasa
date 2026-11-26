@@ -97,19 +97,41 @@ def url_from_uai(uai, account: str = "student") -> str:
     return f"https://{normalized.lower()}.index-education.net/pronote/{page}"
 
 
+def _annuaire_escape(value: str) -> str:
+    """Echappe une valeur pour la syntaxe de l'API Explore v2."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _annuaire_field_search(field: str, value: str) -> str:
+    return f'search({field},"{_annuaire_escape(value)}")'
+
+
 def _annuaire_where(query: str) -> str:
     uai = normalize_uai(query)
     if uai:
         return f'identifiant_de_l_etablissement="{uai}"'
 
-    # Les guillemets et antislashs doivent etre echappes dans la syntaxe de
-    # l'API Explore v2.
-    escaped = query.replace("\\", "\\\\").replace('"', '\\"')
-    return (
-        f'(search(nom_etablissement,"{escaped}") '
-        f'or search(nom_commune,"{escaped}") '
-        f'or search(code_postal,"{escaped}"))'
-    )
+    fields = ("nom_etablissement", "nom_commune", "code_postal")
+    whole = "(" + " or ".join(
+        _annuaire_field_search(field, query) for field in fields
+    ) + ")"
+
+    # search() exige que tous les mots soient dans le meme champ. Une requete
+    # « nom + ville » ou « nom + code postal » ne matche donc rien avec la
+    # recherche sur la requete entiere : on ajoute une combinaison par mot,
+    # chaque mot etant cherche dans l'un des champs.
+    tokens = query.split()
+    if len(tokens) <= 1:
+        return whole
+
+    token_groups = []
+    for token in tokens:
+        token_groups.append(
+            "(" + " or ".join(
+                _annuaire_field_search(field, token) for field in fields
+            ) + ")"
+        )
+    return f"({whole} or (" + " and ".join(token_groups) + "))"
 
 
 def _school_from_record(record: dict) -> dict | None:
