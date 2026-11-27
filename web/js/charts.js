@@ -129,48 +129,41 @@ export function lineChart({
 
   for (const item of visible) {
     const color = item.color || "var(--primary)";
-    const segments = [];
-    let current = [];
 
+    // Un seul tracé continu par série : les tranches sans mesure sont
+    // traversées au lieu de couper la courbe en segments d'un point. En vue
+    // jour (96 tranches de 15 min, beaucoup vides), c'est ce qui redonne la
+    // même ligne qu'en semaine / mois au lieu d'une série de mini-barres.
+    const drawn = [];
     item.values.forEach((value, index) => {
-      if (Number.isFinite(value)) {
-        current.push({ x: x(index), y: y(value) });
-      } else if (current.length) {
-        segments.push(current);
-        current = [];
-      }
+      if (Number.isFinite(value)) drawn.push({ x: x(index), y: y(value) });
     });
-    if (current.length) segments.push(current);
 
-    for (const segment of segments) {
-      if (segment.length === 1) {
-        // Render single points as short horizontal line segments (3px wide)
-        // instead of circles, so sparse data appears as a continuous curve
-        const x = segment[0].x.toFixed(1);
-        const y = segment[0].y.toFixed(1);
-        const halfW = 1.5;
-        paths += `<line x1="${Number(x) - halfW}" y1="${y}" x2="${Number(x) + halfW}" y2="${y}" stroke="${color}" stroke-width="2.2" stroke-linecap="round" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
-        continue;
-      }
+    if (!drawn.length) continue;
 
-      if (item.area !== false && item.key === visible[0]?.key) {
-        const first = segment[0].x.toFixed(1);
-        const last = segment[segment.length - 1].x.toFixed(1);
-        const base = y(Math.max(min, Math.min(max, min)));
-        paths += `<path d="M ${first} ${base} L ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} L ${last} ${base} Z" fill="${color}" opacity="0.09" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
-      }
-
-      let d;
-      if (item.step) {
-        d = `M ${segment[0].x.toFixed(1)} ${segment[0].y.toFixed(1)}`;
-        for (let i = 1; i < segment.length; i += 1) {
-          d += ` H ${segment[i].x.toFixed(1)} V ${segment[i].y.toFixed(1)}`;
-        }
-      } else {
-        d = `M ${segment.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
-      }
-      paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" ${item.dashed ? 'stroke-dasharray="5 5"' : ""} data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
+    if (drawn.length === 1) {
+      // Série réduite à une seule mesure : un point reste visible.
+      points += `<circle cx="${drawn[0].x.toFixed(1)}" cy="${drawn[0].y.toFixed(1)}" r="2.8" fill="${color}" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
+      continue;
     }
+
+    if (item.area !== false && item.key === visible[0]?.key) {
+      const first = drawn[0].x.toFixed(1);
+      const last = drawn[drawn.length - 1].x.toFixed(1);
+      const base = y(Math.max(min, Math.min(max, min)));
+      paths += `<path d="M ${first} ${base} L ${drawn.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")} L ${last} ${base} Z" fill="${color}" opacity="0.09" data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
+    }
+
+    let d;
+    if (item.step) {
+      d = `M ${drawn[0].x.toFixed(1)} ${drawn[0].y.toFixed(1)}`;
+      for (let i = 1; i < drawn.length; i += 1) {
+        d += ` H ${drawn[i].x.toFixed(1)} V ${drawn[i].y.toFixed(1)}`;
+      }
+    } else {
+      d = `M ${drawn.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ")}`;
+    }
+    paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" ${item.dashed ? 'stroke-dasharray="5 5"' : ""} data-series="${escapeHtml(item.key)}" class="chart-series"/>`;
   }
 
   return `<div class="chart-wrap">
