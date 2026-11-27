@@ -176,6 +176,7 @@ Guide détaillé : [docs/installation.md](docs/installation.md).
 | [Calendrier scolaire](docs/calendrier-scolaire.md) | Vacances par zone, jours fériés, alternance, préchauffage et mode vacances. |
 | [Équipements](docs/equipements.md) | Atlantic/Cozytouch, climatisation, Wiser, pièces et appareils. |
 | [API HTTP](docs/api.md) | Toutes les routes JSON et les règles de sécurité. |
+| [Journal des modifications](CHANGELOG.md) | Historique des corrections et évolutions, par version. |
 | [Dépannage](docs/depannage.md) | Symptômes courants et solutions. |
 | [Dons](docs/donations.md) | Soutenir le projet, et comment recevoir des dons avec un minimum de frais. |
 

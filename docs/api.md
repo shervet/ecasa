@@ -7,6 +7,14 @@ Toutes les routes renvoient du JSON. Le serveur écoute sur `http://<hôte>:<por
 
 - Les routes **sensibles** (réglages, Pronote, Tailscale, arrêt/redémarrage, import)
   sont réservées à la machine locale, sauf si `allow_remote_admin` est activé.
+- « Machine locale » signifie **un vrai loopback** (127.0.0.0/8, `::1`) ou le
+  réseau Tailscale (100.64.0.0/10). Les adresses du réseau local privé
+  (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12) ne comptent **pas** comme locales :
+  pour administrer eCasa depuis le Wi‑Fi de la maison, active
+  `allow_remote_admin` dans `config.json`, ou passe par Tailscale.
+- Les routes en lecture (`/api/state`, `/api/meta`, `/api/energy`,
+  `/api/weather`, `/api/system`, `/api/health`) restent accessibles sur le
+  réseau local.
 - Aucune authentification par jeton : eCasa est prévu pour un réseau de confiance
   (maison) ou un accès via Tailscale.
 - Les secrets ne sont jamais renvoyés : seulement des booléens `*_set`.
