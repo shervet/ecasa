@@ -7,7 +7,7 @@ Capacites Cozytouch utilisees :
 """
 
 import unittest
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from unittest import mock
 
 from ecasa.atlantic import AtlanticError, ExecutionTimeout
@@ -857,6 +857,189 @@ class WiserHumidityTests(unittest.TestCase):
         current = engine.current(28129468)
 
         self.assertEqual(current["wiser_humidity"], 47.5)
+
+
+
+class DelegatedNextChangeTests(unittest.TestCase):
+    """BUG 1 : next_change ignorait les creneaux delegues.
+
+    Une clim qui applique le planning d'une piece dont le radiateur Wiser ne
+    sait pas changer de mode renvoyait desired_for correct mais next_change
+    None : l'interface affichait un etat commande sans prochain changement et
+    le prechauffage ne se declarenchait jamais.
+    """
+
+    def _store_with_room(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.upsert_device(1001, "Clim")
+        room = store.add_room("Séjour test")
+        store.update_room(room["id"], {"actuator_device_id": 9001})
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+        store.update_device(
+            1001,
+            {
+                "room_id": room["id"],
+                "device_type": "atlantic",
+                "cap_setpoint_cool": 177,
+            },
+        )
+        days = [[] for _ in range(7)]
+        # Lundi : un seul creneau cool toute la journee ; mardi : rien.
+        days[0] = [{"time": "00:00", "mode": "cool", "temp": 24}]
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+        engine = Engine(store, FakeClient())
+        engine.state = {}
+        engine.availability = {}
+        return store, engine
+
+    def test_delegated_clim_has_a_next_change(self):
+        store, engine = self._store_with_room()
+        clim = store.device(1001)
+        now = datetime(2026, 11, 9, 10, 0)  # lundi
+        desired, source, _ = engine.desired_for(clim, now)
+        self.assertIsNotNone(desired)
+        self.assertEqual(desired["mode"], "cool")
+
+        upcoming = engine.next_change(clim, now)
+        self.assertIsNotNone(upcoming)
+        self.assertEqual(upcoming.slot["mode"], "cool")
+        self.assertEqual(upcoming.slot["temp"], 24)
+
+    def test_delegated_clim_next_change_crosses_the_week(self):
+        # Dimanche soir : le prochain creneau de la piece est lundi prochain.
+        store, engine = self._store_with_room()
+        clim = store.device(1001)
+        now = datetime(2026, 11, 15, 20, 0)  # dimanche
+        upcoming = engine.next_change(clim, now)
+        self.assertIsNotNone(upcoming)
+        self.assertEqual(upcoming.slot["mode"], "cool")
+
+    def test_radiator_next_change_is_unchanged(self):
+        # Le radiateur actionnaire doit garder le meme comportement.
+        store, engine = self._store_with_room()
+        radiator = store.device(9001)
+        now = datetime(2026, 11, 9, 10, 0)
+        upcoming = engine.next_change(radiator, now)
+        self.assertIsNotNone(upcoming)
+        self.assertEqual(upcoming.slot["mode"], "cool")
+
+
+class UnsupportedModeWarningTests(unittest.TestCase):
+    """BUG 2 : l'avertissement de mode non pris en charge etait re-ecrit a
+    chaque lecture (tick, _record_samples, snapshot), ce qui noyait le journal."""
+
+    def test_warning_logged_once_per_device(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        room = store.add_room("Pièce seule")
+        store.update_room(room["id"], {"actuator_device_id": 9001})
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+        days = [[] for _ in range(7)]
+        days[0] = [{"time": "00:00", "mode": "cool", "temp": 24}]
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+        engine = Engine(store, FakeClient())
+        engine.state = {}
+        engine.availability = {}
+
+        for _ in range(3):
+            engine.desired_for(store.device(9001), datetime(2026, 11, 9, 10, 0))
+
+        warnings = [
+            event for event in store.events(200)
+            if "non pris en charge" in event.get("message", "")
+        ]
+        self.assertEqual(len(warnings), 1)
+
+    def test_warning_repeats_after_restart(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        room = store.add_room("Pièce seule")
+        store.update_room(room["id"], {"actuator_device_id": 9001})
+        store.update_device(9001, {"room_id": room["id"], "device_type": "wiser"})
+        days = [[] for _ in range(7)]
+        days[0] = [{"time": "00:00", "mode": "cool", "temp": 24}]
+        for week in ("A", "B"):
+            store.set_slots(room_id=room["id"], week=week, days=days)
+        engine = Engine(store, FakeClient())
+        engine.state = {}
+        engine.availability = {}
+        engine.desired_for(store.device(9001), datetime(2026, 11, 9, 10, 0))
+        engine._warned_unsupported.clear()  # redemarrage du moteur
+        engine.desired_for(store.device(9001), datetime(2026, 11, 9, 11, 0))
+        warnings = [
+            event for event in store.events(200)
+            if "non pris en charge" in event.get("message", "")
+        ]
+        self.assertEqual(len(warnings), 2)
+
+
+class WiserAvailabilityTests(unittest.TestCase):
+    """BUG 6 : tout appareil Wiser etait marque disponible des que le Hub
+    repondait, alors que le chemin Atlantic utilise la vue par appareil."""
+
+    def test_available_only_when_its_room_was_seen(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.update_device(9001, {"room_id": 1, "device_type": "wiser"})
+        engine = Engine(store, FakeClient())
+        engine.wiser_rooms = {1: {"setpoint": 19.0, "temp": 20.0}}
+        self.assertTrue(engine.current(9001)["available"])
+
+    def test_unavailable_when_hub_reports_no_matching_room(self):
+        store = MemoryStore(None)
+        store.upsert_device(9001, "Radiateur")
+        store.update_device(9001, {"room_id": 1, "device_type": "wiser"})
+        engine = Engine(store, FakeClient())
+        engine.wiser_rooms = {7: {"setpoint": 19.0, "temp": 20.0}}
+        self.assertFalse(engine.current(9001)["available"])
+
+
+class OutsideTempPastDateTests(unittest.TestCase):
+    """BUG 5 : une date passee renvoyait l'heure du jour courant (valeur du
+    mauvais jour) au lieu de None."""
+
+    def _engine_with_weather(self, weather):
+        store = MemoryStore(None)
+        engine = Engine(store, FakeClient())
+        engine.weather = weather
+        engine._config_getter = lambda: {
+            "weather_enabled": True,
+            "weather_latitude": 48.85,
+            "weather_longitude": 2.35,
+        }
+        return engine
+
+    def test_past_moment_returns_none(self):
+        calls = []
+
+        class Recorder:
+            def hourly(self, latitude, longitude, start, end):
+                calls.append((start, end))
+
+                class Result:
+                    hours = {}
+                    source = "test"
+                return Result()
+
+        engine = self._engine_with_weather(Recorder())
+        past = datetime.now() - timedelta(days=3)
+        self.assertIsNone(engine._outside_temp_at(past))
+        self.assertEqual(calls, [])
+
+    def test_today_moment_queries_today(self):
+        class Weather:
+            def hourly(self, latitude, longitude, start, end):
+                hours = {date.today().isoformat(): {12: 12.0}}
+                return type(
+                    "Result", (), {"hours": hours, "source": "test"}
+                )()
+
+        engine = self._engine_with_weather(Weather())
+        now = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        self.assertEqual(engine._outside_temp_at(now), 12.0)
 
 
 if __name__ == "__main__":

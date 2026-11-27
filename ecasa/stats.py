@@ -179,6 +179,25 @@ def build_stats(store, weather, room: dict, range_name: str, anchor: date,
     except (TypeError, ValueError):
         actuator_id = None
 
+    # Un actionneur qui n est pas un appareil de la piece ne remonte jamais de
+    # releve : sans cet avertissement, toutes les statistiques de consigne
+    # (moyenne, ecart, consigne par tranche) devenaient silencieusement vides.
+    if actuator_id is not None and not any(
+        int(item.get("device_id")) == actuator_id
+        for item in devices
+        if str(item.get("device_id") or "").lstrip("-").isdigit()
+    ):
+        logger = getattr(store, "log", None)
+        if callable(logger):
+            logger(
+                "avertissement",
+                "L actionnaire de la piece (appareil %d) n est pas rattache a la "
+                "piece : consigne indisponible dans les statistiques."
+                % actuator_id,
+                actuator_id,
+            )
+        actuator_id = None
+
     today = datetime.now().date()
     if anchor > today:
         anchor = today
@@ -648,6 +667,10 @@ def temperature_series(range_name: str, buckets: list[dict],
     if range_name == "year":
         # Group all hourly temps by month (1-12)
         months_temps: dict[int, list[float]] = {m: [] for m in range(1, 13)}
+        # Jours reellement presents par mois : le seuil de couverture doit se
+        # baser sur les heures existantes, pas sur 31*24 (un mois court ou une
+        # fenetre tronquee echouait artificiellement au seuil des 50 %).
+        months_days: dict[int, set[str]] = {m: set() for m in range(1, 13)}
         for day_str, hour_vals in weather_hours.items():
             try:
                 d = datetime.fromisoformat(day_str).date()
@@ -656,6 +679,7 @@ def temperature_series(range_name: str, buckets: list[dict],
             if d > today or d < start:
                 continue
             month = d.month
+            months_days[month].add(day_str)
             for h in range(24):
                 if h in hour_vals:
                     months_temps[month].append(hour_vals[h])
@@ -663,8 +687,8 @@ def temperature_series(range_name: str, buckets: list[dict],
             month = i + 1  # buckets ordered Jan..Dec
             vals = months_temps.get(month, [])
             # 50% des heures de ce mois sur les 365 derniers jours
-            total_hours_in_month = 31 * 24  # approximation; on vérifie le nombre d'éléments réels
-            if len(vals) >= 0.5 * (31 * 24):  # ~50% coverage
+            total_hours = len(months_days.get(month, ())) * 24
+            if total_hours and len(vals) >= 0.5 * total_hours:
                 avg = _average(vals) if vals else None
                 result.append({"label": bucket["label"], "avg_c": avg})
             else:

@@ -158,17 +158,24 @@ class EnergyService:
                     continue
                 values[day.isoformat()] = number
 
-        if refresh and stored is not None:
+        window = [
+            start + timedelta(days=offset)
+            for offset in range((end - start).days + 1)
+        ]
+        if refresh:
+            # Fenêtre de revalidation + jours encore absents : un seul appel
+            # rattrape les trous et corrige les valeurs révisées.
+            refresh_from = end - timedelta(days=6)
             wanted = {
-                start + timedelta(days=offset)
-                for offset in range((end - start).days + 1)
-                if start + timedelta(days=offset) >= end - timedelta(days=6)
+                moment
+                for moment in window
+                if moment >= refresh_from or moment.isoformat() not in values
             }
         else:
             wanted = {
-                start + timedelta(days=offset)
-                for offset in range((end - start).days + 1)
-                if (start + timedelta(days=offset)).isoformat() not in values
+                moment
+                for moment in window
+                if moment.isoformat() not in values
             }
         # Données journalières dispo à J-1 ; évite les requêtes invalides (ex. dateFin=today).
         if self._fetcher is _http_json:
@@ -218,7 +225,10 @@ class EnergyService:
                         if value[0] > cutoff
                     }
             values.update(chunk)
-            self._merge_days(source, chunk)
+            # Le cache disque n'est réécrit que sur la partie rafraîchie :
+            # une valeur révisée par Enedis doit remplacer l'ancienne.
+            refresh_from = end - timedelta(days=6) if refresh else None
+            self._merge_days(source, chunk, refresh_from)
 
         values = {
             key: value
@@ -242,7 +252,19 @@ class EnergyService:
                 self._load_days_locked()
             return self._days.get(source)
 
-    def _merge_days(self, source: str, chunk: dict[str, float]) -> None:
+    def _merge_days(
+        self,
+        source: str,
+        chunk: dict[str, float],
+        overwrite_from: date | None = None,
+    ) -> None:
+        """Fusionne une tranche dans le cache disque.
+
+        ``overwrite_from`` : les jours à partir de cette date (incluse) sont
+        réécrits même s'ils existent déjà — c'est ce que demande un
+        rafraîchissement, sinon une valeur révisée par Enedis resterait
+        éternellement périmée dans ``data/energy.json``.
+        """
         if not self.cache_path or not chunk:
             return
         with self._lock:
@@ -256,7 +278,8 @@ class EnergyService:
                 if day is None or number is None:
                     continue
                 key = day.isoformat()
-                if key not in days:
+                stale = overwrite_from is not None and day >= overwrite_from
+                if key not in days or stale:
                     days[key] = _round(number) or 0.0
                     added = True
             if added:
@@ -1667,17 +1690,6 @@ def _contiguous_ranges(days) -> list[tuple[date, date]]:
     return ranges
 
 
-def _year_chunks(start: date, end: date) -> list[tuple[date, date]]:
-    chunks = []
-    current = start
-    while current <= end:
-        last_day = date(current.year, 12, 31)
-        chunk_end = min(last_day, end)
-        chunks.append((current, chunk_end))
-        current = chunk_end + timedelta(days=1)
-    return chunks
-
-
 def _token_key(token: str) -> str:
     """Empreinte courte du token, pour la clé de cache (jamais le token)."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
@@ -1771,7 +1783,15 @@ def _parse_grandeur(grandeurs: list) -> dict[str, float]:
             number = _as_float(raw)
             if day is None or number is None or number < 0:
                 continue
-            kwh = number / 1000.0 if unit == "WH" else (number if unit == "KWH" else number / 1000.0)
+            # Unite explicite. Une unite inconnue est traitee comme des Wh
+            # (convention Enedis), mais sans jamais diviser deux fois une valeur
+            # deja en kWh : le cas « kWh » est donc teste en premier.
+            if unit == "KWH":
+                kwh = number
+            elif unit in ("", "WH", "WH0", "WATT_HOUR", "WATT-HOUR"):
+                kwh = number / 1000.0
+            else:
+                kwh = number / 1000.0
             key = day.isoformat()
             values[key] = values.get(key, 0.0) + kwh
     return values

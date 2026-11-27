@@ -208,6 +208,9 @@ class Engine:
 
         self._last_attempt: dict[int, float] = {}
         self._missing: dict[int, int] = {}
+        # Appareils déjà signalés pour un mode non pris en charge : on n écrit
+        # l avertissement qu au premier changement, pas à chaque lecture.
+        self._warned_unsupported: set[int] = set()
         self._next_prune = 0.0
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -420,6 +423,16 @@ class Engine:
 
     def _track_missing(self, device_type: str, seen: set[int]) -> None:
         """Retire les appareils absents depuis plusieurs lectures d'affilee."""
+        live = {
+            int(item["device_id"])
+            for item in self.store.devices()
+            if item.get("device_type", "atlantic") == device_type
+        }
+        # Purge : un appareil supprimé par l utilisateur ne doit pas laisser son
+        # compteur d absences traîner en mémoire toute la vie du processus.
+        for stale in list(self._missing):
+            if stale not in live:
+                self._missing.pop(stale, None)
         for device in self.store.devices():
             if device.get("device_type", "atlantic") != device_type:
                 continue
@@ -467,7 +480,9 @@ class Engine:
                 "ambient": ambient,
                 "humidity": room_data.get("humidity"),
                 "has_room_stat": room_data.get("has_room_stat", False),
-                "available": bool(self.wiser_rooms),
+                # Disponible seulement si CET appareil a ete vu lors de la
+                # derniere lecture du Hub (sinon tout le Hub marque tout vert).
+                "available": room_id in self.wiser_rooms,
             }
 
         # CLIMATISATION ATLANTIC COZYTOUCH
@@ -571,13 +586,6 @@ class Engine:
                 control_room = room
                 break
         if not slots:
-            # Also check if room has actuator pointing to this device
-            for room in self.store.rooms():
-                if room.get("actuator_device_id") == device["device_id"]:
-                    slots = self.store.slots(room_id=room["id"], week=week)
-                    control_room = room
-                    break
-        if not slots:
             # Appareil non actionnaire (ex. climatisation) qui prend en charge
             # le mode d'une pièce que son actionnaire ne sait pas appliquer.
             slots = self._delegated_slots(device, week, now)
@@ -593,12 +601,14 @@ class Engine:
             # appliquer ce mode : on lui laisse la main.
             if self._delegates_to(device, mode):
                 return None, "délégué", None
-            self.store.log(
-                "avertissement",
-                f"Mode {MODE_LABELS.get(mode, mode)} non pris en charge par "
-                f"{device['name']} : créneau ignoré.",
-                device["device_id"],
-            )
+            if device["device_id"] not in self._warned_unsupported:
+                self._warned_unsupported.add(device["device_id"])
+                self.store.log(
+                    "avertissement",
+                    f"Mode {MODE_LABELS.get(mode, mode)} non pris en charge par "
+                    f"{device['name']} : créneau ignoré.",
+                    device["device_id"],
+                )
             return None, "mode non pris en charge", None
 
         desired = {
@@ -805,8 +815,12 @@ class Engine:
             return self._current_outside_temp()
 
         today = datetime.now().date()
+        if moment.date() < today:
+            # Une date passee n a pas de prevision : renvoyer None plutot que
+            # l heure du jour (ancien comportement : valeur du mauvais jour).
+            return None
         try:
-            if moment.date() <= today:
+            if moment.date() == today:
                 result = self.weather.hourly(latitude, longitude, today, today)
                 hours = (result.hours or {}).get(today.isoformat(), {})
                 temp = hours.get(moment.hour)
@@ -1129,29 +1143,33 @@ class Engine:
             cursor = at + timedelta(minutes=1)
         return None
 
+    def _control_slots(self, device: dict, week: str) -> list:
+        """Créneaux qui commandent cet appareil, dans l ordre de priorité de
+        :meth:`desired_for` : pièce actionnaire, puis pièce déléguée (une clim
+        qui applique le planning d une pièce dont l actionnaire ne sait pas
+        appliquer le mode), puis créneaux de l appareil seul."""
+        device_id = device.get("device_id")
+        for room in self.store.rooms():
+            if room.get("actuator_device_id") == device_id:
+                slots = self.store.slots(room_id=room["id"], week=week)
+                if slots:
+                    return slots
+        delegated = self._delegated_slots(device, week, datetime.now())
+        if delegated:
+            return delegated
+        return self.store.slots(device_id, week)
+
     def next_change(self, device: dict, now: datetime | None = None):
         now = now or datetime.now()
         settings = self.store.settings()
         week = week_type(now, settings, self.store.week_overrides())
-        slots = []
-        for room in self.store.rooms():
-            if room.get("actuator_device_id") == device["device_id"]:
-                slots = self.store.slots(room_id=room["id"], week=week)
-                break
-        if not slots:
-            slots = self.store.slots(device["device_id"], week)
+        slots = self._control_slots(device, week)
         upcoming = next_slot(slots, now)
         wiser = device.get("device_type", "atlantic") == "wiser"
 
         if not upcoming:
             other_week = "B" if week == "A" else "A"
-            slots_other = []
-            for room in self.store.rooms():
-                if room.get("actuator_device_id") == device["device_id"]:
-                    slots_other = self.store.slots(room_id=room["id"], week=other_week)
-                    break
-            if not slots_other:
-                slots_other = self.store.slots(device["device_id"], other_week)
+            slots_other = self._control_slots(device, other_week)
             upcoming = self._next_valid_slot(
                 slots_other,
                 other_week,
@@ -1167,13 +1185,7 @@ class Engine:
         if target_at:
             target_week = week_type(target_at, settings, self.store.week_overrides())
             if target_week != week:
-                slots_target = []
-                for room in self.store.rooms():
-                    if room.get("actuator_device_id") == device["device_id"]:
-                        slots_target = self.store.slots(room_id=room["id"], week=target_week)
-                        break
-                if not slots_target:
-                    slots_target = self.store.slots(device["device_id"], target_week)
+                slots_target = self._control_slots(device, target_week)
                 target_upcoming = self._next_valid_slot(
                     slots_target,
                     target_week,

@@ -103,6 +103,19 @@ class AtlanticClient:
 
     # ------------------------------------------------------------------ auth
 
+    def _retry_after(self, status: int, headers=None) -> float:
+        """Delai avant reprise fourni par le serveur, ou 60 s par defaut."""
+        try:
+            raw = (headers or {}).get("Retry-After")
+        except AttributeError:
+            raw = None
+        if raw is None:
+            return 60.0
+        try:
+            return max(1.0, float(raw))
+        except (TypeError, ValueError):
+            return 60.0
+
     def login(self) -> None:
         """Obtient un token OAuth2 (grant_type=password)."""
         body = urllib.parse.urlencode(
@@ -128,6 +141,12 @@ class AtlanticClient:
         if status in (400, 401, 403):
             raise AuthError(
                 "Identifiants Cozytouch refuses (verifie l'e-mail et le mot de passe)."
+            )
+        if status == 429:
+            # Conserver retry_after : le moteur s'en sert pour son backoff.
+            raise RateLimited(
+                "Connexion Cozytouch temporairement refusee (trop de requetes).",
+                self._retry_after(status),
             )
         if status != 200:
             raise AtlanticError(f"Connexion impossible : HTTP {status}")
@@ -198,7 +217,9 @@ class AtlanticClient:
 
             return status, raw
 
-        raise AtlanticError("Authentification refusee apres renouvellement")
+        # Boucle epuisee sans succès (les 3 tentatives de relecture sont
+        # reservees aux GET 5xx : toute autre repartie est sortie plus haut).
+        raise AuthError("Authentification refusee apres renouvellement")
 
     # ------------------------------------------------------------------ lecture
 
