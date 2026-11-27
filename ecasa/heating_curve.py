@@ -106,9 +106,12 @@ def advance_minutes(
 ) -> float:
     """Calcule l'avance Δt (minutes) pour atteindre la consigne à l'heure.
 
-    Retourne 0 si la hausse demandée est négligeable. Si t_out est absent,
-    tau1 est neutralisé (τ = tau0 seul). Résultat borné dans [0, cap]
-    (120 min par défaut, soit 2 h).
+    Modèle calibré par :func:`fit_tau` : la montée part de ``t_room`` et vise
+    ``target - eps``, soit
+    ``Δt = τ * 60 * ln((target - eps - t_out) / (t_room - t_out))``.
+    Si t_out est absent, tau1 est neutralisé (τ = tau0 seul) et la formule
+    historique ``Δt = τ * 60 * ln((target - t_room) / eps)`` est conservée.
+    Résultat borné dans [0, cap] (120 min par défaut, soit 2 h).
     """
     try:
         tau0_f = float(tau0)
@@ -126,19 +129,27 @@ def advance_minutes(
 
     if t_out is None:
         tau_hours = tau0_f
+        ratio = None
     else:
         try:
             t_out_f = float(t_out)
         except (TypeError, ValueError):
             tau_hours = tau0_f
+            ratio = None
         else:
             tau_hours = tau0_f + tau1_f * t_out_f
+            denominator = t_room_f - t_out_f
+            if denominator == 0.0:
+                return 0.0
+            ratio = (target_f - eps_f - t_out_f) / denominator
 
     # τ doit être positif pour une montée significative.
     if tau_hours <= 0.0:
         return 0.0
 
-    ratio = delta_t / eps_f
+    if ratio is None:
+        # Repli sans météo : formule historique centrée sur l'écart à la cible.
+        ratio = delta_t / eps_f
     if ratio <= 1.0:
         return 0.0
 

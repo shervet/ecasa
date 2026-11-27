@@ -190,12 +190,30 @@ class AdvanceMinutesTests(unittest.TestCase):
         # Défaut verrouillé à 120 min (2 h).
         self.assertEqual(advance_minutes(20.0, 0.0, None, 15.0, 22.0), 120.0)
 
-    def test_missing_t_out_uses_tau0_only(self):
+    def test_missing_t_out_uses_tau0_only_branch(self):
         without = advance_minutes(0.6, 0.2, None, 19.5, 20.0)
-        tau0_only = advance_minutes(0.6, 0.0, 0.0, 19.5, 20.0)
-        with_t_out = advance_minutes(0.6, 0.2, 5.0, 19.5, 20.0)
+        tau0_only = advance_minutes(0.6, 0.0, None, 19.5, 20.0)
         self.assertAlmostEqual(without, tau0_only, places=6)
+        # Avec t_out connu, la formule calibrée (target - eps - t_out) diffère.
+        with_t_out = advance_minutes(0.6, 0.2, 5.0, 19.5, 20.0)
         self.assertNotAlmostEqual(with_t_out, without, places=6)
+
+    def test_agrees_with_fitted_tau_for_known_t_out(self):
+        # Montée synthétique calibrée à τ = 2,5 h (t_out=5, t_room=17, cible=21).
+        transitions = [
+            transition(4.0, 17.0, 21.0, 2.5),
+            transition(5.0, 17.0, 21.0, 2.5),
+            transition(6.0, 17.0, 21.0, 2.5),
+        ]
+        fit = fit_tau(transitions)
+        self.assertIsNotNone(fit)
+        self.assertAlmostEqual(fit["tau0"], 2.5, delta=1e-6)
+        self.assertAlmostEqual(fit["tau1"], 0.0, delta=1e-6)
+
+        minutes = advance_minutes(fit["tau0"], fit["tau1"], 5.0, 17.0, 21.0)
+        expected = 2.5 * 60.0 * math.log((21.0 - 0.2 - 5.0) / (17.0 - 5.0))
+        self.assertAlmostEqual(minutes, expected, places=6)
+        self.assertAlmostEqual(minutes, 41.3, delta=0.1)
 
     def test_non_positive_tau_returns_zero(self):
         self.assertEqual(advance_minutes(0.0, 0.0, None, 16.0, 20.0), 0.0)
@@ -234,6 +252,21 @@ class BuildTableTests(unittest.TestCase):
             self.assertEqual(minutes, round(minutes, 1))
             self.assertGreaterEqual(minutes, 0.0)
             self.assertLessEqual(minutes, 120.0)
+
+    def test_known_t_out_produces_non_flat_table(self):
+        # Scénario du bug : τ = 3 h + 0,06 h/°C à t_out = 5 °C, cible 21 °C.
+        table = build_table(3.0, 0.06, 5.0, 21.0)
+        self.assertEqual(len(table), 13)
+        minutes = [row[1] for row in table]
+        self.assertGreater(len(set(minutes)), 1)
+        self.assertEqual(minutes, sorted(minutes, reverse=True))
+        expected_last = round(
+            (3.0 + 0.06 * 5.0)
+            * 60.0
+            * math.log((21.0 - 0.2 - 5.0) / (19.0 - 5.0)),
+            1,
+        )
+        self.assertEqual(minutes[-1], expected_last)
 
     def test_missing_target_defaults_to_19(self):
         self.assertEqual(

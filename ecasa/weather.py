@@ -26,8 +26,12 @@ METEOFRANCE_URL = "https://api.open-meteo.com/v1/meteofrance"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
-# Open-Meteo accepte past_days jusqu'à 92 ; on garde une marge.
-MAX_METEOFRANCE_PAST_DAYS = 88
+# Open-Meteo accepte past_days jusqu'à 92, mais l'horizon réel des modèles
+# Météo-France (AROME) est d'environ 63 jours : au-delà, l'endpoint renvoie
+# bien 93 jours d'horodatages mais les premiers jours sont tous nuls
+# (vérifié le 2026-11-26 : première journée exploitable à J-64). On garde
+# 8 jours de marge sous cet horizon réel.
+MAX_METEOFRANCE_PAST_DAYS = 55
 CACHE_SECONDS = 600
 DAILY_CACHE_SECONDS = 1800
 ERROR_RETRY_SECONDS = 60
@@ -314,10 +318,61 @@ class WeatherService:
 
         payload = self._http_json(url, params)
         hours = _parse_hourly(payload, start, end)
-        if not hours:
-            raise WeatherError("Aucune température extérieure reçue du service météo")
         resolved_lat = float(payload.get("latitude") or latitude)
         resolved_lon = float(payload.get("longitude") or longitude)
+
+        if use_meteofrance:
+            # L'horizon réel d'AROME (~63 j) peut être plus court que la limite
+            # théorique : les jours de tête vides sont complétés par l'archive
+            # au lieu d'être perdus. On ne réécrit jamais une mesure
+            # Météo-France déjà reçue.
+            first_day = None
+            for day_iso in hours:
+                try:
+                    day = date.fromisoformat(str(day_iso))
+                except ValueError:
+                    continue
+                if first_day is None or day < first_day:
+                    first_day = day
+            backfill_end = first_day - timedelta(days=1) if first_day else end
+            if backfill_end >= start:
+                had_hours = bool(hours)
+                archive_params = {
+                    "latitude": f"{latitude:.4f}",
+                    "longitude": f"{longitude:.4f}",
+                    "hourly": "temperature_2m",
+                    "start_date": start.isoformat(),
+                    "end_date": backfill_end.isoformat(),
+                    "timezone": "Europe/Paris",
+                }
+                try:
+                    archive_payload = self._http_json(ARCHIVE_URL, archive_params)
+                except WeatherError:
+                    # Archive indisponible : on conserve les mesures
+                    # Météo-France déjà reçues ; si la plage est entièrement
+                    # vide, l'erreur standard ci-dessous reste levée.
+                    pass
+                else:
+                    archive_hours = _parse_hourly(
+                        archive_payload, start, backfill_end
+                    )
+                    for day, bucket in archive_hours.items():
+                        hours.setdefault(day, {}).update(bucket)
+                    if archive_hours:
+                        source = (
+                            "Réanalyse ERA5 + Météo-France"
+                            if had_hours
+                            else "Réanalyse ERA5 via Open-Meteo"
+                        )
+                        resolved_lat = float(
+                            archive_payload.get("latitude") or resolved_lat
+                        )
+                        resolved_lon = float(
+                            archive_payload.get("longitude") or resolved_lon
+                        )
+
+        if not hours:
+            raise WeatherError("Aucune température extérieure reçue du service météo")
         return hours, source, resolved_lat, resolved_lon
 
     @staticmethod
