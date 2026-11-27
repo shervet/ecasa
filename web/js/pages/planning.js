@@ -697,6 +697,11 @@ function paintRooms() {
       const tid = sel.dataset.target;
       const t = targets.find((x) => x.id === tid);
       if (!t) return;
+      if (dirty && !confirm("Des modifications ne sont pas enregistrées. Changer d'appareil ?")) {
+        const current = t.device?.device_id;
+        if (current != null) sel.value = String(current);
+        return;
+      }
       const nextId = Number(event.target.value);
       const device = (t.devices || []).find((d) => Number(d.device_id) === nextId);
       if (!device) return;
@@ -1055,6 +1060,7 @@ function dominantMode(slots) {
 
 async function linkRoomToModel(t, model) {
   if (!t || t.kind !== "room" || !model) return;
+  if (dirty && !confirm("Des modifications ne sont pas enregistrées. Lier cette pièce à un modèle ?")) return;
   try {
     await put(`/api/model-links/${t.targetId}`, { model_id: model.id });
     await loadAllModels();

@@ -139,6 +139,9 @@ async function mountRoute() {
   activePage = PAGES[id];
   activeId = id;
   markActive(id);
+  // Titre et état actif posés avant le mount : celui-ci peut attendre des
+  // appels réseau lents et le titre ne doit pas retarder la route.
+  document.title = `${activePage.title || "eCasa"} · eCasa`;
 
   const view = $("#view");
   if (!view) return;
@@ -161,7 +164,6 @@ async function mountRoute() {
 
   view.scrollTop = 0;
   window.scrollTo({ top: 0, behavior: "instant" });
-  document.title = `${activePage.title || "eCasa"} · eCasa`;
 }
 
 function escapeText(value) {
@@ -190,15 +192,20 @@ function updateChrome() {
   const dot = $("#statusDot");
   const label = $("#statusLabel");
   if (dot) {
-    dot.addEventListener("click", () => {
-      location.hash = "#/health";
-    });
-    dot.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
+    // Les écouteurs ne sont posés qu'une seule fois : updateChrome() est
+    // appelé chaque seconde par setInterval et ne doit pas les empiler.
+    if (dot.dataset.listenersBound !== "1") {
+      dot.dataset.listenersBound = "1";
+      dot.addEventListener("click", () => {
         location.hash = "#/health";
-      }
-    });
+      });
+      dot.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          location.hash = "#/health";
+        }
+      });
+    }
     dot.style.cursor = "pointer";
     dot.setAttribute("role", "button");
     dot.setAttribute("tabindex", "0");

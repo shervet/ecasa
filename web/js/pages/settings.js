@@ -1972,10 +1972,12 @@ async function saveSection(name, button, { silent = false } = {}) {
           if (store.state) store.state.settings = settingsPayload.settings;
         }
       }
-      if (name === "energy") {
-        const clear = container.querySelector('[data-key="med_token_clear"]');
-        if (clear) clear.checked = false;
-      }
+      // Les cases « *_clear » sont des instructions d'effacement à usage
+      // unique : on les désarme après l'enregistrement pour qu'un autosave
+      // ultérieur (champ secret laissé vide) ne supprime pas le secret.
+      container.querySelectorAll('[data-key$="_clear"]').forEach((node) => {
+        if (node.type === "checkbox") node.checked = false;
+      });
       await refreshConfig({ silent: true });
       await refreshSystem({ silent: true });
       renderStorage();
@@ -2144,7 +2146,9 @@ async function findWiser(event) {
     const payload = await get("/api/wiser/find");
     const candidates = payload.candidates || [];
     if (!candidates.length) {
-      host.innerHTML = `<p class="hint">Aucun Hub détecté. Vérifie que le Hub est allumé et sur le même réseau.</p>` + host.innerHTML.split("<p class=\"hint\" style=\"margin-top:12px\">")[1] ? `<p class="hint" style="margin-top:12px">Pour récupérer la clé du Hub : dans l'application Wiser, va dans <strong>Réglages → Passerelle → Secret</strong>, ou utilise la touche physique du Hub lors du premier appairage.</p>` : "";
+      const noHub = `<p class="hint">Aucun Hub détecté. Vérifie que le Hub est allumé et sur le même réseau.</p>`;
+      const keyHint = `<p class="hint" style="margin-top:12px">Pour récupérer la clé du Hub : dans l'application Wiser, va dans <strong>Réglages → Passerelle → Secret</strong>, ou utilise la touche physique du Hub lors du premier appairage.</p>`;
+      host.innerHTML = noHub + keyHint;
       return;
     }
     const resultsHtml = candidates
