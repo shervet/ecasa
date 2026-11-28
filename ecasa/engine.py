@@ -30,11 +30,21 @@ from .schedule import (
 TICK_SECONDS = 10
 ANTI_FLAP_SECONDS = 45
 MIN_POLL_SECONDS = 300
+# Thread dedie aux recalcs de courbe : il a sa propre cadence et ne doit jamais
+# retarder la periode de lecture des appareils (courbe meteo, fits).
+CURVE_FIT_INTERVAL_SECONDS = 60
+# Le rechauffe meteo est memoise : l'historique des 120 derniers jours change
+# peu, un TTL borne les fetches entre deux sequences (une seule sequence par TTL,
+# mutualisee entre les pieces via le meme cache).
+WEATHER_WARM_TTL_SECONDS = 3600
+# Plancher entre deux appels externes (météo, appareils) : une lecture au plus
+# toutes les 5 minutes (contrainte utilisateur). Les fetches météo enchaînés par le
+# warm du fit respectent ce plancher : pas de rafale d'appels.
+EXTERNAL_CALL_FLOOR_SECONDS = 300.0
 
 # Fenêtre d'apprentissage de la courbe de chauffe et préchauffage météo.
 CURVE_FIT_DAYS = 120
 WEATHER_WARM_CHUNK_DAYS = 30
-WEATHER_WARM_PAUSE_SECONDS = 0.2
 
 # Le Hub Wiser n'a pas de vrai mode "off" : on envoie une consigne hors gel.
 # 6 °C est la valeur utilisee par les thermostats Wiser pour la protection gel.
@@ -215,10 +225,16 @@ class Engine:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._fit_thread: threading.Thread | None = None
         self._next_poll = 0.0
         # Courbe de chauffe : recalcul du fit une fois par jour (par pièce).
         self._next_curve_fit: dict[int, float] = {}
         self._curve_fit_dirty: set[int] = set()
+        # Dernier appel externe effectif (météo Open-Meteo, appareil) : sert de
+        # repère au plancher de cadence entre deux appels.
+        self._last_external_call: float = 0.0
+        # Horodatage du dernier rechauffe meteo effectue : TTL memoise.
+        self._weather_warm_ts: float = 0.0
 
     def _config(self) -> dict:
         getter = self._config_getter
@@ -234,23 +250,47 @@ class Engine:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        if self._fit_thread and self._fit_thread.is_alive():
+            return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="engine", daemon=True)
         self._thread.start()
+        self._fit_thread = threading.Thread(
+            target=self._fit_loop, name="engine-curve", daemon=True
+        )
+        self._fit_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        if self._fit_thread and self._fit_thread.is_alive():
+            self._fit_thread.join(timeout=5.0)
+
+    def _fit_loop(self) -> None:
+        """Thread dedie : fits de courbe de chauffe (quotidien / demandes).
+
+        Un fit peut declencher un warm meteo en cascade (chunks espaces par le
+        plancher de cadence). Il tourne hors du thread moteur : la boucle de
+        lecture des appareils (Wiser + Atlantic, poll 300 s) ne doit pas etre
+        bloquee par la duree des calculs lourds.
+        """
+        while not self._stop.is_set():
+            self._tick_curve_fits()
+            self._stop.wait(CURVE_FIT_INTERVAL_SECONDS)
 
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
                 if time.time() >= self._next_poll:
-                    self.poll()
                     interval = max(
                         MIN_POLL_SECONDS,
                         int(_as_float(self.store.settings().get("poll_interval"), 300)),
                     )
+                    # Planifie AVANT d'executer la lecture : la periode de 300 s
+                    # (plancher MIN_POLL_SECONDS) est garantie meme si le tick
+                    # suivant (application, fit) merite plus longtemps que la
+                    # fenetre.
                     self._next_poll = time.time() + interval
+                    self.poll()
 
                 self.tick()
             except RateLimited as err:
@@ -895,7 +935,7 @@ class Engine:
             }
         return None
 
-    def _warm_weather_cache(self) -> None:
+    def _warm_weather_cache(self, force: bool = False) -> None:
         """Préchauffe le cache météo de la fenêtre du fit (T_ext des montées).
 
         Réutilise l'appel multi-jours des statistiques
@@ -903,6 +943,10 @@ class Engine:
         rafale d'appels quotidiens déclenchait le disjoncteur météo et forçait
         le repli à 10 °C tous les jours. Un chunk en échec n'interrompt pas les
         suivants ni le fit ; le repli existant reste le secours.
+
+        Le rechauffe est memoise : l'historique des 120 derniers jours change
+        peu, un TTL borne les fetches (une seule sequence par TTL), ce qui
+        mutualise le travail entre les pieces sans rafale d'appels.
         """
         weather = self.weather
         if weather is None:
@@ -914,6 +958,10 @@ class Engine:
             latitude = float(config.get("weather_latitude"))
             longitude = float(config.get("weather_longitude"))
         except (TypeError, ValueError):
+            return
+        if not force and time.time() - self._weather_warm_ts < WEATHER_WARM_TTL_SECONDS:
+            # Rechauffe memoise : pas de second fetch tant que le TTL n'est pas
+            # expire (l'historique des 120 derniers jours change peu).
             return
 
         today = datetime.now().date()
@@ -928,13 +976,34 @@ class Engine:
         chunks.reverse()
 
         for index, (chunk_start, chunk_end) in enumerate(chunks):
+            if not force:
+                # Plancher de cadence entre deux appels externes : le warm ne
+                # chain jamais des fetches Open-Meteo plus d'une fois toutes les
+                # 5 minutes (pas de rafale). Un warm force (action utilisateur)
+                # reste une sequence volontaire.
+                self._wait_external_slot()
             try:
                 weather.hourly(latitude, longitude, chunk_start, chunk_end)
             except Exception:  # noqa: BLE001 - un chunk en échec ne bloque rien
                 continue
-            if index < len(chunks) - 1:
-                # Limite de débit Open-Meteo : petite pause entre les chunks.
-                time.sleep(WEATHER_WARM_PAUSE_SECONDS)
+
+        self._weather_warm_ts = time.time()
+
+    def _wait_external_slot(self) -> None:
+        """Bloque le prochain appel externe jusqu'au plancher de cadence.
+
+        Contrainte utilisateur : au plus un appel externe (appareil ou météo)
+        toutes les 5 minutes. Entre deux fetches Open-Meteo du warm du fit, la
+        boucle attend donc la fin du plancher au lieu de chaîner les requêtes.
+        """
+        if not self._last_external_call:
+            # Premier appel externe : aucun plancher a ete franchi.
+            self._last_external_call = time.time()
+            return
+        wait = self._last_external_call + EXTERNAL_CALL_FLOOR_SECONDS - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        self._last_external_call = time.time()
 
     def refresh_room_curve_fit(self, room_id: int, force: bool = False) -> None:
         """Recalcule et persiste le fit de courbe de chauffe pour une pièce."""
@@ -953,7 +1022,7 @@ class Engine:
 
         # La dépendance à la température extérieure vient du cache météo :
         # on le réchauffe avant d'extraire les transitions.
-        self._warm_weather_cache()
+        self._warm_weather_cache(force=force)
 
         counters: dict = {}
         fit_counters: dict = {}
@@ -1199,9 +1268,10 @@ class Engine:
         return Upcoming(upcoming, week, wiser)
 
     def tick(self, force: bool = False) -> None:
-        # Courbe de chauffe : recalcul des fits (quotidien / à l'activation).
-        self._tick_curve_fits()
-
+        # Courbe de chauffe : les fits (quotidien / a l'activation) sont
+        # desormais pilotes par le thread dedie (_fit_loop), hors de la boucle
+        # de lecture. Un fit long (fetch meteo en cascade) ne doit pas retarder
+        # la periode de 300 s des lectures appareils.
         if not self.store.flag("engine_enabled"):
             return
 

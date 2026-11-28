@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from ecasa import heating_curve
-from ecasa.engine import Engine
+from ecasa.engine import Engine, MIN_POLL_SECONDS
 from ecasa.main import _enrich_room_heating_curve
 from ecasa.heating_curve import (
     _outside_temp_at,
@@ -529,7 +529,8 @@ class CurveFitDebugTests(unittest.TestCase):
         engine = Engine(
             store, _Client(), weather=weather, config_getter=lambda: CONFIG
         )
-        engine.refresh_room_curve_fit(room_id, force=True)
+        with mock.patch("ecasa.engine.time.sleep"):
+            engine.refresh_room_curve_fit(room_id, force=True)
         return store.room(room_id)["curve_fit"]
 
     def test_debug_reports_meteo_source(self):
@@ -714,6 +715,83 @@ class WeatherWarmTests(unittest.TestCase):
         self.assertEqual(fit["n"], 6)
         self.assertEqual(fit["debug"]["source"], "fallback_10c")
         self.assertIs(fit["t_out_fallback"], True)
+
+
+class WeatherWarmTtlTests(unittest.TestCase):
+    """Le rechauffe meteo est memoise : une seule sequence de fetch par TTL,
+    quelle que soit le nombre de pieces (pas de burst entre les pieces)."""
+
+    def _engine(self, weather):
+        store, room_id = _store_with_rises(_rise_rows(_moment(5)))
+        return Engine(store, _Client(), weather=weather, config_getter=lambda: CONFIG)
+
+    def test_second_warm_within_ttl_does_not_refetch(self):
+        weather = WarmingWeather()
+        engine = self._engine(weather)
+        with mock.patch("ecasa.engine.time.sleep"):
+            engine._warm_weather_cache()
+        calls_after_first = len(weather.calls)
+        self.assertGreaterEqual(calls_after_first, 1)
+        with mock.patch("ecasa.engine.time.sleep"):
+            engine._warm_weather_cache()
+        self.assertEqual(len(weather.calls), calls_after_first)
+
+    def test_forced_warm_bypasses_ttl(self):
+        weather = WarmingWeather()
+        engine = self._engine(weather)
+        with mock.patch("ecasa.engine.time.sleep"):
+            engine._warm_weather_cache(force=True)
+        first = len(weather.calls)
+        self.assertGreaterEqual(first, 1)
+        with mock.patch("ecasa.engine.time.sleep"):
+            engine._warm_weather_cache(force=True)
+        self.assertEqual(len(weather.calls), first * 2)
+
+
+class EnginePollScheduleTests(unittest.TestCase):
+    """La periode de lecture des appareils reste >= MIN_POLL_SECONDS meme si le
+    tick suivant (travail lourd : courbe meteo, fit) est long : le prochain
+    declenchement de lecture est calcule avant le travail lent."""
+
+    def _run_one_cycle(self, engine, slow_tick_seconds):
+        poll_times = []
+        poll_event = threading.Event()
+        tick_event = threading.Event()
+        stop_event = threading.Event()
+
+        def fake_poll():
+            poll_times.append(time.time())
+            poll_event.set()
+
+        def slow_tick(force=False):
+            time.sleep(slow_tick_seconds)
+            tick_event.set()
+
+        engine._stop = stop_event
+        loop_thread = threading.Thread(
+            target=engine._loop, name="engine-poll-test", daemon=True
+        )
+        with mock.patch.object(engine, "poll", side_effect=fake_poll) as poll_mock, \
+             mock.patch.object(engine, "tick", side_effect=slow_tick) as tick_mock:
+            loop_thread.start()
+            try:
+                self.assertTrue(poll_event.wait(5.0))
+            finally:
+                stop_event.set()
+                loop_thread.join(5.0)
+        return poll_times, poll_mock, tick_mock
+
+    def test_slow_tick_keeps_next_read_within_min_poll(self):
+        engine = Engine(MemoryStore(None), _Client())
+        engine._next_poll = time.time() - 1.0  # une lecture est due
+        poll_times, poll_mock, tick_mock = self._run_one_cycle(
+            engine, slow_tick_seconds=0.05
+        )
+        self.assertEqual(len(poll_times), 1)
+        self.assertTrue(tick_mock.called)
+        delay = engine._next_poll - poll_times[0]
+        self.assertAlmostEqual(delay, MIN_POLL_SECONDS, delta=2.0)
+        self.assertGreaterEqual(engine._next_poll - time.time(), MIN_POLL_SECONDS - 2.0)
 
 
 class WarmingWeather:
