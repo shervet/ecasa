@@ -99,6 +99,7 @@ class PersistenceTests(StoreTestCase):
         store = self.make_store()
         store.set_settings({"week_mode": "explicit", "default_week": "B"})
         store.set_slots(room_id=1, week="A", days=week_days({"mode": "heat", "temp": 19}))
+        store.upsert_device(42, "Test Device 42")
         store.set_slots(device_id=42, week="B", days=week_days({"mode": "cool", "temp": 24}))
         store.set_week_override("2026-11-02", "B")
         store.set_override(42, "cool", 23.5, datetime(2026, 11, 6, 18, 0, 0))
@@ -162,11 +163,13 @@ class PersistenceTests(StoreTestCase):
 class SlotsTests(StoreTestCase):
     def test_requires_seven_days(self):
         store = self.make_store()
+        store.upsert_device(1, "Test Device")
         with self.assertRaises(ValueError):
             store.set_slots(device_id=1, week="A", days=[[]] * 6)
 
     def test_rejects_bad_week(self):
         store = self.make_store()
+        store.upsert_device(1, "Test Device")
         with self.assertRaises(ValueError):
             store.set_slots(device_id=1, week="C", days=week_days())
 
@@ -177,12 +180,14 @@ class SlotsTests(StoreTestCase):
 
     def test_rejects_unknown_mode(self):
         store = self.make_store()
+        store.upsert_device(1, "Test Device")
         days = [[{"time": "07:00", "mode": "turbo", "temp": 20}]] + [[]] * 6
         with self.assertRaises(ValueError):
             store.set_slots(device_id=1, week="A", days=days)
 
     def test_temp_clamped(self):
         store = self.make_store()
+        store.upsert_device(1, "Test Device")
         days = [[{"time": "07:00", "mode": "heat", "temp": 40}]] + [[]] * 6
         store.set_slots(device_id=1, week="A", days=days)
         self.assertEqual(store.slots(device_id=1, week="A")[0]["temp"], 30.0)
@@ -224,6 +229,7 @@ class SlotsTests(StoreTestCase):
 
     def test_replace_removes_previous_slots(self):
         store = self.make_store()
+        store.upsert_device(1, "Test Device")
         store.set_slots(device_id=1, week="A", days=week_days())
         store.set_slots(device_id=1, week="A", days=[[] for _ in range(7)])
         self.assertEqual(store.slots(device_id=1, week="A"), [])
@@ -234,6 +240,7 @@ class SlotsTests(StoreTestCase):
 
     def test_sorted_by_weekday_then_time(self):
         store = self.make_store()
+        store.upsert_device(1, "Test Device")
         days = [[] for _ in range(7)]
         days[0] = [{"time": "20:00", "mode": "heat", "temp": 20}]
         days[0].append({"time": "07:00", "mode": "cool", "temp": 24})
@@ -248,6 +255,7 @@ class SlotsTests(StoreTestCase):
     def test_room_and_device_slots_independent(self):
         store = self.make_store()
         store.set_slots(room_id=2, week="A", days=week_days())
+        store.upsert_device(9, "Test Device 9")
         store.set_slots(device_id=9, week="A", days=week_days())
         self.assertEqual(len(store.slots(room_id=2, week="A")), 4)
         self.assertEqual(len(store.slots(device_id=9, week="A")), 4)
@@ -453,16 +461,20 @@ class WeekOverrideTests(StoreTestCase):
 
 
 class SamplesTests(StoreTestCase):
-    def test_hourly_average(self):
+    def test_quarterly_average(self):
         store = self.make_store()
         base = datetime(2026, 11, 6, 8, 0, 0)
         self.assertTrue(store.add_sample(1, 20.0, 19.0, "heat", ts=base))
         self.assertTrue(store.add_sample(1, 22.0, 21.0, "heat", ts=base + timedelta(minutes=20)))
         rows = store.samples(1, base, base + timedelta(hours=1))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["ambient"], 21.0)
-        self.assertEqual(rows[0]["setpoint"], 20.0)
+        # 8:00 and 8:20 fall into different 15-min buckets (08:00 and 08:15)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["ambient"], 20.0)
+        self.assertEqual(rows[0]["setpoint"], 19.0)
         self.assertEqual(rows[0]["mode"], "heat")
+        self.assertEqual(rows[1]["ambient"], 22.0)
+        self.assertEqual(rows[1]["setpoint"], 21.0)
+        self.assertEqual(rows[1]["mode"], "heat")
 
     def test_min_interval_blocks_close_samples(self):
         store = self.make_store()
@@ -496,8 +508,10 @@ class SamplesTests(StoreTestCase):
             ]
         )
         rows = store.samples(3, datetime(2026, 11, 6, 9, 0), datetime(2026, 11, 6, 10, 0))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["ambient"], 20.0)
+        # 09:10 -> 09:00 bucket, 09:40 -> 09:30 bucket
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["ambient"], 19.5)
+        self.assertEqual(rows[1]["ambient"], 20.5)
 
     def test_sample_bounds(self):
         store = self.make_store()
@@ -531,18 +545,25 @@ class HistoryTests(StoreTestCase):
         self.assertTrue(os.path.isfile(path), "le fichier historique doit exister")
         with open(path, encoding="utf-8") as handle:
             lines = [json.loads(line) for line in handle if line.strip()]
-        self.assertEqual(len(lines), 1)
+        # 08:00 and 08:30 are different 15-min buckets -> 2 lines
+        self.assertEqual(len(lines), 2)
         self.assertEqual(lines[0]["d"], 1)
-        self.assertEqual(lines[0]["t"], "2026-11-06T08")
-        self.assertEqual(lines[0]["a"], [42.0, 2])
-        self.assertEqual(lines[0]["s"], [40.0, 2])
+        self.assertEqual(lines[0]["t"], "2026-11-06T08:00")
+        self.assertEqual(lines[0]["a"], [20.0, 1])
+        self.assertEqual(lines[0]["s"], [19.0, 1])
         self.assertEqual(lines[0]["m"], "heat")
+        self.assertEqual(lines[1]["d"], 1)
+        self.assertEqual(lines[1]["t"], "2026-11-06T08:30")
+        self.assertEqual(lines[1]["a"], [22.0, 1])
+        self.assertEqual(lines[1]["s"], [21.0, 1])
+        self.assertEqual(lines[1]["m"], "heat")
 
         # Le rechargement reconstruit les mesures agrégées.
         reloaded = self.make_store()
         rows = reloaded.samples(1, base, base + timedelta(hours=1))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["ambient"], 21.0)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["ambient"], 20.0)
+        self.assertEqual(rows[1]["ambient"], 22.0)
 
     def test_old_history_files_pruned(self):
         os.makedirs(self.history_dir, exist_ok=True)
@@ -649,6 +670,7 @@ class ExportImportTests(StoreTestCase):
         store = self.make_store()
         store.set_slots(room_id=1, week="A", days=week_days({"mode": "heat", "temp": 19}))
         store.set_slots(room_id=2, week="B", days=week_days({"mode": "cool", "temp": 24}))
+        store.upsert_device(42, "Test Device 42")
         store.set_slots(device_id=42, week="A", days=week_days({"mode": "auto", "temp": 22}))
         store.set_week_override("2026-11-02", "B")
         payload = store.export()

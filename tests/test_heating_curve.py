@@ -529,8 +529,7 @@ class CurveFitDebugTests(unittest.TestCase):
         engine = Engine(
             store, _Client(), weather=weather, config_getter=lambda: CONFIG
         )
-        with mock.patch("ecasa.engine.time.sleep"):
-            engine.refresh_room_curve_fit(room_id, force=True)
+        engine.refresh_room_curve_fit(room_id, force=True)
         return store.room(room_id)["curve_fit"]
 
     def test_debug_reports_meteo_source(self):
@@ -739,12 +738,10 @@ class WeatherWarmTtlTests(unittest.TestCase):
     def test_forced_warm_bypasses_ttl(self):
         weather = WarmingWeather()
         engine = self._engine(weather)
-        with mock.patch("ecasa.engine.time.sleep"):
-            engine._warm_weather_cache(force=True)
+        engine._warm_weather_cache(force=True)
         first = len(weather.calls)
         self.assertGreaterEqual(first, 1)
-        with mock.patch("ecasa.engine.time.sleep"):
-            engine._warm_weather_cache(force=True)
+        engine._warm_weather_cache(force=True)
         self.assertEqual(len(weather.calls), first * 2)
 
 

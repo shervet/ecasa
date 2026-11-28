@@ -980,7 +980,7 @@ class Engine:
                 # Plancher de cadence entre deux appels externes : le warm ne
                 # chain jamais des fetches Open-Meteo plus d'une fois toutes les
                 # 5 minutes (pas de rafale). Un warm force (action utilisateur)
-                # reste une sequence volontaire.
+                # reste un appel unique volontaire.
                 self._wait_external_slot()
             try:
                 weather.hourly(latitude, longitude, chunk_start, chunk_end)
